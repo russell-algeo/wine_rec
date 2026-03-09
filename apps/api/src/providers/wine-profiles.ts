@@ -145,6 +145,125 @@ class ApifyVivinoProvider implements WineProfileProvider {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Vivino Direct – hits the public explore API without Apify          */
+/* ------------------------------------------------------------------ */
+
+/** Map a Vivino taste-structure value (≈ 0–1 float) to our 1–10 int scale. */
+function vivinoTasteToScale(value: number | null | undefined): number | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  // Vivino reports structure values on a roughly 0–1 scale
+  return Math.max(1, Math.min(10, Math.round(value * 10)));
+}
+
+interface VivinoExploreMatch {
+  vintage?: {
+    id?: number;
+    year?: number;
+    wine?: {
+      id?: number;
+      name?: string;
+      region?: { name?: string; country?: { name?: string } };
+      winery?: { name?: string };
+      taste?: {
+        structure?: {
+          acidity?: number;
+          sweetness?: number;
+          tannin?: number;
+          intensity?: number;
+          fizziness?: number;
+        };
+        flavor?: Array<{
+          group?: string;
+          stats?: { score?: number };
+          primary_keywords?: Array<{ name?: string }>;
+        }>;
+      };
+      style?: { varietal_name?: string; body?: number };
+    };
+    statistics?: {
+      wine_ratings_average?: number;
+      ratings_count?: number;
+    };
+  };
+}
+
+class VivinoDirectProvider implements WineProfileProvider {
+  name = "vivino-direct";
+  isEnabled = appConfig.enableVivinoDirect;
+  detail = this.isEnabled
+    ? "Direct Vivino explore-API lookup is enabled."
+    : "Direct Vivino provider is disabled (ENABLE_VIVINO_DIRECT=false).";
+
+  async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
+    if (!this.isEnabled) return null;
+
+    const query = [candidate.producer, candidate.label, candidate.vintage]
+      .filter(Boolean)
+      .join(" ");
+
+    const url = new URL("https://www.vivino.com/api/explore/explore");
+    url.searchParams.set("q", query);
+    url.searchParams.set("page", "1");
+    url.searchParams.set("per_page", "5");
+    url.searchParams.set("currency_code", "USD");
+
+    let payload: { explore_vintage?: { matches?: VivinoExploreMatch[] } };
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": appConfig.vivinoDirectUserAgent,
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) return null;
+      payload = (await response.json()) as typeof payload;
+    } catch {
+      return null;
+    }
+
+    const matches = payload?.explore_vintage?.matches;
+    if (!matches?.length) return null;
+
+    // Pick best match by comparing names
+    const item = matches[0];
+    const wine = item.vintage?.wine;
+    const stats = item.vintage?.statistics;
+    const taste = wine?.taste?.structure;
+
+    if (!wine) return null;
+
+    const hasDirectTaste = Boolean(
+      taste &&
+        (taste.acidity != null ||
+          taste.sweetness != null ||
+          taste.tannin != null ||
+          taste.intensity != null),
+    );
+
+    return buildProfile(
+      this.name,
+      candidate,
+      {
+        displayName: wine.name ?? undefined,
+        producer: wine.winery?.name ?? undefined,
+        label: wine.name ?? undefined,
+        vintage: item.vintage?.year ?? candidate.vintage ?? undefined,
+        region: wine.region?.name ?? undefined,
+        varietal: wine.style?.varietal_name ?? candidate.varietal ?? undefined,
+        rating: stats?.wine_ratings_average ?? undefined,
+        body: vivinoTasteToScale(wine.style?.body ?? taste?.intensity),
+        acidity: vivinoTasteToScale(taste?.acidity),
+        tannin: vivinoTasteToScale(taste?.tannin),
+        sweetness: vivinoTasteToScale(taste?.sweetness),
+      },
+      hasDirectTaste ? "direct" : "mapped",
+      hasDirectTaste ? 0.9 : 0.7,
+    );
+  }
+}
+
 class WineSearcherProvider implements WineProfileProvider {
   name = "wine-searcher";
   isEnabled = Boolean(appConfig.wineSearcherEndpoint);
@@ -260,6 +379,7 @@ class RuleBasedInferenceProvider implements WineProfileProvider {
 export function createWineProfileProviders(): WineProfileProvider[] {
   const providerMap = new Map<string, WineProfileProvider>([
     ["apify-vivino", new ApifyVivinoProvider()],
+    ["vivino-direct", new VivinoDirectProvider()],
     ["wine-searcher", new WineSearcherProvider()],
     ["spoonacular-style", new SpoonacularStyleProvider()],
     ["rule-based", new RuleBasedInferenceProvider()],
