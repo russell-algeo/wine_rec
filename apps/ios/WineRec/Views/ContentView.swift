@@ -157,6 +157,13 @@ struct ContentView: View {
                                 MetricCapsule(label: "Body", value: recommendation.profile?.taste.body ?? 0)
                                 MetricCapsule(label: "Tannin", value: recommendation.profile?.taste.tannin ?? 0)
                             }
+
+                            if let notes = recommendation.profile?.tastingNotes {
+                                Text(notes)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         .padding(14)
                         .background(Color.white.opacity(0.7))

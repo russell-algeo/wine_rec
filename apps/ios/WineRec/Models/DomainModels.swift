@@ -22,6 +22,7 @@ struct WineProfile: Codable, Identifiable {
     let rating: Double?
     let provenanceLabel: String
     let taste: TasteVector
+    let tastingNotes: String?
     let fetchedAt: String
 }
 
