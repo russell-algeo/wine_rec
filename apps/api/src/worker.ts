@@ -1,6 +1,3 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-
 import { bootstrapDatabase } from "./db/bootstrap.js";
 import { appConfig } from "./config.js";
 import {
@@ -11,15 +8,9 @@ import {
   markJobProcessing,
 } from "./services/repository.js";
 import { runAnalysisPipeline } from "./services/pipeline.js";
+import { readAnalysisMetadata } from "./services/storage.js";
 
 bootstrapDatabase();
-
-async function readMimeType(analysisId: string, storagePath: string): Promise<string> {
-  const metadataPath = path.join(path.dirname(storagePath), `${analysisId}.meta.json`);
-  const raw = await fs.readFile(metadataPath, "utf8");
-  const metadata = JSON.parse(raw) as { mimeType?: string };
-  return metadata.mimeType ?? "image/jpeg";
-}
 
 async function processJob(job: { id: string; analysisId: string }): Promise<void> {
   const analysis = await getAnalysisById(job.analysisId);
@@ -35,11 +26,13 @@ async function processJob(job: { id: string; analysisId: string }): Promise<void
   await markJobProcessing(job.id, job.analysisId);
 
   try {
-    const mimeType = await readMimeType(analysis.id, analysis.storagePath);
+    const metadata = await readAnalysisMetadata(analysis.id, analysis.storagePath);
     const result = await runAnalysisPipeline({
+      sourceType: analysis.sourceType,
       filename: analysis.sourceFilename,
       storagePath: analysis.storagePath,
-      mimeType,
+      mimeType: metadata.mimeType ?? "image/jpeg",
+      ...(metadata.sourceUrl ? { sourceUrl: metadata.sourceUrl } : {}),
     });
 
     await completeAnalysis({

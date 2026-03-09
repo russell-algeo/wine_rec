@@ -1,8 +1,15 @@
-import type { AnalysisRun, AnalysisStatus, Recommendation, UserTastePreference } from "@wine-rec/contracts";
+import type {
+  AnalysisRun,
+  AnalysisStatus,
+  ProviderSettings,
+  Recommendation,
+  UserTastePreference,
+} from "@wine-rec/contracts";
 import { nanoid } from "nanoid";
 
-import { defaultPreference } from "@wine-rec/core";
+import { defaultPreference, normalizeTasteValue } from "@wine-rec/core";
 
+import { appConfig } from "../config.js";
 import { sqlite } from "../db/client.js";
 import { bootstrapDatabase } from "../db/bootstrap.js";
 
@@ -22,6 +29,18 @@ type AnalysisRow = {
   updated_at: string;
 };
 
+type PreferenceRow = {
+  id: string;
+  body: number;
+  acidity: number;
+  tannin: number;
+  sweetness: number;
+  weight_body: number;
+  weight_acidity: number;
+  weight_tannin: number;
+  weight_sweetness: number;
+};
+
 function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
@@ -34,7 +53,69 @@ function deserializeWeights(weight: number): number {
   return weight / 1000;
 }
 
+function serializeBoolean(value: boolean): number {
+  return value ? 1 : 0;
+}
+
+function deserializeBoolean(value: number): boolean {
+  return value === 1;
+}
+
+function normalizeStoredPreferences(row: PreferenceRow): {
+  preferences: UserTastePreference;
+  wasMigrated: boolean;
+} {
+  const body = normalizeTasteValue(row.body);
+  const acidity = normalizeTasteValue(row.acidity);
+  const tannin = normalizeTasteValue(row.tannin);
+  const sweetness = normalizeTasteValue(row.sweetness);
+
+  return {
+    preferences: {
+      body,
+      acidity,
+      tannin,
+      sweetness,
+      weights: {
+        body: deserializeWeights(row.weight_body),
+        acidity: deserializeWeights(row.weight_acidity),
+        tannin: deserializeWeights(row.weight_tannin),
+        sweetness: deserializeWeights(row.weight_sweetness),
+      },
+    },
+    wasMigrated:
+      body !== row.body ||
+      acidity !== row.acidity ||
+      tannin !== row.tannin ||
+      sweetness !== row.sweetness,
+  };
+}
+
+function normalizeRecommendationTasteScale(recommendations: Recommendation[]): Recommendation[] {
+  return recommendations.map((recommendation) => {
+    if (!recommendation.profile) {
+      return recommendation;
+    }
+
+    return {
+      ...recommendation,
+      profile: {
+        ...recommendation.profile,
+        taste: {
+          ...recommendation.profile.taste,
+          body: normalizeTasteValue(recommendation.profile.taste.body),
+          acidity: normalizeTasteValue(recommendation.profile.taste.acidity),
+          tannin: normalizeTasteValue(recommendation.profile.taste.tannin),
+          sweetness: normalizeTasteValue(recommendation.profile.taste.sweetness),
+        },
+      },
+    };
+  });
+}
+
 function rowToAnalysis(row: AnalysisRow): AnalysisRun {
+  const recommendations = normalizeRecommendationTasteScale(parseJson(row.recommendations_json));
+
   return {
     id: row.id,
     sourceType: row.source_type as AnalysisRun["sourceType"],
@@ -45,7 +126,7 @@ function rowToAnalysis(row: AnalysisRow): AnalysisRun {
     updatedAt: row.updated_at,
     extractedText: row.extracted_text,
     candidates: parseJson(row.candidates_json),
-    recommendations: parseJson(row.recommendations_json),
+    recommendations,
   };
 }
 
@@ -168,36 +249,19 @@ export async function failAnalysis(input: {
 export async function getPreferences(): Promise<UserTastePreference> {
   const row = sqlite
     .prepare("SELECT * FROM preferences WHERE id = ?")
-    .get("default") as
-    | {
-        id: string;
-        body: number;
-        acidity: number;
-        tannin: number;
-        sweetness: number;
-        weight_body: number;
-        weight_acidity: number;
-        weight_tannin: number;
-        weight_sweetness: number;
-      }
-    | undefined;
+    .get("default") as PreferenceRow | undefined;
 
   if (!row) {
     return defaultPreference();
   }
 
-  return {
-      body: row.body,
-      acidity: row.acidity,
-      tannin: row.tannin,
-      sweetness: row.sweetness,
-      weights: {
-        body: deserializeWeights(row.weight_body),
-        acidity: deserializeWeights(row.weight_acidity),
-        tannin: deserializeWeights(row.weight_tannin),
-        sweetness: deserializeWeights(row.weight_sweetness),
-      },
-  };
+  const normalized = normalizeStoredPreferences(row);
+
+  if (normalized.wasMigrated) {
+    await putPreferences(normalized.preferences);
+  }
+
+  return normalized.preferences;
 }
 
 export async function putPreferences(preferences: UserTastePreference): Promise<UserTastePreference> {
@@ -261,6 +325,59 @@ export async function putPreferences(preferences: UserTastePreference): Promise<
   }
 
   return preferences;
+}
+
+export async function getProviderSettings(): Promise<ProviderSettings> {
+  const row = sqlite
+    .prepare("SELECT * FROM provider_settings WHERE id = ?")
+    .get("default") as
+    | {
+        id: string;
+        apify_vivino_enabled: number;
+      }
+    | undefined;
+
+  if (!row) {
+    return {
+      apifyVivinoEnabled: appConfig.enableUnofficialVivino,
+    };
+  }
+
+  return {
+    apifyVivinoEnabled: deserializeBoolean(row.apify_vivino_enabled),
+  };
+}
+
+export async function putProviderSettings(settings: ProviderSettings): Promise<ProviderSettings> {
+  const existing = sqlite.prepare("SELECT id FROM provider_settings WHERE id = ?").get("default");
+  const payload = {
+    id: "default",
+    apifyVivinoEnabled: serializeBoolean(settings.apifyVivinoEnabled),
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (existing) {
+    sqlite
+      .prepare(
+        `
+          UPDATE provider_settings
+          SET apify_vivino_enabled = ?, updated_at = ?
+          WHERE id = ?
+        `,
+      )
+      .run(payload.apifyVivinoEnabled, payload.updatedAt, payload.id);
+  } else {
+    sqlite
+      .prepare(
+        `
+          INSERT INTO provider_settings (id, apify_vivino_enabled, updated_at)
+          VALUES (?, ?, ?)
+        `,
+      )
+      .run(payload.id, payload.apifyVivinoEnabled, payload.updatedAt);
+  }
+
+  return settings;
 }
 
 export async function updateRecommendations(

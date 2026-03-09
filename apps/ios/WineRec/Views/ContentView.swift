@@ -244,7 +244,7 @@ private struct PreferenceRow: View {
             Slider(value: Binding(
                 get: { Double(value) },
                 set: { onChange(Int($0.rounded())) }
-            ), in: 1...10, step: 1)
+            ), in: 1...5, step: 1)
             .tint(Color(red: 0.55, green: 0.15, blue: 0.24))
         }
     }

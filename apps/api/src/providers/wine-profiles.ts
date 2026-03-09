@@ -1,5 +1,5 @@
-import type { WineCandidate, WineProfile } from "@wine-rec/contracts";
-import { inferTasteVector, mapExternalTasteVector, scoreWineMatch } from "@wine-rec/core";
+import type { ProviderSettings, WineCandidate, WineProfile } from "@wine-rec/contracts";
+import { inferTasteVector, mapExternalTasteVector, normalizeTasteValue, scoreWineMatch } from "@wine-rec/core";
 import { nanoid } from "nanoid";
 
 import { appConfig } from "../config.js";
@@ -30,6 +30,23 @@ type RawExternalProfile = {
   tannin?: number | undefined;
   sweetness?: number | undefined;
   sourceUrl?: string | undefined;
+};
+
+type ApifyVivinoItem = {
+  name?: string;
+  winery?: string;
+  vintage?: number | string | null;
+  region?: string;
+  country?: string;
+  grape_varieties?: string[];
+  average_rating?: number | string | null;
+  vivino_url?: string;
+  taste_profile?: {
+    body?: number | string | null;
+    acidity?: number | string | null;
+    tannins?: number | string | null;
+    sweetness?: number | string | null;
+  } | null;
 };
 
 function buildProfile(
@@ -91,246 +108,109 @@ function buildProfile(
   };
 }
 
+function parseNumericValue(value: number | string | null | undefined): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function scaleVivinoTaste(value: number | string | null | undefined): number | undefined {
+  const parsed = parseNumericValue(value);
+  if (parsed === undefined) return undefined;
+  return normalizeTasteValue(parsed);
+}
+
+function normalizeApifyVivinoPayload(payload: unknown): ApifyVivinoItem[] {
+  if (Array.isArray(payload)) {
+    return payload as ApifyVivinoItem[];
+  }
+
+  if (payload && typeof payload === "object" && "items" in payload) {
+    const items = (payload as { items?: unknown }).items;
+    return Array.isArray(items) ? (items as ApifyVivinoItem[]) : [];
+  }
+
+  return payload ? [payload as ApifyVivinoItem] : [];
+}
+
 class ApifyVivinoProvider implements WineProfileProvider {
   name = "apify-vivino";
-  isEnabled = appConfig.enableUnofficialVivino && Boolean(
-    appConfig.apifyVivinoEndpoint || (appConfig.apifyToken && appConfig.apifyVivinoActorId),
-  );
-  detail = this.isEnabled
-    ? "Experimental Apify-backed Vivino lookup is enabled."
-    : "Missing Apify configuration or unofficial provider disabled.";
+  isEnabled: boolean;
+  detail: string;
+
+  constructor(runtimeEnabled: boolean) {
+    const hasConfig = Boolean(
+      appConfig.apifyVivinoEndpoint || (appConfig.apifyToken && appConfig.apifyVivinoActorId),
+    );
+
+    this.isEnabled = appConfig.enableUnofficialVivino && runtimeEnabled && hasConfig;
+    this.detail = this.isEnabled
+      ? "Experimental Apify-backed Vivino lookup is enabled."
+      : !appConfig.enableUnofficialVivino
+        ? "Disabled by ENABLE_UNOFFICIAL_VIVINO."
+        : !runtimeEnabled
+          ? "Disabled in provider controls."
+          : "Missing Apify configuration.";
+  }
 
   async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
     if (!this.isEnabled) return null;
 
     const query = [candidate.producer, candidate.label, candidate.vintage].filter(Boolean).join(" ");
-    const payload = appConfig.apifyVivinoEndpoint
+    const response = appConfig.apifyVivinoEndpoint
       ? await fetch(appConfig.apifyVivinoEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, candidate }),
-        }).then((response) => response.json())
+          body: JSON.stringify({ wineNames: [query], candidate }),
+        })
       : await fetch(
-          `https://api.apify.com/v2/acts/${appConfig.apifyVivinoActorId}/run-sync-get-dataset-items?token=${appConfig.apifyToken}`,
+          `https://api.apify.com/v2/acts/${appConfig.apifyVivinoActorId}/run-sync-get-dataset-items?clean=true`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query }),
+            headers: {
+              Authorization: `Bearer ${appConfig.apifyToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ wineNames: [query] }),
           },
-        ).then((response) => response.json());
+        );
 
-    const item = Array.isArray(payload) ? payload[0] : payload?.items?.[0] ?? payload;
+    if (!response.ok) {
+      throw new Error(`Apify Vivino request failed with ${response.status}`);
+    }
+
+    const items = normalizeApifyVivinoPayload(await response.json());
+    const item = items[0];
     if (!item) return null;
 
-    return buildProfile(
-      this.name,
-      candidate,
-      {
-        displayName: item.name ?? item.title,
-        producer: item.winery ?? item.producer,
-        label: item.label ?? item.name ?? item.title,
-        vintage: Number(item.vintage) || candidate.vintage || undefined,
-        region: item.region,
-        varietal: item.grape ?? item.varietal,
-        rating: Number(item.rating) || undefined,
-        body: Number(item.body) || undefined,
-        acidity: Number(item.acidity) || undefined,
-        tannin: Number(item.tannins ?? item.tannin) || undefined,
-        sweetness: Number(item.sweetness) || undefined,
-        sourceUrl: item.url,
-      },
-      item.body || item.acidity || item.tannins || item.sweetness ? "direct" : "mapped",
-      item.body || item.acidity || item.tannins || item.sweetness ? 0.92 : 0.7,
-    );
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/*  Vivino Direct – hits the public explore API without Apify          */
-/* ------------------------------------------------------------------ */
-
-/** Map a Vivino taste-structure value (≈ 0–1 float) to our 1–10 int scale. */
-function vivinoTasteToScale(value: number | null | undefined): number | undefined {
-  if (value == null || !Number.isFinite(value)) return undefined;
-  // Vivino reports structure values on a roughly 0–1 scale
-  return Math.max(1, Math.min(10, Math.round(value * 10)));
-}
-
-/** Fetch with retry on HTTP 429 using exponential backoff (pattern from aptash/vivino-api). */
-async function vivinoFetch(
-  url: URL | string,
-  headers: Record<string, string>,
-): Promise<Response | null> {
-  const maxRetries = appConfig.vivinoDirectMaxRetries;
-  const baseBackoff = appConfig.vivinoDirectBackoffMs;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await fetch(url, { headers });
-
-      if (response.status === 429 && attempt < maxRetries) {
-        const delay = baseBackoff * 2 ** attempt;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
-      }
-
-      if (!response.ok) return null;
-      return response;
-    } catch {
-      if (attempt < maxRetries) {
-        const delay = baseBackoff * 2 ** attempt;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
-      }
-      return null;
-    }
-  }
-  return null;
-}
-
-interface VivinoExploreMatch {
-  vintage?: {
-    id?: number;
-    year?: number;
-    wine?: {
-      id?: number;
-      name?: string;
-      region?: { name?: string; country?: { name?: string } };
-      winery?: { name?: string };
-      taste?: {
-        structure?: {
-          acidity?: number;
-          sweetness?: number;
-          tannin?: number;
-          intensity?: number;
-          fizziness?: number;
-        };
-        flavor?: Array<{
-          group?: string;
-          stats?: { score?: number };
-          primary_keywords?: Array<{ name?: string }>;
-        }>;
-      };
-      style?: { varietal_name?: string; body?: number };
-    };
-    statistics?: {
-      wine_ratings_average?: number;
-      ratings_count?: number;
-    };
-  };
-}
-
-/** Shape returned by Vivino's /api/wines/{id}/tastes endpoint (from gugarosa/viviner). */
-interface VivinoTastesResponse {
-  tastes?: {
-    structure?: {
-      acidity?: number;
-      sweetness?: number;
-      tannin?: number;
-      intensity?: number;
-      fizziness?: number;
-    };
-    flavor?: Array<{
-      group?: string;
-      stats?: { score?: number };
-      primary_keywords?: Array<{ name?: string }>;
-    }>;
-  };
-}
-
-class VivinoDirectProvider implements WineProfileProvider {
-  name = "vivino-direct";
-  isEnabled = appConfig.enableVivinoDirect;
-  detail = this.isEnabled
-    ? "Direct Vivino explore-API lookup is enabled."
-    : "Direct Vivino provider is disabled (ENABLE_VIVINO_DIRECT=false).";
-
-  private readonly headers = {
-    "User-Agent": appConfig.vivinoDirectUserAgent,
-    Accept: "application/json",
-  };
-
-  async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
-    if (!this.isEnabled) return null;
-
-    const query = [candidate.producer, candidate.label, candidate.vintage]
-      .filter(Boolean)
-      .join(" ");
-
-    const url = new URL("https://www.vivino.com/api/explore/explore");
-    url.searchParams.set("q", query);
-    url.searchParams.set("page", "1");
-    url.searchParams.set("per_page", "5");
-    url.searchParams.set("currency_code", "USD");
-
-    // Add optional country filter (pattern from Piltxi/Vivino-Crawler & gugarosa/viviner)
-    for (const code of appConfig.vivinoDirectCountryCodes) {
-      url.searchParams.append("country_codes[]", code);
-    }
-
-    const response = await vivinoFetch(url, this.headers);
-    if (!response) return null;
-
-    let payload: { explore_vintage?: { matches?: VivinoExploreMatch[] } };
-    try {
-      payload = (await response.json()) as typeof payload;
-    } catch {
-      return null;
-    }
-
-    const matches = payload?.explore_vintage?.matches;
-    if (!matches?.length) return null;
-
-    // Pick first match (best relevance from Vivino's ranking)
-    const item = matches[0]!;
-    const wine = item.vintage?.wine;
-    const stats = item.vintage?.statistics;
-    let taste = wine?.taste?.structure;
-
-    if (!wine) return null;
-
-    // Optionally fetch richer taste data from /api/wines/{id}/tastes (pattern from gugarosa/viviner)
-    if (appConfig.vivinoDirectFetchTastes && wine.id && !taste) {
-      const tastesUrl = `https://www.vivino.com/api/wines/${wine.id}/tastes`;
-      const tastesResponse = await vivinoFetch(new URL(tastesUrl), this.headers);
-      if (tastesResponse) {
-        try {
-          const tastesPayload = (await tastesResponse.json()) as VivinoTastesResponse;
-          if (tastesPayload?.tastes?.structure) {
-            taste = tastesPayload.tastes.structure;
-          }
-        } catch {
-          // ignore – fall back to explore data
-        }
-      }
-    }
-
-    const hasDirectTaste = Boolean(
-      taste &&
-        (taste.acidity != null ||
-          taste.sweetness != null ||
-          taste.tannin != null ||
-          taste.intensity != null),
-    );
+    const vivinoTaste = item.taste_profile;
+    const body = scaleVivinoTaste(vivinoTaste?.body);
+    const acidity = scaleVivinoTaste(vivinoTaste?.acidity);
+    const tannin = scaleVivinoTaste(vivinoTaste?.tannins);
+    const sweetness = scaleVivinoTaste(vivinoTaste?.sweetness);
+    const hasDirectTaste = [body, acidity, tannin, sweetness].some((value) => value !== undefined);
+    const region = [item.region, item.country].filter(Boolean).join(", ") || undefined;
+    const grapeVariety = item.grape_varieties?.find(Boolean);
 
     return buildProfile(
       this.name,
       candidate,
       {
-        displayName: wine.name ?? undefined,
-        producer: wine.winery?.name ?? undefined,
-        label: wine.name ?? undefined,
-        vintage: item.vintage?.year ?? candidate.vintage ?? undefined,
-        region: wine.region?.name ?? undefined,
-        varietal: wine.style?.varietal_name ?? candidate.varietal ?? undefined,
-        rating: stats?.wine_ratings_average ?? undefined,
-        body: vivinoTasteToScale(wine.style?.body ?? taste?.intensity),
-        acidity: vivinoTasteToScale(taste?.acidity),
-        tannin: vivinoTasteToScale(taste?.tannin),
-        sweetness: vivinoTasteToScale(taste?.sweetness),
+        displayName: [item.winery, item.name, item.vintage].filter(Boolean).join(" "),
+        producer: item.winery,
+        label: item.name,
+        vintage: parseNumericValue(item.vintage) ?? candidate.vintage ?? undefined,
+        region,
+        varietal: grapeVariety,
+        rating: parseNumericValue(item.average_rating),
+        body,
+        acidity,
+        tannin,
+        sweetness,
+        sourceUrl: item.vivino_url,
       },
       hasDirectTaste ? "direct" : "mapped",
-      hasDirectTaste ? 0.9 : 0.7,
+      hasDirectTaste ? 0.92 : 0.7,
     );
   }
 }
@@ -377,15 +257,15 @@ function inferDescriptionTaste(description: string) {
   const normalized = description.toLowerCase();
   return mapExternalTasteVector(
     {
-      body: normalized.includes("full-bodied") ? 8 : normalized.includes("medium-bodied") ? 6 : 4,
-      acidity: normalized.includes("crisp") || normalized.includes("zesty") ? 8 : 5,
-      tannin: normalized.includes("tannin") || normalized.includes("structured") ? 6 : 2,
+      body: normalized.includes("full-bodied") ? 4 : normalized.includes("medium-bodied") ? 3 : 2,
+      acidity: normalized.includes("crisp") || normalized.includes("zesty") ? 4 : 3,
+      tannin: normalized.includes("tannin") || normalized.includes("structured") ? 3 : 1,
       sweetness:
         normalized.includes("dry") || normalized.includes("bone dry")
           ? 1
           : normalized.includes("off-dry")
-            ? 4
-            : 2,
+            ? 2
+            : 1,
     },
     "mapped",
     0.58,
@@ -443,14 +323,21 @@ class RuleBasedInferenceProvider implements WineProfileProvider {
   detail = "Always available local inference from extracted wine metadata.";
 
   async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
-    return buildProfile(this.name, candidate, {}, "inferred", 0.45);
+    const result = buildProfile(this.name, candidate, {}, "inferred", 0.45);
+    return {
+      ...result,
+      matchScore: 0.05,
+    };
   }
 }
 
-export function createWineProfileProviders(): WineProfileProvider[] {
+export function createWineProfileProviders(
+  settings: ProviderSettings = {
+    apifyVivinoEnabled: appConfig.enableUnofficialVivino,
+  },
+): WineProfileProvider[] {
   const providerMap = new Map<string, WineProfileProvider>([
-    ["apify-vivino", new ApifyVivinoProvider()],
-    ["vivino-direct", new VivinoDirectProvider()],
+    ["apify-vivino", new ApifyVivinoProvider(settings.apifyVivinoEnabled)],
     ["wine-searcher", new WineSearcherProvider()],
     ["spoonacular-style", new SpoonacularStyleProvider()],
     ["rule-based", new RuleBasedInferenceProvider()],

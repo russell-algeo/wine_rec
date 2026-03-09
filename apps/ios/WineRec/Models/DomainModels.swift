@@ -62,9 +62,9 @@ struct UserTastePreference: Codable {
     var weights: TasteWeights
 
     static let `default` = UserTastePreference(
-        body: 5,
-        acidity: 9,
-        tannin: 5,
+        body: 3,
+        acidity: 5,
+        tannin: 3,
         sweetness: 1,
         weights: .init(body: 0.1, acidity: 0.4, tannin: 0.1, sweetness: 0.4)
     )

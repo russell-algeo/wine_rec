@@ -19,10 +19,10 @@ export const analysisStatusSchema = z.enum([
 export const providerAvailabilitySchema = z.enum(["enabled", "disabled", "degraded"]);
 
 export const tasteVectorSchema = z.object({
-  body: z.number().int().min(1).max(10),
-  acidity: z.number().int().min(1).max(10),
-  tannin: z.number().int().min(1).max(10),
-  sweetness: z.number().int().min(1).max(10),
+  body: z.number().int().min(1).max(5),
+  acidity: z.number().int().min(1).max(5),
+  tannin: z.number().int().min(1).max(5),
+  sweetness: z.number().int().min(1).max(5),
   sourceMode: sourceModeSchema,
   confidence: z.number().min(0).max(1),
 });
@@ -35,10 +35,10 @@ export const tasteWeightsSchema = z.object({
 });
 
 export const userTastePreferenceSchema = z.object({
-  body: z.number().int().min(1).max(10),
-  acidity: z.number().int().min(1).max(10),
-  tannin: z.number().int().min(1).max(10),
-  sweetness: z.number().int().min(1).max(10),
+  body: z.number().int().min(1).max(5),
+  acidity: z.number().int().min(1).max(5),
+  tannin: z.number().int().min(1).max(5),
+  sweetness: z.number().int().min(1).max(5),
   weights: tasteWeightsSchema,
 });
 
@@ -46,6 +46,8 @@ export const wineCandidateSchema = z.object({
   id: z.string(),
   rawText: z.string(),
   price: z.string().nullable().default(null),
+  menuTab: z.string().nullable().default(null),
+  menuSection: z.string().nullable().default(null),
   lineNumber: z.number().int().nonnegative(),
   producer: z.string().nullable(),
   label: z.string().nullable(),
@@ -109,13 +111,27 @@ export const providerHealthSchema = z.object({
   detail: z.string(),
 });
 
-export const createUploadResponseSchema = z.object({
+export const providerSettingsSchema = z.object({
+  apifyVivinoEnabled: z.boolean(),
+});
+
+export const createAnalysisFromUrlRequestSchema = z.object({
+  url: z.string().url(),
+});
+
+export const createAnalysisResponseSchema = z.object({
   analysisId: z.string(),
   status: analysisStatusSchema,
 });
 
+export const createUploadResponseSchema = createAnalysisResponseSchema;
+
 export const preferencesResponseSchema = z.object({
   preferences: userTastePreferenceSchema,
+});
+
+export const providerSettingsResponseSchema = z.object({
+  settings: providerSettingsSchema,
 });
 
 export type SourceType = z.infer<typeof sourceTypeSchema>;
@@ -129,3 +145,6 @@ export type WineProfile = z.infer<typeof wineProfileSchema>;
 export type Recommendation = z.infer<typeof recommendationSchema>;
 export type AnalysisRun = z.infer<typeof analysisRunSchema>;
 export type ProviderHealth = z.infer<typeof providerHealthSchema>;
+export type ProviderSettings = z.infer<typeof providerSettingsSchema>;
+export type CreateAnalysisFromUrlRequest = z.infer<typeof createAnalysisFromUrlRequestSchema>;
+export type CreateAnalysisResponse = z.infer<typeof createAnalysisResponseSchema>;

@@ -1,6 +1,3 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-
 import { createReadStream } from "node:fs";
 
 import cors from "@fastify/cors";
@@ -13,9 +10,12 @@ import { z } from "zod";
 
 import {
   analysisRunSchema,
-  createUploadResponseSchema,
+  createAnalysisFromUrlRequestSchema,
+  createAnalysisResponseSchema,
   preferencesResponseSchema,
   providerHealthSchema,
+  providerSettingsResponseSchema,
+  providerSettingsSchema,
   sourceTypeSchema,
   userTastePreferenceSchema,
 } from "@wine-rec/contracts";
@@ -28,11 +28,18 @@ import {
   createAnalysis,
   getAnalysisById,
   getPreferences,
+  getProviderSettings,
   putPreferences,
+  putProviderSettings,
   queueAnalysis,
   updateAnalysisStoragePath,
 } from "./services/repository.js";
-import { saveUpload } from "./services/storage.js";
+import {
+  readAnalysisMetadata,
+  saveUpload,
+  saveUrlSource,
+  writeAnalysisMetadata,
+} from "./services/storage.js";
 
 const uploadSourceSchema = z.object({
   sourceType: sourceTypeSchema,
@@ -46,6 +53,19 @@ function inferMimeType(filename: string, mimeType: string | undefined): string {
   if (mimeType) return mimeType;
   if (filename.toLowerCase().endsWith(".pdf")) return "application/pdf";
   return "image/jpeg";
+}
+
+function inferUrlSourceType(input: string): "url-html" | "url-pdf" {
+  const url = new URL(input);
+  return url.pathname.toLowerCase().endsWith(".pdf") ? "url-pdf" : "url-html";
+}
+
+function assertHttpUrl(input: string): URL {
+  const url = new URL(input);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Only http and https URLs are supported");
+  }
+  return url;
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -93,6 +113,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.get("/api/health/providers", async () => {
+    const providerSettings = await getProviderSettings();
     const ocrProvider = createOcrProvider();
     const providers = [
       {
@@ -101,7 +122,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         enabled: ocrProvider.isEnabled,
         detail: ocrProvider.detail,
       },
-      ...createWineProfileProviders().map((provider) => ({
+      ...createWineProfileProviders(providerSettings).map((provider) => ({
         name: provider.name,
         availability: provider.isEnabled ? "enabled" : "disabled",
         enabled: provider.isEnabled,
@@ -124,6 +145,18 @@ export async function buildApp(): Promise<FastifyInstance> {
     return preferencesResponseSchema.parse({ preferences });
   });
 
+  app.get("/api/settings/providers", async () => {
+    return providerSettingsResponseSchema.parse({
+      settings: await getProviderSettings(),
+    });
+  });
+
+  app.put("/api/settings/providers", async (request) => {
+    const parsed = providerSettingsSchema.parse(request.body);
+    const settings = await putProviderSettings(parsed);
+    return providerSettingsResponseSchema.parse({ settings });
+  });
+
   app.post("/api/uploads", async (request, reply) => {
     const file = await request.file();
     if (!file) {
@@ -131,7 +164,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     const buffer = await file.toBuffer();
-    const sourceType = inferSourceType(file.mimetype);
+    const sourceType = uploadSourceSchema.parse({
+      sourceType: inferSourceType(file.mimetype),
+    }).sourceType;
     const mimeType = inferMimeType(file.filename, file.mimetype);
     const analysis = await createAnalysis({
       sourceType,
@@ -145,15 +180,42 @@ export async function buildApp(): Promise<FastifyInstance> {
       throw new Error("Newly created analysis could not be loaded");
     }
 
-    await fs.writeFile(
-      path.join(path.dirname(storagePath), `${analysis.id}.meta.json`),
-      JSON.stringify({ mimeType }, null, 2),
-    );
+    await writeAnalysisMetadata(analysis.id, storagePath, { mimeType });
     await updateAnalysisStoragePath(analysis.id, storagePath);
 
-    return createUploadResponseSchema.parse({
+    return createAnalysisResponseSchema.parse({
       analysisId: hydrated.id,
       status: hydrated.status,
+    });
+  });
+
+  app.post("/api/urls", async (request, reply) => {
+    const parsed = createAnalysisFromUrlRequestSchema.parse(request.body);
+    let url: URL;
+
+    try {
+      url = assertHttpUrl(parsed.url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid URL";
+      return reply.status(400).send({ message });
+    }
+
+    const analysis = await createAnalysis({
+      sourceType: inferUrlSourceType(url.toString()),
+      sourceFilename: url.toString(),
+      storagePath: "",
+    });
+
+    const storagePath = await saveUrlSource(analysis.id, url.toString());
+    await writeAnalysisMetadata(analysis.id, storagePath, {
+      sourceUrl: url.toString(),
+      mimeType: "text/uri-list",
+    });
+    await updateAnalysisStoragePath(analysis.id, storagePath);
+
+    return createAnalysisResponseSchema.parse({
+      analysisId: analysis.id,
+      status: analysis.status,
     });
   });
 
@@ -185,8 +247,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       return reply.status(404).send({ message: "Analysis not found" });
     }
 
-    const metadataPath = path.join(path.dirname(analysis.storagePath), `${analysis.id}.meta.json`);
-    const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8")) as { mimeType?: string };
+    const metadata = await readAnalysisMetadata(analysis.id, analysis.storagePath);
 
     reply.type(metadata.mimeType ?? "application/octet-stream");
     return reply.send(createReadStream(analysis.storagePath));
