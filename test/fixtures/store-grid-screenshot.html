@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Store Grid Wine Fixture</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f3f3f3;
+        color: #232323;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+      }
+
+      .page {
+        width: 1182px;
+        min-height: 998px;
+        margin: 0 auto;
+        padding: 28px 32px 36px;
+        box-sizing: border-box;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: #4f4f4f;
+        font-size: 14px;
+        margin-bottom: 36px;
+      }
+
+      .toolbar .group {
+        display: flex;
+        gap: 34px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 28px 10px;
+      }
+
+      .card {
+        width: 270px;
+      }
+
+      .image {
+        height: 356px;
+        background: linear-gradient(180deg, #d7dbdf, #eff1f2);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .bottle {
+        position: absolute;
+        bottom: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 76px;
+        height: 300px;
+        border-radius: 18px 18px 10px 10px;
+        background: linear-gradient(180deg, #233142, #0c1420);
+      }
+
+      .bottle.red {
+        background: linear-gradient(180deg, #c80b2e, #6c0719 70%, #101010);
+      }
+
+      .bottle .label {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        top: 110px;
+        height: 92px;
+        background: #f5efdb;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+      }
+
+      .sold {
+        position: absolute;
+        left: 10px;
+        bottom: 10px;
+        background: #2e3343;
+        color: #fff;
+        padding: 8px 14px;
+        border-radius: 999px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .name {
+        margin-top: 14px;
+        font-size: 16px;
+        line-height: 1.32;
+      }
+
+      .price {
+        margin-top: 8px;
+        font-size: 18px;
+        line-height: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="toolbar">
+        <div class="group">
+          <span>Filter:</span>
+          <span>Product type</span>
+          <span>Price</span>
+          <span>Country</span>
+          <span>Ethics</span>
+        </div>
+        <div class="group">
+          <span>Sort by:</span>
+          <span>Best selling</span>
+          <span>156 products</span>
+        </div>
+      </div>
+
+      <section class="grid">
+        <article class="card">
+          <div class="image">
+            <div class="bottle red"><div class="label"></div></div>
+            <div class="sold">Sold out</div>
+          </div>
+          <div class="name">Domaine de la Mongestine Bob Singlar Red Wine</div>
+          <div class="price">$21.99</div>
+        </article>
+
+        <article class="card">
+          <div class="image">
+            <div class="bottle"><div class="label" style="background:#f1cc12;"></div></div>
+          </div>
+          <div class="name">Le Babbler Bordeaux</div>
+          <div class="price">$16.99</div>
+        </article>
+
+        <article class="card">
+          <div class="image">
+            <div class="bottle"><div class="label" style="background:#f1f1f1;"></div></div>
+            <div class="sold">Sold out</div>
+          </div>
+          <div class="name">Jelu Estate Patagonia Pinot Noir</div>
+          <div class="price">$14.99</div>
+        </article>
+
+        <article class="card">
+          <div class="image">
+            <div class="bottle"><div class="label" style="background:#efe7d1;"></div></div>
+            <div class="sold">Sold out</div>
+          </div>
+          <div class="name">Stel + Mar Cabernet</div>
+          <div class="price">$15.99</div>
+        </article>
+
+        <article class="card">
+          <div class="image">
+            <div class="bottle"><div class="label" style="background:#f0f0f0;"></div></div>
+            <div class="sold">Sold out</div>
+          </div>
+          <div class="name">Flavia Taille Terre Sicilia Red 1L</div>
+          <div class="price">$20.99</div>
+        </article>
+
+        <article class="card">
+          <div class="image">
+            <div class="bottle"><div class="label" style="background:#d8c0ad;"></div></div>
+            <div class="sold">Sold out</div>
+          </div>
+          <div class="name">Cardedu 'Praja' Monica di Sardegna</div>
+          <div class="price">$23.99</div>
+        </article>
+
+        <article class="card">
+          <div class="image">
+            <div class="bottle"><div class="label" style="background:#9fd4ea;"></div></div>
+            <div class="sold">Sold out</div>
+          </div>
+          <div class="name">Casa Santos Lima Lisboa Bons Ventos Tinto</div>
+          <div class="price">$9.99</div>
+        </article>
+
+        <article class="card">
+          <div class="image">
+            <div class="bottle"><div class="label" style="background:#f2d7c7;"></div></div>
+          </div>
+          <div class="name">Bellande Pinot Noir</div>
+          <div class="price">$24.99</div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

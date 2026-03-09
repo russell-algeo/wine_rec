@@ -1,0 +1,23 @@
+{
+  "name": "wine-rec",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev:api": "npm run dev --workspace @wine-rec/api",
+    "dev:web": "npm run dev --workspace @wine-rec/web",
+    "dev:ios": "npm run dev --workspace @wine-rec/ios",
+    "dev": "concurrently -k -n api,web,worker \"npm run dev:api\" \"npm run dev:web\" \"npm run worker --workspace @wine-rec/api\"",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.2"
+  }
+}
