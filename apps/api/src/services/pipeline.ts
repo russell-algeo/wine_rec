@@ -1,25 +1,27 @@
-import type { Recommendation, WineCandidate } from "@wine-rec/contracts";
+import type { Recommendation, SourceType, WineCandidate } from "@wine-rec/contracts";
 import { rankMatch, scoreRecommendation } from "@wine-rec/core";
 
-import { createOcrProvider } from "../providers/ocr.js";
 import { createWineProfileProviders } from "../providers/wine-profiles.js";
 import { parseWineCandidates } from "./parser.js";
-import { getPreferences } from "./repository.js";
+import { getPreferences, getProviderSettings } from "./repository.js";
+import { extractSourceText } from "./source-extractor.js";
 
 export async function runAnalysisPipeline(input: {
+  sourceType: SourceType;
   filename: string;
   mimeType: string;
   storagePath: string;
+  sourceUrl?: string;
 }): Promise<{
   extractedText: string;
   candidates: WineCandidate[];
   recommendations: Recommendation[];
 }> {
-  const ocrProvider = createOcrProvider();
-  const extractedText = await ocrProvider.extractText(input);
+  const extractedText = await extractSourceText(input);
   const candidates = parseWineCandidates(extractedText);
   const preference = await getPreferences();
-  const providers = createWineProfileProviders();
+  const providerSettings = await getProviderSettings();
+  const providers = createWineProfileProviders(providerSettings);
 
   const recommendations: Recommendation[] = [];
 

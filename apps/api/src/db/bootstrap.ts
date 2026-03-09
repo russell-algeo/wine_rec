@@ -38,5 +38,11 @@ export function bootstrapDatabase(): void {
       weight_sweetness INTEGER NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS provider_settings (
+      id TEXT PRIMARY KEY,
+      apify_vivino_enabled INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 }

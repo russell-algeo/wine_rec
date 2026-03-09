@@ -62,6 +62,31 @@ describe("wine parser", () => {
     expect(candidates[1]?.price).toBe("$9.99");
   });
 
+  it("preserves structured tab and section markers in parsed candidates", () => {
+    const extractedText = [
+      "@@TAB: BY THE GLASS",
+      "@@SECTION: RED",
+      "Les Salicaires ‘Primal’ - Roussillon, FR",
+      "Chilled, dry, sour cherry, watermelon Jolly Rancher, sea kelp",
+      "$17",
+      "",
+      "@@TAB: BOTTLE LIST",
+      "@@SECTION: WHITE",
+      "Cantina Giardino ‘Gaia’ - Campania, IT",
+      "Salty citrus, peach skin, chamomile",
+      "$21",
+    ].join("\n");
+
+    const candidates = parseWineCandidates(extractedText);
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]?.menuTab).toBe("BY THE GLASS");
+    expect(candidates[0]?.menuSection).toBe("RED");
+    expect(candidates[0]?.color).toBe("red");
+    expect(candidates[1]?.menuTab).toBe("BOTTLE LIST");
+    expect(candidates[1]?.menuSection).toBe("WHITE");
+    expect(candidates[1]?.color).toBe("white");
+  });
+
   const integration = hasTesseract ? it : it.skip;
 
   integration("parses the real red-menu screenshot into three wines", async () => {
@@ -81,49 +106,93 @@ describe("wine parser", () => {
   integration("parses the photographed sectioned menu from the real screenshot", async () => {
     const extractedText = await ocrFixtureToText("Screenshot 2026-03-08 at 10.48.03");
     const candidates = parseWineCandidates(extractedText);
-    const candidateNames = candidates.map((candidate) => canonicalizeText(candidate.rawText));
-    const includesWine = (name: string) =>
-      candidateNames.some((candidateName) => candidateName.includes(canonicalizeText(name)));
+    const normalizedCandidates = candidates.map((candidate) => ({
+      rawText: canonicalizeText(candidate.rawText),
+      price: candidate.price,
+      color: candidate.color,
+    }));
 
-    expect(candidateNames).not.toContain("1");
-    expect(candidateNames).not.toContain("rinks");
-    expect(includesWine("Martin Texier Petite Nature")).toBe(true);
-    expect(includesWine("Stephane Coquillette Inflorescence")).toBe(true);
-    expect(includesWine("Bonnet-Huteau Bonnets Blancs")).toBe(true);
-    expect(includesWine("Emmanuel Haget Loustic")).toBe(true);
-    expect(includesWine("Bodegas Tradicien Fino Tradicien")).toBe(true);
-    expect(includesWine("Asahara Shuzo Musashino Sparkling")).toBe(true);
-    expect(includesWine("Ota Shuzo Dokan Umeshu")).toBe(true);
-
-    expect(
-      candidates.find((candidate) =>
-        canonicalizeText(candidate.rawText).includes(canonicalizeText("Martin Texier Petite Nature")),
-      )?.color,
-    ).toBe("sparkling");
-    expect(
-      candidates.find((candidate) =>
-        canonicalizeText(candidate.rawText).includes(canonicalizeText("Bonnet-Huteau Bonnets Blancs")),
-      )?.color,
-    ).toBe("white");
-    expect(
-      candidates.find((candidate) =>
-        canonicalizeText(candidate.rawText).includes(canonicalizeText("Emmanuel Haget Loustic")),
-      )?.color,
-    ).toBe("red");
-    expect(
-      candidates.find((candidate) =>
-        canonicalizeText(candidate.rawText).includes(canonicalizeText("Bodegas Tradicien Fino Tradicien")),
-      )?.color,
-    ).toBe("sherry");
-    expect(
-      candidates.find((candidate) =>
-        canonicalizeText(candidate.rawText).includes(canonicalizeText("Asahara Shuzo Musashino Sparkling")),
-      )?.color,
-    ).toBe("sake");
-    expect(
-      candidates.find((candidate) =>
-        canonicalizeText(candidate.rawText).includes(canonicalizeText("Ota Shuzo Dokan Umeshu")),
-      )?.color,
-    ).toBe("sweet");
+    expect(normalizedCandidates).toEqual([
+      {
+        rawText: canonicalizeText("Martin Texier Petite Nature Rhône, France 2023"),
+        price: "$19",
+        color: "sparkling",
+      },
+      {
+        rawText: canonicalizeText("Stéphane Coquillette Inflorescence Champagne, France"),
+        price: "$31",
+        color: "sparkling",
+      },
+      {
+        rawText: canonicalizeText("Bonnet-Huteau Bonnets Blancs Muscadet 2023"),
+        price: "$14",
+        color: "white",
+      },
+      {
+        rawText: canonicalizeText("Schäztel Naturweiss Rheinhessen, Germany 2022"),
+        price: "$19",
+        color: "white",
+      },
+      {
+        rawText: canonicalizeText("Cameron, Chardonnay, Dundee Hills, Oregon 2023"),
+        price: "$28",
+        color: "white",
+      },
+      {
+        rawText: canonicalizeText("Franz Strohmeier Lysegren No. 9 Styria, Austria 2021"),
+        price: "$38",
+        color: "white",
+      },
+      {
+        rawText: canonicalizeText("Tissot En Barberon Chardonnay, Jura, France 2020"),
+        price: "$44",
+        color: "white",
+      },
+      {
+        rawText: canonicalizeText("Emmanuel Haget Loustic Saumur, France 2023"),
+        price: "$16",
+        color: "red",
+      },
+      {
+        rawText: canonicalizeText("Stefano Occhetti, Langhe Nebbiolo, Italy 2022"),
+        price: "$22",
+        color: "red",
+      },
+      {
+        rawText: canonicalizeText("Melville, Syrah, Sta. Rita Hills, California 2021"),
+        price: "$26",
+        color: "red",
+      },
+      {
+        rawText: canonicalizeText("Bodegas Tradición Fino Tradición Jerez, Spain"),
+        price: "$18",
+        color: "sherry",
+      },
+      {
+        rawText: canonicalizeText("Asahara Shuzo Musashino Sparkling Saitama, Japan"),
+        price: "$16",
+        color: "sake",
+      },
+      {
+        rawText: canonicalizeText("Kidoizumi Shuzo Yamadanishiki Chiba, Japan"),
+        price: "$17",
+        color: "sake",
+      },
+      {
+        rawText: canonicalizeText("Kirei Shuzo Hachiku Hiroshima, Japan"),
+        price: "$19",
+        color: "sake",
+      },
+      {
+        rawText: canonicalizeText("Ota Shuzo Dokan Umeshu Shiga. Japan"),
+        price: "$18",
+        color: "sweet",
+      },
+      {
+        rawText: canonicalizeText("La Stoppa Vino del Volta Emilia-Romagna, Italy 2023"),
+        price: "$26",
+        color: "sweet",
+      },
+    ]);
   });
 });

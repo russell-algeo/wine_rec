@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultPreference, inferTasteVector, rankMatch, scoreRecommendation, scoreWineMatch } from "./index.js";
+import {
+  defaultPreference,
+  inferTasteVector,
+  normalizeTasteValue,
+  rankMatch,
+  scoreRecommendation,
+  scoreWineMatch,
+} from "./index.js";
 
 describe("core scoring", () => {
   it("prefers high acidity and low sweetness for the default preference", () => {
@@ -40,5 +47,12 @@ describe("core scoring", () => {
 
     expect(score).toBeGreaterThanOrEqual(0.99);
     expect(rankMatch(score)).toBe("matched");
+  });
+
+  it("normalizes legacy 10-point taste values into the 5-point scale", () => {
+    expect(normalizeTasteValue(10)).toBe(5);
+    expect(normalizeTasteValue(9)).toBe(5);
+    expect(normalizeTasteValue(6)).toBe(3);
+    expect(normalizeTasteValue(4)).toBe(4);
   });
 });

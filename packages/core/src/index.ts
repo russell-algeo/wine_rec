@@ -7,19 +7,22 @@ import type {
 
 type MatchParts = Pick<WineCandidate, "producer" | "label" | "vintage" | "varietal" | "region">;
 
+export const TASTE_SCALE_MIN = 1;
+export const TASTE_SCALE_MAX = 5;
+
 const styleRubric: Record<string, Omit<TasteVector, "confidence" | "sourceMode">> = {
-  sauvignon_blanc: { body: 3, acidity: 9, tannin: 1, sweetness: 1 },
-  riesling_dry: { body: 4, acidity: 8, tannin: 1, sweetness: 2 },
-  chardonnay: { body: 6, acidity: 5, tannin: 1, sweetness: 2 },
-  pinot_noir: { body: 5, acidity: 7, tannin: 4, sweetness: 1 },
-  cabernet_sauvignon: { body: 8, acidity: 6, tannin: 8, sweetness: 1 },
-  syrah: { body: 8, acidity: 5, tannin: 7, sweetness: 1 },
-  champagne: { body: 5, acidity: 9, tannin: 1, sweetness: 1 },
-  prosecco: { body: 4, acidity: 7, tannin: 1, sweetness: 3 },
-  rose_dry: { body: 4, acidity: 7, tannin: 2, sweetness: 2 },
-  default_white: { body: 4, acidity: 7, tannin: 1, sweetness: 2 },
-  default_red: { body: 7, acidity: 5, tannin: 6, sweetness: 1 },
-  default_sparkling: { body: 4, acidity: 8, tannin: 1, sweetness: 2 },
+  sauvignon_blanc: { body: 2, acidity: 5, tannin: 1, sweetness: 1 },
+  riesling_dry: { body: 2, acidity: 4, tannin: 1, sweetness: 1 },
+  chardonnay: { body: 3, acidity: 3, tannin: 1, sweetness: 1 },
+  pinot_noir: { body: 3, acidity: 4, tannin: 2, sweetness: 1 },
+  cabernet_sauvignon: { body: 4, acidity: 3, tannin: 4, sweetness: 1 },
+  syrah: { body: 4, acidity: 3, tannin: 4, sweetness: 1 },
+  champagne: { body: 3, acidity: 5, tannin: 1, sweetness: 1 },
+  prosecco: { body: 2, acidity: 4, tannin: 1, sweetness: 2 },
+  rose_dry: { body: 2, acidity: 4, tannin: 1, sweetness: 1 },
+  default_white: { body: 2, acidity: 4, tannin: 1, sweetness: 1 },
+  default_red: { body: 4, acidity: 3, tannin: 3, sweetness: 1 },
+  default_sparkling: { body: 2, acidity: 4, tannin: 1, sweetness: 1 },
 };
 
 export function normalizeField(input: string | null | undefined): string {
@@ -64,8 +67,16 @@ export function rankMatch(score: number): "matched" | "low-confidence" | "unmatc
   return "unmatched";
 }
 
-function clampTaste(value: number): number {
-  return Math.max(1, Math.min(10, Math.round(value)));
+export function clampTaste(value: number): number {
+  return Math.max(TASTE_SCALE_MIN, Math.min(TASTE_SCALE_MAX, Math.round(value)));
+}
+
+export function normalizeTasteValue(value: number): number {
+  if (value > TASTE_SCALE_MAX && Number.isInteger(value)) {
+    return clampTaste(Math.round(value / 2));
+  }
+
+  return clampTaste(value);
 }
 
 export function inferTasteVector(candidate: Partial<WineCandidate>, profile?: Partial<WineProfile>): TasteVector {
@@ -89,10 +100,10 @@ export function inferTasteVector(candidate: Partial<WineCandidate>, profile?: Pa
   else if (color.includes("sparkling")) key = "default_sparkling";
 
   const inferred = styleRubric[key] ?? {
-    body: 4,
-    acidity: 7,
+    body: 2,
+    acidity: 4,
     tannin: 1,
-    sweetness: 2,
+    sweetness: 1,
   };
 
   let body = inferred.body;
@@ -112,7 +123,7 @@ export function inferTasteVector(candidate: Partial<WineCandidate>, profile?: Pa
     notes.includes("quinine") ||
     notes.includes("sea kelp")
   ) {
-    acidity += 2;
+    acidity += 1;
   }
 
   if (notes.includes("chilled")) {
@@ -142,10 +153,10 @@ export function mapExternalTasteVector(
   confidence: number,
 ): TasteVector {
   return {
-    body: clampTaste(input.body ?? 5),
-    acidity: clampTaste(input.acidity ?? 5),
-    tannin: clampTaste(input.tannin ?? 5),
-    sweetness: clampTaste(input.sweetness ?? 5),
+    body: normalizeTasteValue(input.body ?? 3),
+    acidity: normalizeTasteValue(input.acidity ?? 3),
+    tannin: normalizeTasteValue(input.tannin ?? 3),
+    sweetness: normalizeTasteValue(input.sweetness ?? 3),
     sourceMode,
     confidence,
   };
@@ -162,10 +173,10 @@ export function scoreRecommendation(
     Math.abs(preference.sweetness - taste.sweetness) * preference.weights.sweetness;
 
   const maxDistance =
-    9 * preference.weights.body +
-    9 * preference.weights.acidity +
-    9 * preference.weights.tannin +
-    9 * preference.weights.sweetness;
+    4 * preference.weights.body +
+    4 * preference.weights.acidity +
+    4 * preference.weights.tannin +
+    4 * preference.weights.sweetness;
 
   if (maxDistance === 0) return 100;
   const normalized = 1 - weightedDistance / maxDistance;
@@ -174,9 +185,9 @@ export function scoreRecommendation(
 
 export function defaultPreference(): UserTastePreference {
   return {
-    body: 5,
-    acidity: 9,
-    tannin: 5,
+    body: 3,
+    acidity: 5,
+    tannin: 3,
     sweetness: 1,
     weights: {
       body: 0.1,

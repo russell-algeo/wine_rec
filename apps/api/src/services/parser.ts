@@ -41,6 +41,26 @@ const regionHints = [
   "mosel",
 ];
 const sectionColors = new Set(sectionHeaderHints);
+const nonWineHints = [
+  "martini",
+  "draft",
+  "gyokuro",
+  "malt",
+  "cocktail",
+  "beer",
+  "drinks",
+  "rinks",
+];
+const menuTabMarkerPattern = /^@@TAB:\s*(.+)$/;
+const menuSectionMarkerPattern = /^@@SECTION:\s*(.+)$/;
+const inlinePricePattern =
+  /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?(?:\s+[A-Za-z])?)\s*$/;
+const ocrCorrections: Array<[RegExp, string]> = [
+  [/\bRhone\b/g, "Rhône"],
+  [/\bSchaztel\b/g, "Schäztel"],
+  [/Tradicién/g, "Tradición"],
+  [/Vino de\}\s+Volta/g, "Vino del Volta"],
+];
 
 function detectHint(line: string, hints: string[]): string | null {
   const normalized = line.toLowerCase();
@@ -49,11 +69,42 @@ function detectHint(line: string, hints: string[]): string | null {
 }
 
 function sanitizeOcrLine(line: string): string {
-  return line
+  const trimmed = line
     .trim()
     .replace(/^[*•|]+\s*/, "")
     .replace(/\s+[|«»]+$/g, "")
     .trim();
+
+  return applyOcrCorrections(trimmed);
+}
+
+function applyOcrCorrections(line: string): string {
+  return ocrCorrections.reduce((value, [pattern, replacement]) => {
+    return value.replace(pattern, replacement);
+  }, line);
+}
+
+function extractInlinePrice(line: string): { title: string; price: string | null } {
+  const match = line.match(inlinePricePattern);
+  if (!match) {
+    return { title: line.trim(), price: null };
+  }
+
+  return {
+    title: match[1]?.trim() ?? line.trim(),
+    price: `$${match[2]}`,
+  };
+}
+
+function isNonWineLine(line: string): boolean {
+  const normalized = line
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return true;
+  return nonWineHints.some((hint) => normalized.includes(hint));
 }
 
 function inferProducerAndLabel(
@@ -66,10 +117,11 @@ function inferProducerAndLabel(
   if (quotedLabelMatch) {
     const producer = quotedLabelMatch[1]?.trim().replace(/\s+-\s*$/, "") ?? null;
     const labelTail = quotedLabelMatch[3]?.trim().replace(/^[-,]\s*/, "") ?? "";
+    const labelTailLooksLikeMetadata = /,|\b(19|20)\d{2}\b/.test(labelTail);
     const label = [quotedLabelMatch[2]?.trim() ?? null, labelTail].filter(Boolean).join(" ") || null;
     return {
       producer: producer || null,
-      label,
+      label: labelTailLooksLikeMetadata ? (quotedLabelMatch[2]?.trim() ?? null) : label,
     };
   }
 
@@ -180,6 +232,8 @@ function parseBlock(
   startLineNumber: number,
   color: string | null,
   price: string | null,
+  menuTab: string | null,
+  menuSection: string | null,
 ): WineCandidate | null {
   if (lines.length === 0) return null;
 
@@ -210,7 +264,10 @@ function parseBlock(
     return null;
   }
 
-  const normalizedTitle = title.replace(/\s+-\s+/, " - ");
+  const { title: priceStrippedTitle, price: inlinePrice } = extractInlinePrice(
+    applyOcrCorrections(title.replace(/\s+-\s+/, " - ")),
+  );
+  const normalizedTitle = priceStrippedTitle;
   const vintageMatch = normalizedTitle.match(vintagePattern);
   const vintage = vintageMatch ? Number(vintageMatch[0]) : null;
   const splitTitle = normalizedTitle.split(/\s+-\s+/);
@@ -224,7 +281,9 @@ function parseBlock(
   return {
     id: nanoid(),
     rawText: normalizedTitle,
-    price,
+    price: price ?? inlinePrice,
+    menuTab,
+    menuSection,
     lineNumber: startLineNumber,
     producer,
     label,
@@ -241,11 +300,20 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
   const rawLines = extractedText.split(/\r?\n/);
   const candidates: WineCandidate[] = [];
   let currentColor: string | null = null;
+  let currentMenuTab: string | null = null;
+  let currentMenuSection: string | null = null;
   let currentBlock: string[] = [];
   let blockStartLineNumber = 0;
 
   const flushBlock = (price: string | null = null) => {
-    const candidate = parseBlock(currentBlock, blockStartLineNumber, currentColor, price);
+    const candidate = parseBlock(
+      currentBlock,
+      blockStartLineNumber,
+      currentColor,
+      price,
+      currentMenuTab,
+      currentMenuSection,
+    );
     if (candidate) {
       candidates.push(candidate);
     }
@@ -258,9 +326,32 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
       return;
     }
 
+    const tabMarker = line.match(menuTabMarkerPattern);
+    if (tabMarker) {
+      flushBlock();
+      currentMenuTab = tabMarker[1]?.trim() ?? null;
+      currentMenuSection = null;
+      currentColor = null;
+      return;
+    }
+
+    const sectionMarker = line.match(menuSectionMarkerPattern);
+    if (sectionMarker) {
+      flushBlock();
+      currentMenuSection = sectionMarker[1]?.trim() ?? null;
+      currentColor = normalizeSectionHeader(currentMenuSection ?? "");
+      return;
+    }
+
     if (isSectionHeader(line)) {
       flushBlock();
       currentColor = normalizeSectionHeader(line);
+      currentMenuSection = line;
+      return;
+    }
+
+    if (isNonWineLine(line)) {
+      flushBlock();
       return;
     }
 

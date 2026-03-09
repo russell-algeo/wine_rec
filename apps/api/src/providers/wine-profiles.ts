@@ -1,5 +1,5 @@
-import type { WineCandidate, WineProfile } from "@wine-rec/contracts";
-import { inferTasteVector, mapExternalTasteVector, scoreWineMatch } from "@wine-rec/core";
+import type { ProviderSettings, WineCandidate, WineProfile } from "@wine-rec/contracts";
+import { inferTasteVector, mapExternalTasteVector, normalizeTasteValue, scoreWineMatch } from "@wine-rec/core";
 import { nanoid } from "nanoid";
 
 import { appConfig } from "../config.js";
@@ -30,6 +30,23 @@ type RawExternalProfile = {
   tannin?: number | undefined;
   sweetness?: number | undefined;
   sourceUrl?: string | undefined;
+};
+
+type ApifyVivinoItem = {
+  name?: string;
+  winery?: string;
+  vintage?: number | string | null;
+  region?: string;
+  country?: string;
+  grape_varieties?: string[];
+  average_rating?: number | string | null;
+  vivino_url?: string;
+  taste_profile?: {
+    body?: number | string | null;
+    acidity?: number | string | null;
+    tannins?: number | string | null;
+    sweetness?: number | string | null;
+  } | null;
 };
 
 function buildProfile(
@@ -91,56 +108,109 @@ function buildProfile(
   };
 }
 
+function parseNumericValue(value: number | string | null | undefined): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function scaleVivinoTaste(value: number | string | null | undefined): number | undefined {
+  const parsed = parseNumericValue(value);
+  if (parsed === undefined) return undefined;
+  return normalizeTasteValue(parsed);
+}
+
+function normalizeApifyVivinoPayload(payload: unknown): ApifyVivinoItem[] {
+  if (Array.isArray(payload)) {
+    return payload as ApifyVivinoItem[];
+  }
+
+  if (payload && typeof payload === "object" && "items" in payload) {
+    const items = (payload as { items?: unknown }).items;
+    return Array.isArray(items) ? (items as ApifyVivinoItem[]) : [];
+  }
+
+  return payload ? [payload as ApifyVivinoItem] : [];
+}
+
 class ApifyVivinoProvider implements WineProfileProvider {
   name = "apify-vivino";
-  isEnabled = appConfig.enableUnofficialVivino && Boolean(
-    appConfig.apifyVivinoEndpoint || (appConfig.apifyToken && appConfig.apifyVivinoActorId),
-  );
-  detail = this.isEnabled
-    ? "Experimental Apify-backed Vivino lookup is enabled."
-    : "Missing Apify configuration or unofficial provider disabled.";
+  isEnabled: boolean;
+  detail: string;
+
+  constructor(runtimeEnabled: boolean) {
+    const hasConfig = Boolean(
+      appConfig.apifyVivinoEndpoint || (appConfig.apifyToken && appConfig.apifyVivinoActorId),
+    );
+
+    this.isEnabled = appConfig.enableUnofficialVivino && runtimeEnabled && hasConfig;
+    this.detail = this.isEnabled
+      ? "Experimental Apify-backed Vivino lookup is enabled."
+      : !appConfig.enableUnofficialVivino
+        ? "Disabled by ENABLE_UNOFFICIAL_VIVINO."
+        : !runtimeEnabled
+          ? "Disabled in provider controls."
+          : "Missing Apify configuration.";
+  }
 
   async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
     if (!this.isEnabled) return null;
 
     const query = [candidate.producer, candidate.label, candidate.vintage].filter(Boolean).join(" ");
-    const payload = appConfig.apifyVivinoEndpoint
+    const response = appConfig.apifyVivinoEndpoint
       ? await fetch(appConfig.apifyVivinoEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, candidate }),
-        }).then((response) => response.json())
+          body: JSON.stringify({ wineNames: [query], candidate }),
+        })
       : await fetch(
-          `https://api.apify.com/v2/acts/${appConfig.apifyVivinoActorId}/run-sync-get-dataset-items?token=${appConfig.apifyToken}`,
+          `https://api.apify.com/v2/acts/${appConfig.apifyVivinoActorId}/run-sync-get-dataset-items?clean=true`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query }),
+            headers: {
+              Authorization: `Bearer ${appConfig.apifyToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ wineNames: [query] }),
           },
-        ).then((response) => response.json());
+        );
 
-    const item = Array.isArray(payload) ? payload[0] : payload?.items?.[0] ?? payload;
+    if (!response.ok) {
+      throw new Error(`Apify Vivino request failed with ${response.status}`);
+    }
+
+    const items = normalizeApifyVivinoPayload(await response.json());
+    const item = items[0];
     if (!item) return null;
+
+    const vivinoTaste = item.taste_profile;
+    const body = scaleVivinoTaste(vivinoTaste?.body);
+    const acidity = scaleVivinoTaste(vivinoTaste?.acidity);
+    const tannin = scaleVivinoTaste(vivinoTaste?.tannins);
+    const sweetness = scaleVivinoTaste(vivinoTaste?.sweetness);
+    const hasDirectTaste = [body, acidity, tannin, sweetness].some((value) => value !== undefined);
+    const region = [item.region, item.country].filter(Boolean).join(", ") || undefined;
+    const grapeVariety = item.grape_varieties?.find(Boolean);
 
     return buildProfile(
       this.name,
       candidate,
       {
-        displayName: item.name ?? item.title,
-        producer: item.winery ?? item.producer,
-        label: item.label ?? item.name ?? item.title,
-        vintage: Number(item.vintage) || candidate.vintage || undefined,
-        region: item.region,
-        varietal: item.grape ?? item.varietal,
-        rating: Number(item.rating) || undefined,
-        body: Number(item.body) || undefined,
-        acidity: Number(item.acidity) || undefined,
-        tannin: Number(item.tannins ?? item.tannin) || undefined,
-        sweetness: Number(item.sweetness) || undefined,
-        sourceUrl: item.url,
+        displayName: [item.winery, item.name, item.vintage].filter(Boolean).join(" "),
+        producer: item.winery,
+        label: item.name,
+        vintage: parseNumericValue(item.vintage) ?? candidate.vintage ?? undefined,
+        region,
+        varietal: grapeVariety,
+        rating: parseNumericValue(item.average_rating),
+        body,
+        acidity,
+        tannin,
+        sweetness,
+        sourceUrl: item.vivino_url,
       },
-      item.body || item.acidity || item.tannins || item.sweetness ? "direct" : "mapped",
-      item.body || item.acidity || item.tannins || item.sweetness ? 0.92 : 0.7,
+      hasDirectTaste ? "direct" : "mapped",
+      hasDirectTaste ? 0.92 : 0.7,
     );
   }
 }
@@ -187,15 +257,15 @@ function inferDescriptionTaste(description: string) {
   const normalized = description.toLowerCase();
   return mapExternalTasteVector(
     {
-      body: normalized.includes("full-bodied") ? 8 : normalized.includes("medium-bodied") ? 6 : 4,
-      acidity: normalized.includes("crisp") || normalized.includes("zesty") ? 8 : 5,
-      tannin: normalized.includes("tannin") || normalized.includes("structured") ? 6 : 2,
+      body: normalized.includes("full-bodied") ? 4 : normalized.includes("medium-bodied") ? 3 : 2,
+      acidity: normalized.includes("crisp") || normalized.includes("zesty") ? 4 : 3,
+      tannin: normalized.includes("tannin") || normalized.includes("structured") ? 3 : 1,
       sweetness:
         normalized.includes("dry") || normalized.includes("bone dry")
           ? 1
           : normalized.includes("off-dry")
-            ? 4
-            : 2,
+            ? 2
+            : 1,
     },
     "mapped",
     0.58,
@@ -253,13 +323,21 @@ class RuleBasedInferenceProvider implements WineProfileProvider {
   detail = "Always available local inference from extracted wine metadata.";
 
   async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
-    return buildProfile(this.name, candidate, {}, "inferred", 0.45);
+    const result = buildProfile(this.name, candidate, {}, "inferred", 0.45);
+    return {
+      ...result,
+      matchScore: 0.05,
+    };
   }
 }
 
-export function createWineProfileProviders(): WineProfileProvider[] {
+export function createWineProfileProviders(
+  settings: ProviderSettings = {
+    apifyVivinoEnabled: appConfig.enableUnofficialVivino,
+  },
+): WineProfileProvider[] {
   const providerMap = new Map<string, WineProfileProvider>([
-    ["apify-vivino", new ApifyVivinoProvider()],
+    ["apify-vivino", new ApifyVivinoProvider(settings.apifyVivinoEnabled)],
     ["wine-searcher", new WineSearcherProvider()],
     ["spoonacular-style", new SpoonacularStyleProvider()],
     ["rule-based", new RuleBasedInferenceProvider()],
