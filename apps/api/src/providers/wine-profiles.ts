@@ -265,13 +265,18 @@ async function vivinoFetch(
 
       if (response.status === 429 && attempt < maxRetries) {
         const delay = baseBackoff * 2 ** attempt;
+        console.log("[vivino-direct] 429 rate-limited on %s, retrying in %dms (attempt %d/%d)", url.toString(), delay, attempt + 1, maxRetries);
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
 
-      if (!response.ok) return null;
+      if (!response.ok) {
+        console.log("[vivino-direct] HTTP %d from %s", response.status, url.toString());
+        return null;
+      }
       return response;
-    } catch {
+    } catch (error) {
+      console.log("[vivino-direct] Network error fetching %s: %s", url.toString(), error instanceof Error ? error.message : error);
       if (attempt < maxRetries) {
         const delay = baseBackoff * 2 ** attempt;
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -337,11 +342,20 @@ class VivinoDirectProvider implements WineProfileProvider {
   };
 
   async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
-    if (!this.isEnabled) return null;
+    if (!this.isEnabled) {
+      console.log("[vivino-direct] Provider is disabled, skipping");
+      return null;
+    }
+
+    console.log("[vivino-direct] Looking up candidate: %s", [candidate.producer, candidate.label, candidate.vintage].filter(Boolean).join(" "));
 
     // Step 1: Call explore endpoint for candidate matches
     const exploreMatches = await this.fetchExplore(candidate);
-    if (!exploreMatches?.length) return null;
+    if (!exploreMatches?.length) {
+      console.log("[vivino-direct] No explore matches found for candidate");
+      return null;
+    }
+    console.log("[vivino-direct] Got %d explore matches", exploreMatches.length);
 
     // Step 2: Score all explore results and pick best match
     const scored = exploreMatches.map((match) => ({
@@ -425,6 +439,8 @@ class VivinoDirectProvider implements WineProfileProvider {
       .filter(Boolean)
       .join(" ");
 
+    console.log("[vivino-direct] Explore query: %s", query);
+
     const url = new URL("https://www.vivino.com/api/explore/explore");
     url.searchParams.set("q", query);
     url.searchParams.set("page", "1");
@@ -436,14 +452,20 @@ class VivinoDirectProvider implements WineProfileProvider {
     }
 
     const response = await vivinoFetch(url, this.headers);
-    if (!response) return null;
+    if (!response) {
+      console.log("[vivino-direct] Explore fetch returned null (request failed)");
+      return null;
+    }
 
     try {
       const payload = (await response.json()) as {
         explore_vintage?: { matches?: VivinoExploreMatch[] };
       };
-      return payload?.explore_vintage?.matches ?? null;
-    } catch {
+      const matches = payload?.explore_vintage?.matches ?? null;
+      console.log("[vivino-direct] Explore returned %d matches", matches?.length ?? 0);
+      return matches;
+    } catch (error) {
+      console.log("[vivino-direct] Failed to parse explore response: %s", error instanceof Error ? error.message : error);
       return null;
     }
   }
