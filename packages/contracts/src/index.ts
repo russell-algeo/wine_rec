@@ -80,6 +80,7 @@ export const wineProfileSchema = z.object({
   rating: z.number().min(0).max(5).nullable(),
   provenanceLabel: z.string(),
   taste: tasteVectorSchema,
+  tastingNotes: z.string().nullable(),
   fetchedAt: z.string(),
 });
 

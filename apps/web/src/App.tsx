@@ -669,6 +669,12 @@ function ResultCard(props: {
           ))}
         </div>
       </div>
+      {recommendation.profile?.tastingNotes ? (
+        <p className="tasting-notes">
+          <span className="tasting-notes-label">Tasting notes: </span>
+          {recommendation.profile.tastingNotes}
+        </p>
+      ) : null}
     </article>
   );
 }
