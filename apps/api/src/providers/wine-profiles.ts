@@ -156,6 +156,38 @@ function vivinoTasteToScale(value: number | null | undefined): number | undefine
   return Math.max(1, Math.min(10, Math.round(value * 10)));
 }
 
+/** Fetch with retry on HTTP 429 using exponential backoff (pattern from aptash/vivino-api). */
+async function vivinoFetch(
+  url: URL | string,
+  headers: Record<string, string>,
+): Promise<Response | null> {
+  const maxRetries = appConfig.vivinoDirectMaxRetries;
+  const baseBackoff = appConfig.vivinoDirectBackoffMs;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, { headers });
+
+      if (response.status === 429 && attempt < maxRetries) {
+        const delay = baseBackoff * 2 ** attempt;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      if (!response.ok) return null;
+      return response;
+    } catch {
+      if (attempt < maxRetries) {
+        const delay = baseBackoff * 2 ** attempt;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 interface VivinoExploreMatch {
   vintage?: {
     id?: number;
@@ -188,12 +220,35 @@ interface VivinoExploreMatch {
   };
 }
 
+/** Shape returned by Vivino's /api/wines/{id}/tastes endpoint (from gugarosa/viviner). */
+interface VivinoTastesResponse {
+  tastes?: {
+    structure?: {
+      acidity?: number;
+      sweetness?: number;
+      tannin?: number;
+      intensity?: number;
+      fizziness?: number;
+    };
+    flavor?: Array<{
+      group?: string;
+      stats?: { score?: number };
+      primary_keywords?: Array<{ name?: string }>;
+    }>;
+  };
+}
+
 class VivinoDirectProvider implements WineProfileProvider {
   name = "vivino-direct";
   isEnabled = appConfig.enableVivinoDirect;
   detail = this.isEnabled
     ? "Direct Vivino explore-API lookup is enabled."
     : "Direct Vivino provider is disabled (ENABLE_VIVINO_DIRECT=false).";
+
+  private readonly headers = {
+    "User-Agent": appConfig.vivinoDirectUserAgent,
+    Accept: "application/json",
+  };
 
   async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
     if (!this.isEnabled) return null;
@@ -208,16 +263,16 @@ class VivinoDirectProvider implements WineProfileProvider {
     url.searchParams.set("per_page", "5");
     url.searchParams.set("currency_code", "USD");
 
+    // Add optional country filter (pattern from Piltxi/Vivino-Crawler & gugarosa/viviner)
+    for (const code of appConfig.vivinoDirectCountryCodes) {
+      url.searchParams.append("country_codes[]", code);
+    }
+
+    const response = await vivinoFetch(url, this.headers);
+    if (!response) return null;
+
     let payload: { explore_vintage?: { matches?: VivinoExploreMatch[] } };
     try {
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": appConfig.vivinoDirectUserAgent,
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok) return null;
       payload = (await response.json()) as typeof payload;
     } catch {
       return null;
@@ -226,13 +281,29 @@ class VivinoDirectProvider implements WineProfileProvider {
     const matches = payload?.explore_vintage?.matches;
     if (!matches?.length) return null;
 
-    // Pick best match by comparing names
-    const item = matches[0];
+    // Pick first match (best relevance from Vivino's ranking)
+    const item = matches[0]!;
     const wine = item.vintage?.wine;
     const stats = item.vintage?.statistics;
-    const taste = wine?.taste?.structure;
+    let taste = wine?.taste?.structure;
 
     if (!wine) return null;
+
+    // Optionally fetch richer taste data from /api/wines/{id}/tastes (pattern from gugarosa/viviner)
+    if (appConfig.vivinoDirectFetchTastes && wine.id && !taste) {
+      const tastesUrl = `https://www.vivino.com/api/wines/${wine.id}/tastes`;
+      const tastesResponse = await vivinoFetch(new URL(tastesUrl), this.headers);
+      if (tastesResponse) {
+        try {
+          const tastesPayload = (await tastesResponse.json()) as VivinoTastesResponse;
+          if (tastesPayload?.tastes?.structure) {
+            taste = tastesPayload.tastes.structure;
+          }
+        } catch {
+          // ignore – fall back to explore data
+        }
+      }
+    }
 
     const hasDirectTaste = Boolean(
       taste &&

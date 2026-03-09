@@ -49,4 +49,15 @@ export const appConfig = {
     process.env.VIVINO_DIRECT_USER_AGENT ??
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
   vivinoDirectDelayMs: parseNumber(process.env.VIVINO_DIRECT_DELAY_MS, 500),
+  /** Maximum retries on HTTP 429 before giving up. */
+  vivinoDirectMaxRetries: parseNumber(process.env.VIVINO_DIRECT_MAX_RETRIES, 3),
+  /** Base backoff in ms for 429 retry (doubles each attempt). */
+  vivinoDirectBackoffMs: parseNumber(process.env.VIVINO_DIRECT_BACKOFF_MS, 2000),
+  /** Whether to fetch the secondary /api/wines/{id}/tastes endpoint for richer taste data. */
+  vivinoDirectFetchTastes: parseBoolean(process.env.VIVINO_DIRECT_FETCH_TASTES, true),
+  /** Optional country codes filter, e.g. "us,fr,it" */
+  vivinoDirectCountryCodes: (process.env.VIVINO_DIRECT_COUNTRY_CODES ?? "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean),
 };

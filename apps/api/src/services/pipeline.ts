@@ -1,6 +1,7 @@
 import type { Recommendation, WineCandidate } from "@wine-rec/contracts";
 import { rankMatch, scoreRecommendation } from "@wine-rec/core";
 
+import { appConfig } from "../config.js";
 import { createOcrProvider } from "../providers/ocr.js";
 import { createWineProfileProviders } from "../providers/wine-profiles.js";
 import { parseWineCandidates } from "./parser.js";
@@ -23,7 +24,13 @@ export async function runAnalysisPipeline(input: {
 
   const recommendations: Recommendation[] = [];
 
+  let isFirstCandidate = true;
   for (const candidate of candidates) {
+    // Rate-limit delay between candidates to avoid Vivino 429s
+    if (!isFirstCandidate && appConfig.vivinoDirectDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, appConfig.vivinoDirectDelayMs));
+    }
+    isFirstCandidate = false;
     let best:
       | {
           fitScore: number;
