@@ -46,13 +46,13 @@ final class AppModel {
     }
 
     private func pollAnalysis(id: String) async throws {
-        for _ in 0..<30 {
+        while !Task.isCancelled {
             let next = try await apiClient.fetchAnalysis(id: id)
             analysis = next
-            if next.status == "completed" || next.status == "failed" {
+            if next.status == "completed" || next.status == "failed" || next.status == "canceled" {
                 return
             }
-            try await Task.sleep(for: .seconds(2))
+            try await Task.sleep(for: .seconds(1))
         }
     }
 }

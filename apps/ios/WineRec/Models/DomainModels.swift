@@ -37,6 +37,7 @@ struct Recommendation: Codable, Identifiable {
 
 struct WineCandidate: Codable, Identifiable {
     let id: String
+    let price: String?
 }
 
 struct AnalysisRun: Codable {

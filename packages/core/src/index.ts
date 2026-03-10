@@ -5,7 +5,101 @@ import type {
   WineProfile,
 } from "@wine-rec/contracts";
 
-type MatchParts = Pick<WineCandidate, "producer" | "label" | "vintage" | "varietal" | "region">;
+type MatchParts = Pick<
+  WineCandidate,
+  "producer" | "label" | "vintage" | "varietal" | "region"
+> &
+  Partial<Pick<WineCandidate, "rawText" | "color">>;
+
+const identityStopwords = new Set([
+  "a",
+  "an",
+  "and",
+  "da",
+  "de",
+  "del",
+  "della",
+  "di",
+  "do",
+  "dos",
+  "du",
+  "la",
+  "le",
+  "of",
+  "regional",
+  "terre",
+  "the",
+  "vin",
+  "vino",
+  "vinho",
+  "wine",
+  "wines",
+]);
+
+const countryTokens = new Set([
+  "argentina",
+  "australia",
+  "france",
+  "germany",
+  "italy",
+  "japan",
+  "portugal",
+  "spain",
+  "states",
+  "united",
+]);
+
+const conceptAliases = new Map<string, string>([
+  ["bianco", "white"],
+  ["blanc", "white"],
+  ["blanco", "white"],
+  ["branco", "white"],
+  ["frizzante", "sparkling"],
+  ["red", "red"],
+  ["reserve", "reserve"],
+  ["reserva", "reserve"],
+  ["ros", "rose"],
+  ["rose", "rose"],
+  ["rosado", "rose"],
+  ["rosato", "rose"],
+  ["rosé", "rose"],
+  ["rosso", "red"],
+  ["rouge", "red"],
+  ["sparkling", "sparkling"],
+  ["spumante", "sparkling"],
+  ["superior", "superior"],
+  ["tinto", "red"],
+  ["white", "white"],
+]);
+
+const exactConceptBonusTokens = new Set([
+  "bianco",
+  "blanc",
+  "blanco",
+  "branco",
+  "frizzante",
+  "reserve",
+  "reserva",
+  "ros",
+  "rose",
+  "rosado",
+  "rosato",
+  "rosé",
+  "rosso",
+  "rouge",
+  "spumante",
+  "superior",
+  "tinto",
+]);
+
+const conceptPenaltyWeights = new Map<string, number>([
+  ["red", 0.12],
+  ["reserve", 0.14],
+  ["rose", 0.2],
+  ["sparkling", 0.16],
+  ["superior", 0.12],
+  ["white", 0.16],
+]);
 
 export const TASTE_SCALE_MIN = 1;
 export const TASTE_SCALE_MAX = 5;
@@ -46,11 +140,145 @@ function scoreToken(left: string | null | undefined, right: string | null | unde
   return union === 0 ? 0 : overlap / union;
 }
 
+function tokenize(value: string | null | undefined): string[] {
+  const normalized = normalizeField(value);
+  return normalized ? normalized.split(" ") : [];
+}
+
+function isYearToken(token: string): boolean {
+  return /^(19|20)\d{2}$/.test(token);
+}
+
+function isVolumeToken(token: string): boolean {
+  return /^\d+(?:l|ml)$/.test(token);
+}
+
+function extractIdentityTokens(value: string | null | undefined): string[] {
+  return tokenize(value).filter((token) => {
+    return (
+      token.length > 1 &&
+      !identityStopwords.has(token) &&
+      !countryTokens.has(token) &&
+      !conceptAliases.has(token) &&
+      !isYearToken(token) &&
+      !isVolumeToken(token)
+    );
+  });
+}
+
+function buildTokenSet(values: Array<string | null | undefined>): Set<string> {
+  return new Set(values.flatMap((value) => extractIdentityTokens(value)));
+}
+
+function overlapRatio(candidateTokens: string[], targetTokens: Set<string>): number {
+  if (candidateTokens.length === 0 || targetTokens.size === 0) return 0;
+  const overlap = candidateTokens.filter((token) => targetTokens.has(token)).length;
+  return overlap / candidateTokens.length;
+}
+
+function scoreIdentityCoverage(
+  candidateValue: string | null | undefined,
+  targetValues: Array<string | null | undefined>,
+  singleTokenMultiplier = 1,
+): number {
+  const candidateTokens = extractIdentityTokens(candidateValue);
+  const score = overlapRatio(candidateTokens, buildTokenSet(targetValues));
+  return candidateTokens.length === 1 ? score * singleTokenMultiplier : score;
+}
+
+function scoreIdentityRecovery(
+  candidateValue: string | null | undefined,
+  alreadyMatchedValues: Array<string | null | undefined>,
+  recoveryValues: Array<string | null | undefined>,
+): number {
+  const candidateTokens = extractIdentityTokens(candidateValue);
+  if (candidateTokens.length === 0) return 0;
+
+  const matchedTokens = buildTokenSet(alreadyMatchedValues);
+  const remainingTokens = candidateTokens.filter((token) => !matchedTokens.has(token));
+  if (remainingTokens.length === 0) return 0;
+
+  return overlapRatio(remainingTokens, buildTokenSet(recoveryValues));
+}
+
+function scoreNovelRegionCoverage(
+  candidateRegion: string | null | undefined,
+  candidateLabel: string | null | undefined,
+  profileRegion: string | null | undefined,
+): number {
+  const labelTokens = new Set(extractIdentityTokens(candidateLabel));
+  const regionTokens = extractIdentityTokens(candidateRegion).filter(
+    (token) => !labelTokens.has(token),
+  );
+  return overlapRatio(regionTokens, buildTokenSet([profileRegion]));
+}
+
+function extractConcepts(values: Array<string | null | undefined>): Set<string> {
+  const concepts = new Set<string>();
+  for (const token of values.flatMap((value) => tokenize(value))) {
+    const concept = conceptAliases.get(token);
+    if (concept) concepts.add(concept);
+  }
+  return concepts;
+}
+
+function extractExactConceptTokens(values: Array<string | null | undefined>): Set<string> {
+  return new Set(
+    values.flatMap((value) => tokenize(value)).filter((token) => exactConceptBonusTokens.has(token)),
+  );
+}
+
+function scoreExactConceptTokenBonus(candidate: MatchParts, profile: Partial<MatchParts>): number {
+  const candidateConceptTokens = extractExactConceptTokens([
+    candidate.label,
+    candidate.varietal,
+    candidate.region,
+  ]);
+  if (candidateConceptTokens.size === 0) return 0;
+
+  const profileConceptTokens = extractExactConceptTokens([
+    profile.label,
+    profile.varietal,
+    profile.region,
+  ]);
+  const matched = [...candidateConceptTokens].filter((token) => profileConceptTokens.has(token));
+  return matched.length > 0 ? 1 : 0;
+}
+
+function scoreConceptPenalty(candidate: MatchParts, profile: Partial<MatchParts>): number {
+  const candidateConcepts = extractConcepts([
+    candidate.label,
+    candidate.varietal,
+    candidate.region,
+    candidate.rawText,
+    candidate.color,
+  ]);
+  const profileConcepts = extractConcepts([profile.label, profile.varietal, profile.region]);
+
+  let penalty = 0;
+  for (const concept of profileConcepts) {
+    if (candidateConcepts.has(concept)) continue;
+    penalty += conceptPenaltyWeights.get(concept) ?? 0;
+  }
+
+  return Math.min(0.3, penalty);
+}
+
 export function scoreWineMatch(candidate: MatchParts, profile: Partial<MatchParts>): number {
   const producerScore = scoreToken(candidate.producer, profile.producer) * 0.35;
-  const labelScore = scoreToken(candidate.label, profile.label) * 0.35;
-  const varietalScore = scoreToken(candidate.varietal, profile.varietal) * 0.1;
-  const regionScore = scoreToken(candidate.region, profile.region) * 0.05;
+  const labelScore = scoreIdentityCoverage(candidate.label, [profile.label], 0.6) * 0.35;
+  const producerRecoveryBonus =
+    scoreIdentityRecovery(candidate.label, [profile.label], [profile.producer]) * 0.04;
+  const regionRecoveryBonus =
+    scoreIdentityRecovery(candidate.label, [profile.label, profile.producer], [profile.region]) *
+    0.04;
+  const varietalScore = scoreIdentityCoverage(candidate.varietal, [profile.varietal]) * 0.1;
+  const regionScore = scoreNovelRegionCoverage(candidate.region, candidate.label, profile.region) * 0.05;
+  const rawTextBonus =
+    scoreIdentityCoverage(candidate.rawText, [profile.producer, profile.label, profile.region]) *
+    0.03;
+  const exactConceptBonus = scoreExactConceptTokenBonus(candidate, profile) * 0.05;
+  const contradictionPenalty = scoreConceptPenalty(candidate, profile);
   const vintageScore =
     candidate.vintage && profile.vintage
       ? candidate.vintage === profile.vintage
@@ -58,7 +286,22 @@ export function scoreWineMatch(candidate: MatchParts, profile: Partial<MatchPart
         : 0
       : 0;
 
-  return producerScore + labelScore + varietalScore + regionScore + vintageScore;
+  return Math.max(
+    0,
+    Math.min(
+      1,
+      producerScore +
+        labelScore +
+        producerRecoveryBonus +
+        regionRecoveryBonus +
+        varietalScore +
+        regionScore +
+        vintageScore +
+        rawTextBonus +
+        exactConceptBonus -
+        contradictionPenalty,
+    ),
+  );
 }
 
 export function rankMatch(score: number): "matched" | "low-confidence" | "unmatched" {

@@ -1,7 +1,6 @@
 import type {
   AnalysisRun,
   AnalysisStatus,
-  ProviderSettings,
   Recommendation,
   UserTastePreference,
 } from "@wine-rec/contracts";
@@ -9,7 +8,6 @@ import { nanoid } from "nanoid";
 
 import { defaultPreference, normalizeTasteValue } from "@wine-rec/core";
 
-import { appConfig } from "../config.js";
 import { sqlite } from "../db/client.js";
 import { bootstrapDatabase } from "../db/bootstrap.js";
 
@@ -21,6 +19,7 @@ type AnalysisRow = {
   source_filename: string;
   storage_path: string;
   status: string;
+  cancellation_requested: number;
   error_message: string | null;
   extracted_text: string | null;
   candidates_json: string;
@@ -41,6 +40,9 @@ type PreferenceRow = {
   weight_sweetness: number;
 };
 
+const canceledByUserMessage = "Analysis stopped by user.";
+const terminalAnalysisStatuses = new Set<AnalysisStatus>(["canceled", "completed", "failed"]);
+
 function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
@@ -51,14 +53,6 @@ function serializeWeights(weight: number): number {
 
 function deserializeWeights(weight: number): number {
   return weight / 1000;
-}
-
-function serializeBoolean(value: boolean): number {
-  return value ? 1 : 0;
-}
-
-function deserializeBoolean(value: number): boolean {
-  return value === 1;
 }
 
 function normalizeStoredPreferences(row: PreferenceRow): {
@@ -130,6 +124,10 @@ function rowToAnalysis(row: AnalysisRow): AnalysisRun {
   };
 }
 
+function isAnalysisTerminal(status: string): boolean {
+  return terminalAnalysisStatuses.has(status as AnalysisStatus);
+}
+
 export async function createAnalysis(input: {
   sourceType: AnalysisRun["sourceType"];
   sourceFilename: string;
@@ -155,12 +153,15 @@ export async function createAnalysis(input: {
   return rowToAnalysis(row);
 }
 
-export async function getAnalysisById(id: string): Promise<(AnalysisRun & { storagePath: string }) | null> {
+export async function getAnalysisById(
+  id: string,
+): Promise<(AnalysisRun & { storagePath: string; cancellationRequested: boolean }) | null> {
   const row = sqlite.prepare("SELECT * FROM analyses WHERE id = ?").get(id) as AnalysisRow | undefined;
   if (!row) return null;
   return {
     ...rowToAnalysis(row),
     storagePath: row.storage_path,
+    cancellationRequested: Boolean(row.cancellation_requested),
   };
 }
 
@@ -177,12 +178,26 @@ export async function queueAnalysis(id: string): Promise<void> {
 
   if (existingJob) return;
 
+  const analysis = sqlite
+    .prepare("SELECT status FROM analyses WHERE id = ?")
+    .get(id) as Pick<AnalysisRow, "status"> | undefined;
+
+  if (!analysis || isAnalysisTerminal(analysis.status)) {
+    return;
+  }
+
   sqlite
     .prepare("INSERT INTO jobs (id, analysis_id, status) VALUES (?, ?, ?)")
     .run(nanoid(), id, "queued");
 
   sqlite
-    .prepare("UPDATE analyses SET status = ?, updated_at = ? WHERE id = ?")
+    .prepare(
+      `
+        UPDATE analyses
+        SET status = ?, updated_at = ?, cancellation_requested = 0, error_message = NULL
+        WHERE id = ?
+      `,
+    )
     .run("queued", new Date().toISOString(), id);
 }
 
@@ -194,14 +209,64 @@ export async function fetchQueuedJobs(): Promise<Array<{ id: string; analysisId:
   return rows.map((row) => ({ id: row.id, analysisId: row.analysis_id }));
 }
 
-export async function markJobProcessing(jobId: string, analysisId: string): Promise<void> {
+export async function markJobProcessing(jobId: string, analysisId: string): Promise<boolean> {
+  const analysis = sqlite
+    .prepare("SELECT status, cancellation_requested FROM analyses WHERE id = ?")
+    .get(analysisId) as Pick<AnalysisRow, "status" | "cancellation_requested"> | undefined;
+
+  if (!analysis || analysis.cancellation_requested || isAnalysisTerminal(analysis.status)) {
+    sqlite
+      .prepare("UPDATE jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ?")
+      .run("canceled", canceledByUserMessage, new Date().toISOString(), jobId);
+
+    return false;
+  }
+
   sqlite
     .prepare("UPDATE jobs SET status = ?, attempts = attempts + 1, updated_at = ? WHERE id = ?")
     .run("processing", new Date().toISOString(), jobId);
 
-  sqlite
-    .prepare("UPDATE analyses SET status = ?, updated_at = ?, error_message = NULL WHERE id = ?")
+  const result = sqlite
+    .prepare(
+      `
+        UPDATE analyses
+        SET status = ?, updated_at = ?, error_message = NULL, extracted_text = NULL, candidates_json = '[]', recommendations_json = '[]'
+        WHERE id = ? AND cancellation_requested = 0
+      `,
+    )
     .run("processing", new Date().toISOString(), analysisId);
+
+  if (result.changes === 0) {
+    sqlite
+      .prepare("UPDATE jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ?")
+      .run("canceled", canceledByUserMessage, new Date().toISOString(), jobId);
+    return false;
+  }
+
+  return true;
+}
+
+export async function saveAnalysisExtraction(input: {
+  analysisId: string;
+  extractedText: string;
+  candidates: AnalysisRun["candidates"];
+}): Promise<boolean> {
+  const result = sqlite
+    .prepare(
+      `
+        UPDATE analyses
+        SET extracted_text = ?, candidates_json = ?, recommendations_json = '[]', updated_at = ?, error_message = NULL
+        WHERE id = ? AND cancellation_requested = 0 AND status != 'canceled'
+      `,
+    )
+    .run(
+      input.extractedText,
+      JSON.stringify(input.candidates),
+      new Date().toISOString(),
+      input.analysisId,
+    );
+
+  return result.changes > 0;
 }
 
 export async function completeAnalysis(input: {
@@ -209,13 +274,13 @@ export async function completeAnalysis(input: {
   extractedText: string;
   candidatesJson: string;
   recommendationsJson: string;
-}): Promise<void> {
-  sqlite
+}): Promise<boolean> {
+  const result = sqlite
     .prepare(
       `
         UPDATE analyses
         SET status = ?, extracted_text = ?, candidates_json = ?, recommendations_json = ?, updated_at = ?, error_message = NULL
-        WHERE id = ?
+        WHERE id = ? AND cancellation_requested = 0 AND status != 'canceled'
       `,
     )
     .run(
@@ -227,9 +292,18 @@ export async function completeAnalysis(input: {
       input.analysisId,
     );
 
+  if (result.changes === 0) {
+    sqlite
+      .prepare("UPDATE jobs SET status = ?, last_error = ?, updated_at = ? WHERE analysis_id = ?")
+      .run("canceled", canceledByUserMessage, new Date().toISOString(), input.analysisId);
+    return false;
+  }
+
   sqlite
     .prepare("UPDATE jobs SET status = ?, updated_at = ?, last_error = NULL WHERE analysis_id = ?")
     .run("completed", new Date().toISOString(), input.analysisId);
+
+  return true;
 }
 
 export async function failAnalysis(input: {
@@ -237,13 +311,24 @@ export async function failAnalysis(input: {
   jobId: string;
   error: string;
 }): Promise<void> {
-  sqlite
-    .prepare("UPDATE analyses SET status = ?, updated_at = ?, error_message = ? WHERE id = ?")
+  const result = sqlite
+    .prepare(
+      `
+        UPDATE analyses
+        SET status = ?, updated_at = ?, error_message = ?
+        WHERE id = ? AND cancellation_requested = 0 AND status != 'canceled'
+      `,
+    )
     .run("failed", new Date().toISOString(), input.error, input.analysisId);
 
   sqlite
     .prepare("UPDATE jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ?")
-    .run("failed", input.error, new Date().toISOString(), input.jobId);
+    .run(
+      result.changes > 0 ? "failed" : "canceled",
+      result.changes > 0 ? input.error : canceledByUserMessage,
+      new Date().toISOString(),
+      input.jobId,
+    );
 }
 
 export async function getPreferences(): Promise<UserTastePreference> {
@@ -327,64 +412,87 @@ export async function putPreferences(preferences: UserTastePreference): Promise<
   return preferences;
 }
 
-export async function getProviderSettings(): Promise<ProviderSettings> {
-  const row = sqlite
-    .prepare("SELECT * FROM provider_settings WHERE id = ?")
-    .get("default") as
-    | {
-        id: string;
-        apify_vivino_enabled: number;
-      }
-    | undefined;
-
-  if (!row) {
-    return {
-      apifyVivinoEnabled: appConfig.enableUnofficialVivino,
-    };
-  }
-
-  return {
-    apifyVivinoEnabled: deserializeBoolean(row.apify_vivino_enabled),
-  };
-}
-
-export async function putProviderSettings(settings: ProviderSettings): Promise<ProviderSettings> {
-  const existing = sqlite.prepare("SELECT id FROM provider_settings WHERE id = ?").get("default");
-  const payload = {
-    id: "default",
-    apifyVivinoEnabled: serializeBoolean(settings.apifyVivinoEnabled),
-    updatedAt: new Date().toISOString(),
-  };
-
-  if (existing) {
-    sqlite
-      .prepare(
-        `
-          UPDATE provider_settings
-          SET apify_vivino_enabled = ?, updated_at = ?
-          WHERE id = ?
-        `,
-      )
-      .run(payload.apifyVivinoEnabled, payload.updatedAt, payload.id);
-  } else {
-    sqlite
-      .prepare(
-        `
-          INSERT INTO provider_settings (id, apify_vivino_enabled, updated_at)
-          VALUES (?, ?, ?)
-        `,
-      )
-      .run(payload.id, payload.apifyVivinoEnabled, payload.updatedAt);
-  }
-
-  return settings;
-}
-
 export async function updateRecommendations(
   analysisId: string,
   recommendations: Recommendation[],
-): Promise<void> {
-  sqlite
-    .prepare("UPDATE analyses SET recommendations_json = ?, updated_at = ? WHERE id = ?")
+): Promise<boolean> {
+  const result = sqlite
+    .prepare(
+      `
+        UPDATE analyses
+        SET recommendations_json = ?, updated_at = ?
+        WHERE id = ? AND cancellation_requested = 0 AND status != 'canceled'
+      `,
+    )
     .run(JSON.stringify(recommendations), new Date().toISOString(), analysisId);
+
+  return result.changes > 0;
+}
+
+export async function isAnalysisCancellationRequested(analysisId: string): Promise<boolean> {
+  const row = sqlite
+    .prepare("SELECT status, cancellation_requested FROM analyses WHERE id = ?")
+    .get(analysisId) as Pick<AnalysisRow, "status" | "cancellation_requested"> | undefined;
+
+  if (!row) {
+    return true;
+  }
+
+  return Boolean(row.cancellation_requested) || row.status === "canceled";
+}
+
+export async function requestAnalysisCancellation(analysisId: string): Promise<AnalysisRun | null> {
+  const row = sqlite.prepare("SELECT * FROM analyses WHERE id = ?").get(analysisId) as AnalysisRow | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  if (!isAnalysisTerminal(row.status)) {
+    const updatedAt = new Date().toISOString();
+
+    sqlite
+      .prepare(
+        `
+          UPDATE analyses
+          SET status = ?, cancellation_requested = 1, updated_at = ?, error_message = ?
+          WHERE id = ?
+        `,
+      )
+      .run("canceled", updatedAt, canceledByUserMessage, analysisId);
+
+    sqlite
+      .prepare(
+        `
+          UPDATE jobs
+          SET status = ?, last_error = ?, updated_at = ?
+          WHERE analysis_id = ? AND status IN ('queued', 'processing')
+        `,
+      )
+      .run("canceled", canceledByUserMessage, updatedAt, analysisId);
+  }
+
+  const analysis = await getAnalysisById(analysisId);
+  return analysis;
+}
+
+export async function markAnalysisCanceled(input: {
+  analysisId: string;
+  jobId: string;
+}): Promise<void> {
+  const updatedAt = new Date().toISOString();
+
+  sqlite
+    .prepare(
+      `
+        UPDATE analyses
+        SET status = ?, cancellation_requested = 1, updated_at = ?, error_message = COALESCE(error_message, ?)
+        WHERE id = ? AND status != 'completed' AND status != 'failed'
+      `,
+    )
+    .run("canceled", updatedAt, canceledByUserMessage, input.analysisId);
+
+  sqlite
+    .prepare("UPDATE jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ?")
+    .run("canceled", canceledByUserMessage, updatedAt, input.jobId);
 }

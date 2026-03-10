@@ -101,7 +101,7 @@ describe("wine parser", () => {
     expect(includesWine("Toby Bainbridge Crush")).toBe(true);
     expect(includesWine("United Cellars of Tekov Kind of Glou")).toBe(true);
     expect(candidates.map((candidate) => candidate.price)).toEqual(["$17", "$15", "$17"]);
-  });
+  }, 15_000);
 
   integration("parses the photographed sectioned menu from the real screenshot", async () => {
     const extractedText = await ocrFixtureToText("Screenshot 2026-03-08 at 10.48.03");
@@ -194,5 +194,5 @@ describe("wine parser", () => {
         color: "sweet",
       },
     ]);
-  });
+  }, 15_000);
 });

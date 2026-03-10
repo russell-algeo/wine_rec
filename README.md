@@ -22,13 +22,16 @@ packages/
 
 ## Quick Start
 
-1. Copy `.env.example` to `.env` and add API keys if you want real OCR and enrichment.
+1. Copy `.env.example` to `.env` and add API keys only if you want real OCR.
 2. Install dependencies with `npm install`.
-3. Run `npm run dev`.
-4. Open the web client at `http://localhost:5173`.
+3. Install the Playwright browser bundle once with `npx playwright install chromium`.
+4. Run `npm run dev`.
+5. Open the web client at `http://localhost:5173`.
 
 The default `.env.example` uses mock OCR so the pipeline can run without external services.
 If `tesseract` is installed locally, set `OCR_PROVIDER=tesseract` in `.env` to run real OCR on image uploads.
+`npm run dev` starts the API, web client, and worker together and watches for code changes.
+If you need the old non-watch behavior, use `npm run dev:once`.
 
 ## Running Locally
 
@@ -49,8 +52,22 @@ If `tesseract` is installed locally, set `OCR_PROVIDER=tesseract` in `.env` to r
 
 If you do not want to install `xcodegen`, you can also create a new iOS app in Xcode named `WineRec` and then add the files under [apps/ios/WineRec](/Users/russellalgeo/Desktop/Side%20Job/wine_rec/apps/ios/WineRec).
 
+## Provider Strategy
+
+- The active enrichment stack is `vivino-direct` followed by `rule-based`.
+- `vivino-direct` uses an embedded Playwright browser session to scrape Vivino search results and then enrich the best match with Vivino taste data.
+- `rule-based` stays in place as the always-available local fallback when browser scraping is disabled, blocked, or too low-confidence.
+
+## Archived Integration Notes
+
+The deprecated integrations below were removed from the live runtime on March 10, 2026 to keep the provider stack focused on the Playwright path. These notes are here so the options are easy to revisit later without keeping dormant code around.
+
+- `apify-vivino`: This was a managed Vivino scrape path via an Apify actor or custom endpoint. Revisit it if the browser approach becomes too fragile, if rate-limiting needs to move off-box, or if you want a paid sidecar/source that returns normalized Vivino payloads without running Playwright locally.
+- `wine-searcher`: This was a custom endpoint hook for Wine-Searcher style lookups. Revisit it if you get access to a stable wrapper that can add bottle metadata, merchant/price context, or broader catalog coverage than Vivino.
+- `spoonacular-style`: This was a description-based style fallback keyed off varietal or wine name. Revisit it only if you need a coarse textual style signal when exact bottle matching is impossible; it is too low-fidelity to be a primary recommendation source.
+
 ## Notes
 
-- The unofficial Vivino-backed provider is behind a feature flag.
+- The `vivino-direct` provider uses an embedded Playwright Chromium browser to scrape Vivino search results. As a future improvement, this could be extracted into a dedicated sidecar process (a small HTTP service wrapping Playwright) for independent scaling and restarts without affecting the main API.
 - Full iOS builds require Xcode, which is not available in this workspace at the moment.
 - `task_plan.md`, `findings.md`, and `progress.md` are included to follow the planning workflow during implementation.

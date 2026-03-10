@@ -5,8 +5,8 @@ import type {
   AnalysisRun,
   CreateAnalysisResponse,
   ProviderHealth,
-  ProviderSettings,
   UserTastePreference,
+  WineRatingSource,
 } from "@wine-rec/contracts";
 
 const apiBaseUrl =
@@ -41,12 +41,15 @@ function preferencesEqual(left: UserTastePreference, right: UserTastePreference)
 
 type AnalysisState = {
   analysisId: string;
-  status: string;
+  status: AnalysisRun["status"];
 };
 
 type ResultSortOrder = "recommended" | "discovered";
+type ResultProfileFilter = "all" | "exclude-inferred";
 type ResultRecommendation = AnalysisRun["recommendations"][number];
 type ResultCandidate = AnalysisRun["candidates"][number];
+type ResultWineProfile = NonNullable<ResultRecommendation["profile"]>;
+type ResultTastingNoteGroup = NonNullable<ResultWineProfile["tastingNoteGroups"]>[number];
 type ResultSection = {
   id: string;
   label: string;
@@ -54,15 +57,126 @@ type ResultSection = {
   menuSection: string | null;
   recommendations: ResultRecommendation[];
 };
-
-const defaultProviderSettings: ProviderSettings = {
-  apifyVivinoEnabled: true,
+type TasteScaleTone = "default" | "uncertain";
+type AnalysisProgress = {
+  title: string;
+  detail: string;
+  processed: number;
+  total: number;
+  fraction: number | null;
+  status: AnalysisRun["status"];
+};
+type PriceFilterBounds = {
+  min: number;
+  max: number;
+  pricedCount: number;
+  missingCount: number;
+};
+type TastingNoteIconName = "berries" | "loaf" | "citrus" | "flower" | "leaf" | "barrel" | "spark";
+type TastingNoteVisual = {
+  accent: string;
+  accentSoft: string;
+  badge: string;
+  surface: string;
+  icon: TastingNoteIconName;
 };
 
 type TasteDimension = "body" | "tannin" | "sweetness" | "acidity";
 
 const tasteDimensionOrder: TasteDimension[] = ["body", "tannin", "sweetness", "acidity"];
 const allResultSectionsId = "__all_sections__";
+const terminalAnalysisStatuses = new Set<AnalysisRun["status"]>(["canceled", "completed", "failed"]);
+const ratingFormatter = new Intl.NumberFormat(undefined, {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+const ratingCountFormatter = new Intl.NumberFormat();
+const tastingNoteVisuals: Record<string, TastingNoteVisual> = {
+  "red-fruit": {
+    accent: "#c93b32",
+    accentSoft: "#df6558",
+    badge: "rgba(255, 255, 255, 0.16)",
+    surface: "rgba(201, 59, 50, 0.12)",
+    icon: "berries",
+  },
+  "black-fruit": {
+    accent: "#32428d",
+    accentSoft: "#5364b9",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(50, 66, 141, 0.12)",
+    icon: "berries",
+  },
+  yeasty: {
+    accent: "#c48849",
+    accentSoft: "#d8a46e",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(196, 136, 73, 0.14)",
+    icon: "loaf",
+  },
+  microbio: {
+    accent: "#c48849",
+    accentSoft: "#d8a46e",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(196, 136, 73, 0.14)",
+    icon: "loaf",
+  },
+  "citrus-fruit": {
+    accent: "#d59f33",
+    accentSoft: "#e4bf62",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(213, 159, 51, 0.14)",
+    icon: "citrus",
+  },
+  "tree-fruit": {
+    accent: "#7c9c53",
+    accentSoft: "#98b56d",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(124, 156, 83, 0.14)",
+    icon: "leaf",
+  },
+  "tropical-fruit": {
+    accent: "#da8d3c",
+    accentSoft: "#ebb268",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(218, 141, 60, 0.14)",
+    icon: "citrus",
+  },
+  floral: {
+    accent: "#b56286",
+    accentSoft: "#cf88a7",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(181, 98, 134, 0.14)",
+    icon: "flower",
+  },
+  earth: {
+    accent: "#705b48",
+    accentSoft: "#92755d",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(112, 91, 72, 0.14)",
+    icon: "leaf",
+  },
+  oak: {
+    accent: "#956038",
+    accentSoft: "#b98559",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(149, 96, 56, 0.14)",
+    icon: "barrel",
+  },
+  spices: {
+    accent: "#9f5336",
+    accentSoft: "#bf7a5a",
+    badge: "rgba(255, 255, 255, 0.14)",
+    surface: "rgba(159, 83, 54, 0.14)",
+    icon: "barrel",
+  },
+};
+const defaultTastingNoteVisual: TastingNoteVisual = {
+  accent: "#7f6550",
+  accentSoft: "#9a7b63",
+  badge: "rgba(255, 255, 255, 0.14)",
+  surface: "rgba(127, 101, 80, 0.14)",
+  icon: "spark",
+};
 
 const tasteScaleCopy: Record<
   TasteDimension,
@@ -135,27 +249,52 @@ function sortRecommendations(
 export function App() {
   const [preferences, setPreferences] = useState<UserTastePreference>(defaultPreferences);
   const [loadedPreferences, setLoadedPreferences] = useState<UserTastePreference>(defaultPreferences);
-  const [providerSettings, setProviderSettings] = useState<ProviderSettings>(defaultProviderSettings);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [analysisState, setAnalysisState] = useState<AnalysisState | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisRun | null>(null);
   const [resultSortOrder, setResultSortOrder] = useState<ResultSortOrder>("recommended");
+  const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter>("all");
   const [selectedResultSectionId, setSelectedResultSectionId] = useState(allResultSectionsId);
+  const [maxPriceFilter, setMaxPriceFilter] = useState<number | null>(null);
+  const [includePriceUnavailable, setIncludePriceUnavailable] = useState(true);
   const [providerHealth, setProviderHealth] = useState<ProviderHealth[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [savingProviderSettings, setSavingProviderSettings] = useState(false);
+  const [stoppingAnalysis, setStoppingAnalysis] = useState(false);
   const sortedRecommendations = analysis ? sortRecommendations(analysis, resultSortOrder) : [];
+  const inferredRecommendationCount = sortedRecommendations.filter(isInferredRecommendation).length;
+  const priceFilterBounds = getPriceFilterBounds(analysis?.candidates ?? []);
+  const effectiveMaxPrice = priceFilterBounds ? (maxPriceFilter ?? priceFilterBounds.max) : null;
+  const isPriceFilterActive = Boolean(
+    priceFilterBounds &&
+      effectiveMaxPrice != null &&
+      (
+        effectiveMaxPrice < priceFilterBounds.max ||
+        (!includePriceUnavailable && priceFilterBounds.missingCount > 0)
+      ),
+  );
+  const profileFilteredRecommendations = filterRecommendationsByProfileSource(
+    sortedRecommendations,
+    resultProfileFilter,
+  );
   const candidateById = analysis
     ? new Map(analysis.candidates.map((candidate) => [candidate.id, candidate]))
     : new Map<string, ResultCandidate>();
-  const resultSections = buildResultSections(analysis, sortedRecommendations, candidateById);
+  const filteredRecommendations = filterRecommendationsByPrice(
+    profileFilteredRecommendations,
+    candidateById,
+    effectiveMaxPrice,
+    includePriceUnavailable,
+  );
+  const hiddenByPriceCount = profileFilteredRecommendations.length - filteredRecommendations.length;
+  const resultSections = buildResultSections(analysis, filteredRecommendations, candidateById);
   const hasStructuredResults = resultSections.some((section) => section.menuTab || section.menuSection);
   const visibleResultSections =
     selectedResultSectionId === allResultSectionsId
       ? resultSections
       : resultSections.filter((section) => section.id === selectedResultSectionId);
+  const analysisProgress = getAnalysisProgress(analysis);
 
   function updatePreference(dimension: TasteDimension, value: number) {
     setPreferences((current) => {
@@ -175,11 +314,6 @@ export function App() {
     });
   }
 
-  async function refreshProviderHealth() {
-    const nextHealth = await getJson<ProviderHealth[]>("/api/health/providers");
-    setProviderHealth(nextHealth);
-  }
-
   useEffect(() => {
     void Promise.all([
       getJson<{ preferences: UserTastePreference }>("/api/preferences").then((response) =>
@@ -188,9 +322,6 @@ export function App() {
           setLoadedPreferences(response.preferences);
         },
       ),
-      getJson<{ settings: ProviderSettings }>("/api/settings/providers").then((response) => {
-        setProviderSettings(response.settings);
-      }),
       getJson<ProviderHealth[]>("/api/health/providers").then(
         setProviderHealth,
       ),
@@ -200,7 +331,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!analysisState || analysisState.status === "completed" || analysisState.status === "failed") {
+    if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
       return;
     }
 
@@ -213,7 +344,7 @@ export function App() {
         .catch((cause) => {
           setError(cause instanceof Error ? cause.message : "Failed to refresh analysis");
         });
-    }, 2000);
+    }, 1000);
 
     return () => window.clearInterval(handle);
   }, [analysisState]);
@@ -227,6 +358,11 @@ export function App() {
     }
   }, [resultSections, selectedResultSectionId]);
 
+  useEffect(() => {
+    setMaxPriceFilter(null);
+    setIncludePriceUnavailable(true);
+  }, [analysis?.id]);
+
   async function savePreferences(next: UserTastePreference) {
     setPreferences(next);
     await getJson<{ preferences: UserTastePreference }>("/api/preferences", {
@@ -237,29 +373,6 @@ export function App() {
       body: JSON.stringify(next),
     });
     setLoadedPreferences(next);
-  }
-
-  async function saveProviderSettings(next: ProviderSettings) {
-    setProviderSettings(next);
-    setSavingProviderSettings(true);
-    setError(null);
-
-    try {
-      const response = await getJson<{ settings: ProviderSettings }>("/api/settings/providers", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(next),
-      });
-
-      setProviderSettings(response.settings);
-      await refreshProviderHealth();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to update provider settings");
-    } finally {
-      setSavingProviderSettings(false);
-    }
   }
 
   async function handleUpload() {
@@ -327,10 +440,34 @@ export function App() {
   }
 
   async function launchAnalysis(next: CreateAnalysisResponse) {
+    setStoppingAnalysis(false);
     await getJson(`/api/analyses/${next.analysisId}/process`, { method: "POST" });
     const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${next.analysisId}`);
     setAnalysisState({ analysisId: next.analysisId, status: nextAnalysis.status });
     setAnalysis(nextAnalysis);
+  }
+
+  async function handleCancelAnalysis() {
+    if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
+      return;
+    }
+
+    setStoppingAnalysis(true);
+    setError(null);
+
+    try {
+      await getJson<CreateAnalysisResponse>(`/api/analyses/${analysisState.analysisId}/cancel`, {
+        method: "POST",
+      });
+
+      const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${analysisState.analysisId}`);
+      setAnalysisState({ analysisId: nextAnalysis.id, status: nextAnalysis.status });
+      setAnalysis(nextAnalysis);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to stop analysis");
+    } finally {
+      setStoppingAnalysis(false);
+    }
   }
 
   return (
@@ -419,38 +556,10 @@ export function App() {
         <section className="stack">
           <div className="panel">
             <h2>Provider Health</h2>
-            <div className="provider-controls">
-              <div className="provider-toggle-card">
-                <div>
-                  <p className="provider-toggle-label">Apify Vivino</p>
-                  <p className="provider-toggle-copy">
-                    Toggle paid Vivino-backed lookups on only when you want a real scrape run.
-                  </p>
-                </div>
-                <label className="provider-toggle">
-                  <input
-                    checked={providerSettings.apifyVivinoEnabled}
-                    disabled={savingProviderSettings || busy}
-                    onChange={(event) => {
-                      void saveProviderSettings({
-                        ...providerSettings,
-                        apifyVivinoEnabled: event.target.checked,
-                      });
-                    }}
-                    type="checkbox"
-                  />
-                  <span className="provider-toggle-ui" />
-                  <span className="provider-toggle-state">
-                    {providerSettings.apifyVivinoEnabled ? "On" : "Off"}
-                  </span>
-                </label>
-              </div>
-              <p className="helper">
-                {savingProviderSettings
-                  ? "Saving provider controls…"
-                  : "Apify uses your limited credits. Keep it off for OCR/parser iteration and switch it on for real provider runs."}
-              </p>
-            </div>
+            <p className="helper provider-health-copy">
+              The live enrichment stack is Playwright-backed `vivino-direct` plus local
+              `rule-based` fallback. Retired integration ideas are documented in the README.
+            </p>
             <div className="provider-list">
               {providerHealth.map((provider) => (
                 <article className="provider-chip" key={provider.name}>
@@ -467,29 +576,130 @@ export function App() {
               <h2>Results</h2>
               {analysis?.recommendations.length ? (
                 <div className="result-controls">
-                  <span>Sort by</span>
-                  <div aria-label="Sort results" className="sort-toggle" role="group">
-                    <button
-                      className={`sort-option${resultSortOrder === "recommended" ? " is-active" : ""}`}
-                      onClick={() => setResultSortOrder("recommended")}
-                      type="button"
-                    >
-                      Most recommended
-                    </button>
-                    <button
-                      className={`sort-option${resultSortOrder === "discovered" ? " is-active" : ""}`}
-                      onClick={() => setResultSortOrder("discovered")}
-                      type="button"
-                    >
-                      Image order
-                    </button>
+                  <div className="result-control-group">
+                    <span>Sort by</span>
+                    <div aria-label="Sort results" className="sort-toggle" role="group">
+                      <button
+                        className={`sort-option${resultSortOrder === "recommended" ? " is-active" : ""}`}
+                        onClick={() => setResultSortOrder("recommended")}
+                        type="button"
+                      >
+                        Most recommended
+                      </button>
+                      <button
+                        className={`sort-option${resultSortOrder === "discovered" ? " is-active" : ""}`}
+                        onClick={() => setResultSortOrder("discovered")}
+                        type="button"
+                      >
+                        Image order
+                      </button>
+                    </div>
                   </div>
+                  {inferredRecommendationCount ? (
+                    <div className="result-control-group">
+                      <span>Taste data</span>
+                      <div aria-label="Filter inferred taste profiles" className="sort-toggle" role="group">
+                        <button
+                          className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
+                          onClick={() => setResultProfileFilter("all")}
+                          type="button"
+                        >
+                          All profiles
+                        </button>
+                        <button
+                          className={`sort-option${resultProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
+                          onClick={() => setResultProfileFilter("exclude-inferred")}
+                          type="button"
+                        >
+                          Hide inferred
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {priceFilterBounds && effectiveMaxPrice != null ? (
+                    <div className="result-control-group result-control-group-budget">
+                      <span>Budget</span>
+                      <div className="price-filter-control">
+                        <div className="price-filter-head">
+                          <strong>
+                            {effectiveMaxPrice < priceFilterBounds.max
+                              ? `${formatPriceValue(effectiveMaxPrice)} and under`
+                              : "Any price"}
+                          </strong>
+                          <span>
+                            {formatPriceValue(priceFilterBounds.min)} to {formatPriceValue(priceFilterBounds.max)}
+                          </span>
+                        </div>
+                        <input
+                          aria-label="Maximum wine price"
+                          className="price-filter-slider"
+                          max={priceFilterBounds.max}
+                          min={priceFilterBounds.min}
+                          onChange={(event) => setMaxPriceFilter(Number(event.target.value))}
+                          step={1}
+                          type="range"
+                          value={effectiveMaxPrice}
+                        />
+                        <label className="price-filter-toggle">
+                          <input
+                            checked={includePriceUnavailable}
+                            onChange={(event) => setIncludePriceUnavailable(event.target.checked)}
+                            type="checkbox"
+                          />
+                          <span>
+                            Include wines without price
+                            {priceFilterBounds.missingCount > 0
+                              ? ` (${priceFilterBounds.missingCount})`
+                              : ""}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
             {error ? <p className="error">{error}</p> : null}
             {!analysis ? <p className="helper">No analysis yet.</p> : null}
-            {analysis?.errorMessage ? <p className="error">{analysis.errorMessage}</p> : null}
+            {analysisProgress && analysisProgress.status !== "completed" ? (
+              <AnalysisProgressPanel
+                canCancel={analysisState ? !terminalAnalysisStatuses.has(analysisState.status) : false}
+                isCancelling={stoppingAnalysis}
+                onCancel={handleCancelAnalysis}
+                progress={analysisProgress}
+              />
+            ) : null}
+            {analysis?.status === "failed" && analysis.errorMessage ? (
+              <p className="error">{analysis.errorMessage}</p>
+            ) : null}
+            {analysis?.status === "canceled" && analysis.errorMessage ? (
+              <p className="helper">{analysis.errorMessage}</p>
+            ) : null}
+            {priceFilterBounds && isPriceFilterActive ? (
+              <div className="result-filter-notice is-filtered">
+                <p className="result-filter-notice-title">
+                  Budget filter active
+                </p>
+                <p className="helper">
+                  {hiddenByPriceCount} wine{hiddenByPriceCount === 1 ? "" : "s"} hidden by the current budget
+                  settings.
+                </p>
+              </div>
+            ) : null}
+            {analysis && inferredRecommendationCount ? (
+              <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
+                <p className="result-filter-notice-title">
+                  {resultProfileFilter === "exclude-inferred"
+                    ? `${inferredRecommendationCount} inferred ${inferredRecommendationCount === 1 ? "profile" : "profiles"} hidden`
+                    : `${inferredRecommendationCount} ${inferredRecommendationCount === 1 ? "wine uses" : "wines use"} estimated taste data`}
+                </p>
+                <p className="helper">
+                  {resultProfileFilter === "exclude-inferred"
+                    ? "These wines are excluded because Vivino did not return a reliable match."
+                    : "When we cannot confirm a Vivino match, we infer the taste profile from the extracted wine details and show it with muted bars."}
+                </p>
+              </div>
+            ) : null}
             {hasStructuredResults ? (
               <div className="result-section-browser">
                 <div className="result-section-browser-copy">
@@ -509,7 +719,7 @@ export function App() {
                     type="button"
                   >
                     <span>All sections</span>
-                    <strong>{sortedRecommendations.length}</strong>
+                    <strong>{filteredRecommendations.length}</strong>
                   </button>
                   {resultSections.map((section) => (
                     <button
@@ -524,6 +734,15 @@ export function App() {
                   ))}
                 </div>
               </div>
+            ) : null}
+            {analysis?.status === "processing" && analysis.candidates.length > 0 && filteredRecommendations.length === 0 ? (
+              <p className="helper">Recommendations will appear here as each wine finishes processing.</p>
+            ) : null}
+            {analysis?.status === "canceled" && filteredRecommendations.length === 0 ? (
+              <p className="helper">This run was stopped before any recommendations were saved.</p>
+            ) : null}
+            {analysis?.status === "completed" && filteredRecommendations.length === 0 ? (
+              <p className="helper">No wines match the current result filters.</p>
             ) : null}
             {visibleResultSections.map((section) => (
               <section className="result-section" key={section.id}>
@@ -565,6 +784,81 @@ function normalizeUrlInput(input: string): string {
   }
 
   return `https://${trimmed}`;
+}
+
+function getAnalysisProgress(analysis: AnalysisRun | null): AnalysisProgress | null {
+  if (!analysis) {
+    return null;
+  }
+
+  if (analysis.status === "uploaded" || analysis.status === "queued") {
+    return {
+      title: "Queued for processing",
+      detail: "Waiting for the worker to start OCR and parse the wine list.",
+      processed: 0,
+      total: 0,
+      fraction: null,
+      status: analysis.status,
+    };
+  }
+
+  const total = analysis.candidates.length;
+  const processed = Math.min(analysis.recommendations.length, total);
+
+  if (analysis.status === "processing") {
+    if (total === 0) {
+      return {
+        title: "Running OCR",
+        detail: "Extracting text and counting wine entries before per-wine matching begins.",
+        processed: 0,
+        total: 0,
+        fraction: null,
+        status: analysis.status,
+      };
+    }
+
+    return {
+      title: `Analyzing ${processed} of ${total} wines`,
+      detail:
+        processed === 0
+          ? "OCR is done. The app is now matching each wine and fetching taste data."
+          : "Progress updates automatically as each wine finishes processing.",
+      processed,
+      total,
+      fraction: total > 0 ? processed / total : null,
+      status: analysis.status,
+    };
+  }
+
+  if (analysis.status === "failed") {
+    return {
+      title: "Analysis failed",
+      detail: analysis.errorMessage ?? "The worker stopped before finishing the wine list.",
+      processed,
+      total,
+      fraction: total > 0 ? processed / total : null,
+      status: analysis.status,
+    };
+  }
+
+  if (analysis.status === "canceled") {
+    return {
+      title:
+        total > 0
+          ? `Analysis stopped at ${processed} of ${total} wines`
+          : "Analysis stopped",
+      detail:
+        total > 0
+          ? "This run was stopped. Any recommendations shown below are partial results."
+          : "This run was stopped before OCR and wine matching finished.",
+      processed,
+      total,
+      fraction: total > 0 ? processed / total : null,
+      status: analysis.status,
+    };
+  }
+
+  return null;
 }
 
 function buildResultSections(
@@ -624,65 +918,308 @@ function formatMenuContext(
   return [menuTab, menuSection].filter((value): value is string => Boolean(value)).join(" · ");
 }
 
+function AnalysisProgressPanel(props: {
+  progress: AnalysisProgress;
+  onCancel?: () => void;
+  canCancel?: boolean;
+  isCancelling?: boolean;
+}) {
+  const { canCancel = false, isCancelling = false, onCancel, progress } = props;
+  const isIndeterminate =
+    progress.fraction === null && progress.status !== "failed" && progress.status !== "canceled";
+  const fillStyle =
+    progress.fraction === null
+      ? undefined
+      : ({
+          width: `${Math.max(progress.fraction * 100, progress.processed > 0 ? 6 : 0)}%`,
+        } as CSSProperties);
+
+  return (
+    <section
+      className={`analysis-progress${isIndeterminate ? " is-indeterminate" : ""}${
+        progress.status === "failed" ? " is-failed" : ""
+      }${progress.status === "canceled" ? " is-canceled" : ""}`}
+    >
+      <div className="analysis-progress-head">
+        <div>
+          <p className="analysis-progress-title">{progress.title}</p>
+          <p className="analysis-progress-detail">{progress.detail}</p>
+        </div>
+        <div className="analysis-progress-count">
+          {progress.total > 0 ? (
+            <>
+              <strong>{progress.processed}</strong>
+              <span>/ {progress.total}</span>
+            </>
+          ) : progress.status === "canceled" ? (
+            <strong>Stopped</strong>
+          ) : progress.status === "failed" ? (
+            <strong>Failed</strong>
+          ) : (
+            <strong>OCR</strong>
+          )}
+        </div>
+      </div>
+      <div
+        aria-hidden="true"
+        className={`analysis-progress-bar${progress.status === "failed" ? " is-failed" : ""}${
+          progress.status === "canceled" ? " is-canceled" : ""
+        }`}
+      >
+        <span className="analysis-progress-fill" style={fillStyle} />
+      </div>
+      {canCancel ? (
+        <div className="analysis-progress-actions">
+          <button
+            className="action action-quiet"
+            disabled={isCancelling}
+            onClick={onCancel}
+            type="button"
+          >
+            {isCancelling ? "Stopping…" : "Stop Analysis"}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ResultCard(props: {
   recommendation: ResultRecommendation;
   candidate: ResultCandidate | undefined;
 }) {
   const { candidate, recommendation } = props;
+  const isInferred = isInferredRecommendation(recommendation);
   const menuTitle = candidate?.rawText ?? recommendation.profile?.displayName ?? "Unmatched wine";
   const menuContext = formatMenuContext(candidate?.menuTab, candidate?.menuSection);
   const matchedTitle =
     recommendation.profile?.displayName && recommendation.profile.displayName !== menuTitle
       ? recommendation.profile.displayName
       : null;
+  const imageUrl = recommendation.profile?.imageUrl ?? null;
+  const imageLabel = recommendation.profile?.displayName ?? menuTitle;
+  const detailSummary = isInferred
+    ? `Estimated from menu data${
+        recommendation.profile?.taste.confidence != null
+          ? ` · profile confidence ${Math.round(recommendation.profile.taste.confidence * 100)}%`
+          : ""
+      }`
+    : `${recommendation.profile?.provenanceLabel ?? "Unavailable"} · match ${Math.round(recommendation.matchConfidence * 100)}%`;
+  const rating = recommendation.profile?.rating ?? null;
+  const ratingCount = recommendation.profile?.ratingCount ?? null;
+  const ratingSource = recommendation.profile?.ratingSource ?? null;
+  const tasteReviewCount = recommendation.profile?.tasteReviewCount ?? null;
+  const tastingNoteGroups = recommendation.profile?.tastingNoteGroups ?? [];
+  const tastingNotesText = recommendation.profile?.tastingNotes?.trim() ?? "";
+  const hasTastingNoteContent =
+    tastingNoteGroups.length > 0 || tastingNotesText.length > 0;
+  const showRating =
+    rating !== null &&
+    Number.isFinite(rating) &&
+    ratingCount !== null &&
+    Number.isFinite(ratingCount) &&
+    ratingCount > 0;
+  const showTasteReviewCount =
+    tasteReviewCount !== null &&
+    Number.isFinite(tasteReviewCount) &&
+    tasteReviewCount > 0;
+  const showNoTastingNotesIndicator = Boolean(
+    recommendation.profile && !isInferred && !hasTastingNoteContent,
+  );
 
   return (
-    <article className="result-card">
-      <div className="result-head">
-        <div className="result-copy">
-          {menuContext ? <p className="menu-context">{menuContext}</p> : null}
-          <h3 className="wine-title">{menuTitle}</h3>
-          {matchedTitle ? <p className="wine-subtitle">Matched to {matchedTitle}</p> : null}
+    <article className={`result-card${isInferred ? " is-inferred" : ""}${imageUrl ? " has-image" : ""}`}>
+      {imageUrl ? (
+        <div className="result-card-media">
+          <img
+            alt={`${imageLabel} bottle`}
+            className="result-card-image"
+            decoding="async"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            src={imageUrl}
+          />
         </div>
-        <div className="result-summary">
-          <p className={`price-tag${candidate?.price ? "" : " is-missing"}`}>
-            {candidate?.price ?? "Price unavailable"}
-          </p>
-          <div className="score-badge">
-            <span>Fit</span>
-            <strong>{recommendation.fitScore}</strong>
+      ) : null}
+      <div className="result-card-content">
+        <div className="result-head">
+          <div className="result-copy">
+            {menuContext ? <p className="menu-context">{menuContext}</p> : null}
+            <h3 className="wine-title">{menuTitle}</h3>
+            {matchedTitle ? <p className="wine-subtitle">Matched to {matchedTitle}</p> : null}
+            {isInferred ? (
+              <p className="wine-uncertainty">
+                No reliable Vivino match was found, so this taste profile is inferred from the
+                extracted wine details.
+              </p>
+            ) : null}
+            {showRating ? (
+              <VivinoRatingBlock
+                rating={rating}
+                ratingCount={ratingCount}
+                ratingSource={ratingSource}
+              />
+            ) : null}
+          </div>
+          <div className="result-summary">
+            <p className={`price-tag${candidate?.price ? "" : " is-missing"}`}>
+              {candidate?.price ?? "Price unavailable"}
+            </p>
+            <div className="score-badge">
+              <span>Fit</span>
+              <strong>{recommendation.fitScore}</strong>
+            </div>
           </div>
         </div>
+        <div className="result-footer">
+          <span>{detailSummary}</span>
+          <span className={`status-tag${isInferred ? " is-inferred" : ""}`}>
+            {isInferred ? "Estimated profile" : formatStatusLabel(recommendation.status)}
+          </span>
+        </div>
+        <div className={`taste-profile-block taste-profile-block-compact${isInferred ? " is-inferred" : ""}`}>
+          <div className="taste-profile-heading">
+            <div className="taste-profile-copy">
+              <p className="taste-profile-title">What does this wine taste like?</p>
+            </div>
+            {isInferred ? <p className="taste-profile-note">Estimated profile</p> : null}
+          </div>
+          <div className="taste-scale-stack">
+            {tasteDimensionOrder.map((dimension) => (
+              <TasteScale
+                dimension={dimension}
+                key={dimension}
+                tone={isInferred ? "uncertain" : "default"}
+                value={recommendation.profile?.taste[dimension] ?? null}
+              />
+            ))}
+          </div>
+          {showTasteReviewCount ? (
+            <p className="taste-profile-footnote">
+              {formatTasteReviewCountLabel(tasteReviewCount)}
+            </p>
+          ) : null}
+        </div>
+        {showNoTastingNotesIndicator ? (
+          <p className="tasting-notes-empty">No tasting notes reported.</p>
+        ) : tastingNoteGroups.length > 0 ? (
+          <TastingNoteGroupSection groups={tastingNoteGroups} />
+        ) : tastingNotesText ? (
+          <p className="tasting-notes-fallback">
+            <span className="tasting-notes-label">Tasting notes: </span>
+            {tastingNotesText}
+          </p>
+        ) : null}
       </div>
-      <div className="result-footer">
-        <span>
-          {recommendation.profile?.provenanceLabel ?? "Unavailable"} · match{" "}
-          {Math.round(recommendation.matchConfidence * 100)}%
-        </span>
-        <span className="status-tag">{formatStatusLabel(recommendation.status)}</span>
+    </article>
+  );
+}
+
+function TastingNoteGroupSection(props: {
+  groups: ResultTastingNoteGroup[];
+}) {
+  return (
+    <section aria-label="Top tasting note families" className="tasting-note-section">
+      <div className="tasting-note-section-head">
+        <p className="tasting-note-section-title">Top tasting note families</p>
       </div>
-      <div className="taste-profile-block taste-profile-block-compact">
-        <p className="taste-profile-title">What does this wine taste like?</p>
-        <div className="taste-scale-stack">
-          {tasteDimensionOrder.map((dimension) => (
-            <TasteScale dimension={dimension} key={dimension} value={recommendation.profile?.taste[dimension] ?? null} />
+      <div className="tasting-note-groups">
+        {props.groups.map((group, index) => (
+          <TastingNoteGroupCard
+            group={group}
+            isPrimary={index === 0}
+            key={`${group.key}-${index}`}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TastingNoteGroupCard(props: {
+  group: ResultTastingNoteGroup;
+  isPrimary: boolean;
+}) {
+  const visual = getTastingNoteVisual(props.group.key);
+  const cueNotes = prioritizeCenterCueImage(
+    props.group.keywords.slice(0, 3).map((keyword, index) => ({
+      keyword,
+      imageUrl: props.group.keywordImageUrls?.[index] ?? null,
+    })),
+  );
+  const hasCueImages = cueNotes.some((cue) => Boolean(cue.imageUrl));
+  const cardStyle = {
+    "--note-accent": visual.accent,
+    "--note-accent-soft": visual.accentSoft,
+    "--note-art-foreground": "white",
+    "--note-family-color": visual.accent,
+    "--note-surface": visual.surface,
+  } as CSSProperties;
+
+  return (
+    <article
+      className={`tasting-note-card${props.isPrimary ? " is-primary" : ""}`}
+      style={cardStyle}
+    >
+      <div className="tasting-note-card-art">
+        <div
+          className={`tasting-note-card-cue-cluster${hasCueImages ? "" : " is-fallback"}`}
+        >
+          {cueNotes.map((cue, index) => (
+            <div
+              className={`tasting-note-card-cue-frame cue-index-${index + 1}`}
+              key={`${cue.keyword}-${index}`}
+            >
+              {cue.imageUrl ? (
+                <img
+                  alt=""
+                  aria-hidden="true"
+                  className="tasting-note-card-cue-image"
+                  src={cue.imageUrl}
+                />
+              ) : (
+                <span aria-hidden="true" className="tasting-note-card-icon">
+                  <TastingNoteGroupIcon name={visual.icon} />
+                </span>
+              )}
+            </div>
           ))}
         </div>
       </div>
-      {recommendation.profile?.tastingNotes ? (
-        <p className="tasting-notes">
-          <span className="tasting-notes-label">Tasting notes: </span>
-          {recommendation.profile.tastingNotes}
+      <div className="tasting-note-card-body">
+        <p className="tasting-note-card-family">{props.group.label}</p>
+        <p className="tasting-note-card-keywords">
+          {cueNotes.map((cue) => cue.keyword).join(", ")}
         </p>
-      ) : null}
+      </div>
     </article>
   );
+}
+
+function prioritizeCenterCueImage(
+  cueNotes: Array<{ keyword: string; imageUrl: string | null }>,
+): Array<{ keyword: string; imageUrl: string | null }> {
+  if (cueNotes.length < 3 || cueNotes[1]?.imageUrl) {
+    return cueNotes;
+  }
+
+  const replacementIndex = cueNotes.findIndex((cue) => Boolean(cue.imageUrl));
+  if (replacementIndex === -1) {
+    return cueNotes;
+  }
+
+  const reordered = [...cueNotes];
+  const centerCue = reordered[1]!;
+  reordered[1] = reordered[replacementIndex]!;
+  reordered[replacementIndex] = centerCue;
+  return reordered;
 }
 
 function TasteScale(props: {
   dimension: TasteDimension;
   value: number | null;
   onChange?: (value: number) => void;
+  tone?: TasteScaleTone;
 }) {
   const copy = tasteScaleCopy[props.dimension];
   const markerStyle =
@@ -693,7 +1230,11 @@ function TasteScale(props: {
         } as CSSProperties);
 
   return (
-    <div className={`taste-scale${props.onChange ? " is-interactive" : ""}${props.value === null ? " is-empty" : ""}`}>
+    <div
+      className={`taste-scale${props.onChange ? " is-interactive" : ""}${props.value === null ? " is-empty" : ""}${
+        props.tone === "uncertain" ? " is-uncertain" : ""
+      }`}
+    >
       <div className="taste-scale-row">
         <span className="taste-scale-endpoint">{copy.low}</span>
         <div className="taste-scale-control">
@@ -729,6 +1270,248 @@ function TasteScale(props: {
 
 function getTasteIndicatorPosition(value: number): number {
   return 7 + ((Math.max(1, Math.min(5, value)) - 1) / 4) * 86;
+}
+
+function isInferredRecommendation(recommendation: ResultRecommendation): boolean {
+  return recommendation.profile?.taste.sourceMode === "inferred";
+}
+
+function filterRecommendationsByProfileSource(
+  recommendations: ResultRecommendation[],
+  filter: ResultProfileFilter,
+): ResultRecommendation[] {
+  if (filter === "all") {
+    return recommendations;
+  }
+
+  return recommendations.filter((recommendation) => !isInferredRecommendation(recommendation));
+}
+
+function filterRecommendationsByPrice(
+  recommendations: ResultRecommendation[],
+  candidateById: Map<string, ResultCandidate>,
+  maxPrice: number | null,
+  includeUnavailable: boolean,
+): ResultRecommendation[] {
+  if (maxPrice == null) {
+    return recommendations.filter((recommendation) => {
+      const parsedPrice = parseCandidatePrice(candidateById.get(recommendation.candidateId)?.price);
+      return includeUnavailable || parsedPrice !== null;
+    });
+  }
+
+  return recommendations.filter((recommendation) => {
+    const parsedPrice = parseCandidatePrice(candidateById.get(recommendation.candidateId)?.price);
+
+    if (parsedPrice === null) {
+      return includeUnavailable;
+    }
+
+    return parsedPrice <= maxPrice;
+  });
+}
+
+function getPriceFilterBounds(candidates: ResultCandidate[]): PriceFilterBounds | null {
+  const parsedPrices = candidates
+    .map((candidate) => parseCandidatePrice(candidate.price))
+    .filter((price): price is number => price !== null);
+
+  if (parsedPrices.length === 0) {
+    return null;
+  }
+
+  return {
+    min: Math.max(0, Math.floor(Math.min(...parsedPrices))),
+    max: Math.ceil(Math.max(...parsedPrices)),
+    pricedCount: parsedPrices.length,
+    missingCount: candidates.length - parsedPrices.length,
+  };
+}
+
+function parseCandidatePrice(price: string | null | undefined): number | null {
+  if (!price) {
+    return null;
+  }
+
+  const match = price.match(/\d+(?:\.\d{1,2})?/);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatPriceValue(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+    maximumFractionDigits: Number.isInteger(value) ? 0 : 2,
+  }).format(value);
+}
+
+function formatTasteReviewCountLabel(count: number): string {
+  const normalized = Math.max(0, Math.round(count));
+  return `Based on ${ratingCountFormatter.format(normalized)} user ${
+    normalized === 1 ? "review" : "reviews"
+  }`;
+}
+
+function getTastingNoteVisual(groupKey: string): TastingNoteVisual {
+  const normalized = groupKey.toLowerCase();
+  const exactMatch = tastingNoteVisuals[normalized];
+  if (exactMatch) return exactMatch;
+
+  if (normalized.includes("fruit")) {
+    return tastingNoteVisuals["tree-fruit"] ?? defaultTastingNoteVisual;
+  }
+
+  if (normalized.includes("yeast") || normalized.includes("microbio")) {
+    return tastingNoteVisuals.yeasty ?? defaultTastingNoteVisual;
+  }
+
+  if (normalized.includes("flower")) {
+    return tastingNoteVisuals.floral ?? defaultTastingNoteVisual;
+  }
+
+  if (
+    normalized.includes("earth") ||
+    normalized.includes("herb") ||
+    normalized.includes("vegetal") ||
+    normalized.includes("green")
+  ) {
+    return tastingNoteVisuals.earth ?? defaultTastingNoteVisual;
+  }
+
+  if (normalized.includes("oak") || normalized.includes("spice")) {
+    return tastingNoteVisuals.spices ?? defaultTastingNoteVisual;
+  }
+
+  return defaultTastingNoteVisual;
+}
+
+function TastingNoteGroupIcon(props: { name: TastingNoteIconName }) {
+  const sharedProps = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    strokeWidth: 1.8,
+    viewBox: "0 0 48 48",
+  };
+
+  switch (props.name) {
+    case "berries":
+      return (
+        <svg {...sharedProps}>
+          <path d="M24 16c0-5 4-9 10-9" />
+          <path d="M23 16c-1-4-5-7-10-7" />
+          <circle cx="18" cy="27" r="6" />
+          <circle cx="29" cy="25" r="7" />
+          <circle cx="31" cy="34" r="5" />
+        </svg>
+      );
+    case "loaf":
+      return (
+        <svg {...sharedProps}>
+          <path d="M11 33a12 12 0 0 1 12-12h3a11 11 0 0 1 11 11v5H11Z" />
+          <path d="M20 22v7" />
+          <path d="M27 21v8" />
+          <path d="M34 23v6" />
+        </svg>
+      );
+    case "citrus":
+      return (
+        <svg {...sharedProps}>
+          <circle cx="24" cy="24" r="12" />
+          <path d="M24 12v24" />
+          <path d="M12 24h24" />
+          <path d="M16 16l16 16" />
+          <path d="M32 16 16 32" />
+        </svg>
+      );
+    case "flower":
+      return (
+        <svg {...sharedProps}>
+          <circle cx="24" cy="24" r="4" />
+          <circle cx="24" cy="15" r="5" />
+          <circle cx="33" cy="24" r="5" />
+          <circle cx="24" cy="33" r="5" />
+          <circle cx="15" cy="24" r="5" />
+        </svg>
+      );
+    case "leaf":
+      return (
+        <svg {...sharedProps}>
+          <path d="M34 14c-12 1-20 9-20 20 11 0 19-8 20-20Z" />
+          <path d="M18 30c5-4 9-8 13-13" />
+        </svg>
+      );
+    case "barrel":
+      return (
+        <svg {...sharedProps}>
+          <path d="M17 12h14" />
+          <path d="M15 18c2-4 2-8 2-8h14s0 4 2 8c2 4 2 8 2 8s0 4-2 8c-2 4-2 8-2 8H17s0-4-2-8c-2-4-2-8-2-8s0-4 2-8Z" />
+          <path d="M14 24h20" />
+          <path d="M16 16h16" />
+          <path d="M16 32h16" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...sharedProps}>
+          <path d="m24 11 3.5 8.5L36 23l-8.5 3.5L24 35l-3.5-8.5L12 23l8.5-3.5Z" />
+        </svg>
+      );
+  }
+}
+
+function VivinoRatingBlock(props: {
+  rating: number;
+  ratingCount: number;
+  ratingSource: WineRatingSource | null;
+}) {
+  const { rating, ratingCount, ratingSource } = props;
+  const formattedRating = ratingFormatter.format(Math.max(0, Math.min(5, rating)));
+  const countLabel = `${ratingCountFormatter.format(ratingCount)} ${
+    ratingCount === 1 ? "rating" : "ratings"
+  }`;
+
+  return (
+    <div
+      aria-label={`Vivino rating ${formattedRating} out of 5 from ${countLabel}${
+        ratingSource === "wine" ? ", based on all vintages" : ""
+      }`}
+      className="vivino-rating"
+      title={
+        ratingSource === "wine"
+          ? "Vivino aggregate based on all vintages for this wine"
+          : "Vivino aggregate for the matched vintage"
+      }
+    >
+      <span className="vivino-rating-value">{formattedRating}</span>
+      <div className="vivino-rating-meta">
+        <StarRating rating={rating} />
+        <span className="vivino-rating-count">{countLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+function StarRating(props: { rating: number }) {
+  const fillWidth = `${Math.max(0, Math.min(5, props.rating)) * 20}%`;
+
+  return (
+    <span
+      aria-hidden="true"
+      className="star-rating"
+      style={{ "--star-fill-width": fillWidth } as CSSProperties}
+    >
+      <span className="star-rating-base">★★★★★</span>
+      <span className="star-rating-fill">★★★★★</span>
+    </span>
+  );
 }
 
 function formatStatusLabel(status: "matched" | "low-confidence" | "unmatched"): string {

@@ -13,10 +13,22 @@ export const analysisStatusSchema = z.enum([
   "uploaded",
   "queued",
   "processing",
+  "canceled",
   "completed",
   "failed",
 ]);
 export const providerAvailabilitySchema = z.enum(["enabled", "disabled", "degraded"]);
+export const wineRatingSourceSchema = z.enum(["vintage", "wine"]);
+export const tastingNoteGroupSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  score: z.number().nonnegative().nullable().default(null),
+  noteCount: z.number().int().nonnegative(),
+  keywords: z.array(z.string()),
+  keywordImageUrls: z.array(z.string().url().nullable()).default([]),
+  color: z.string().nullable().default(null),
+  imageUrl: z.string().url().nullable().default(null),
+});
 
 export const tasteVectorSchema = z.object({
   body: z.number().int().min(1).max(5),
@@ -78,9 +90,14 @@ export const wineProfileSchema = z.object({
   varietal: z.string().nullable(),
   provider: z.string(),
   rating: z.number().min(0).max(5).nullable(),
+  ratingCount: z.number().int().nonnegative().nullable().default(null),
+  ratingSource: wineRatingSourceSchema.nullable().default(null),
+  imageUrl: z.string().url().nullable(),
   provenanceLabel: z.string(),
   taste: tasteVectorSchema,
+  tasteReviewCount: z.number().int().nonnegative().nullable().default(null),
   tastingNotes: z.string().nullable(),
+  tastingNoteGroups: z.array(tastingNoteGroupSchema).optional(),
   fetchedAt: z.string(),
 });
 
@@ -112,10 +129,6 @@ export const providerHealthSchema = z.object({
   detail: z.string(),
 });
 
-export const providerSettingsSchema = z.object({
-  apifyVivinoEnabled: z.boolean(),
-});
-
 export const createAnalysisFromUrlRequestSchema = z.object({
   url: z.string().url(),
 });
@@ -131,10 +144,6 @@ export const preferencesResponseSchema = z.object({
   preferences: userTastePreferenceSchema,
 });
 
-export const providerSettingsResponseSchema = z.object({
-  settings: providerSettingsSchema,
-});
-
 export type SourceType = z.infer<typeof sourceTypeSchema>;
 export type SourceMode = z.infer<typeof sourceModeSchema>;
 export type AnalysisStatus = z.infer<typeof analysisStatusSchema>;
@@ -142,10 +151,11 @@ export type TasteVector = z.infer<typeof tasteVectorSchema>;
 export type UserTastePreference = z.infer<typeof userTastePreferenceSchema>;
 export type WineCandidate = z.infer<typeof wineCandidateSchema>;
 export type WineMatch = z.infer<typeof wineMatchSchema>;
+export type WineRatingSource = z.infer<typeof wineRatingSourceSchema>;
+export type TastingNoteGroup = z.infer<typeof tastingNoteGroupSchema>;
 export type WineProfile = z.infer<typeof wineProfileSchema>;
 export type Recommendation = z.infer<typeof recommendationSchema>;
 export type AnalysisRun = z.infer<typeof analysisRunSchema>;
 export type ProviderHealth = z.infer<typeof providerHealthSchema>;
-export type ProviderSettings = z.infer<typeof providerSettingsSchema>;
 export type CreateAnalysisFromUrlRequest = z.infer<typeof createAnalysisFromUrlRequestSchema>;
 export type CreateAnalysisResponse = z.infer<typeof createAnalysisResponseSchema>;

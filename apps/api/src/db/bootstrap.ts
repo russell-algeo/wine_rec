@@ -1,5 +1,21 @@
 import { sqlite } from "./client.js";
 
+type TableColumn = {
+  name: string;
+};
+
+function ensureColumn(table: string, column: string, definition: string): void {
+  const columns = sqlite
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as TableColumn[];
+
+  if (columns.some((entry) => entry.name === column)) {
+    return;
+  }
+
+  sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
 export function bootstrapDatabase(): void {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS analyses (
@@ -39,10 +55,7 @@ export function bootstrapDatabase(): void {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS provider_settings (
-      id TEXT PRIMARY KEY,
-      apify_vivino_enabled INTEGER NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
   `);
+
+  ensureColumn("analyses", "cancellation_requested", "INTEGER NOT NULL DEFAULT 0");
 }

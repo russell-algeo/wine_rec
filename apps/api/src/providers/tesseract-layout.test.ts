@@ -25,7 +25,7 @@ describe("tesseract layout normalization", () => {
       canonicalizeText("Bellande Pinot Noir"),
     ]);
     expect(candidates[5]?.label).toBe("Praja Monica di Sardegna");
-  });
+  }, 15_000);
 
   integration("keeps wrapped grid titles and prices together on the real store-grid screenshot", async () => {
     const tsv = await ocrFixtureToTsv("Screenshot 2026-03-08 at 10.11.31");
@@ -46,5 +46,5 @@ describe("tesseract layout normalization", () => {
       "$9.99",
       "$24.99",
     ]);
-  });
+  }, 15_000);
 });

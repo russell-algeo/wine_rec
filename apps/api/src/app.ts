@@ -14,8 +14,6 @@ import {
   createAnalysisResponseSchema,
   preferencesResponseSchema,
   providerHealthSchema,
-  providerSettingsResponseSchema,
-  providerSettingsSchema,
   sourceTypeSchema,
   userTastePreferenceSchema,
 } from "@wine-rec/contracts";
@@ -28,10 +26,9 @@ import {
   createAnalysis,
   getAnalysisById,
   getPreferences,
-  getProviderSettings,
   putPreferences,
-  putProviderSettings,
   queueAnalysis,
+  requestAnalysisCancellation,
   updateAnalysisStoragePath,
 } from "./services/repository.js";
 import {
@@ -113,7 +110,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.get("/api/health/providers", async () => {
-    const providerSettings = await getProviderSettings();
     const ocrProvider = createOcrProvider();
     const providers = [
       {
@@ -122,7 +118,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         enabled: ocrProvider.isEnabled,
         detail: ocrProvider.detail,
       },
-      ...createWineProfileProviders(providerSettings).map((provider) => ({
+      ...createWineProfileProviders().map((provider) => ({
         name: provider.name,
         availability: provider.isEnabled ? "enabled" : "disabled",
         enabled: provider.isEnabled,
@@ -143,18 +139,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     const parsed = userTastePreferenceSchema.parse(request.body);
     const preferences = await putPreferences(parsed);
     return preferencesResponseSchema.parse({ preferences });
-  });
-
-  app.get("/api/settings/providers", async () => {
-    return providerSettingsResponseSchema.parse({
-      settings: await getProviderSettings(),
-    });
-  });
-
-  app.put("/api/settings/providers", async (request) => {
-    const parsed = providerSettingsSchema.parse(request.body);
-    const settings = await putProviderSettings(parsed);
-    return providerSettingsResponseSchema.parse({ settings });
   });
 
   app.post("/api/uploads", async (request, reply) => {
@@ -228,7 +212,29 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     await queueAnalysis(params.id);
-    return { analysisId: params.id, status: "queued" };
+    const refreshed = await getAnalysisById(params.id);
+    if (!refreshed) {
+      return reply.status(404).send({ message: "Analysis not found" });
+    }
+
+    return createAnalysisResponseSchema.parse({
+      analysisId: refreshed.id,
+      status: refreshed.status,
+    });
+  });
+
+  app.post("/api/analyses/:id/cancel", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const analysis = await requestAnalysisCancellation(params.id);
+
+    if (!analysis) {
+      return reply.status(404).send({ message: "Analysis not found" });
+    }
+
+    return createAnalysisResponseSchema.parse({
+      analysisId: analysis.id,
+      status: analysis.status,
+    });
   });
 
   app.get("/api/analyses/:id", async (request, reply) => {

@@ -14,6 +14,10 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  return Math.max(1, Math.floor(parseNumber(value, fallback)));
+}
+
 const defaultWebOrigins = ["http://localhost:5173", "http://127.0.0.1:5173"];
 const configuredWebOrigins = (process.env.WEB_ORIGIN ?? "")
   .split(",")
@@ -30,20 +34,17 @@ export const appConfig = {
     process.env.DATABASE_URL ?? "./data/wine-rec.sqlite",
   ),
   workerPollIntervalMs: parseNumber(process.env.WORKER_POLL_INTERVAL_MS, 1500),
+  workerConcurrency: parsePositiveInteger(process.env.WORKER_CONCURRENCY, 2),
+  analysisCandidateConcurrency: parsePositiveInteger(
+    process.env.ANALYSIS_CANDIDATE_CONCURRENCY,
+    3,
+  ),
   ocrProvider: process.env.OCR_PROVIDER ?? "mock",
   ocrSpaceApiKey: process.env.OCR_SPACE_API_KEY ?? "",
-  providerOrder: (process.env.WINE_PROFILE_PROVIDER_ORDER ??
-    "vivino-direct,apify-vivino,wine-searcher,spoonacular-style,rule-based")
+  providerOrder: (process.env.WINE_PROFILE_PROVIDER_ORDER ?? "vivino-direct,rule-based")
     .split(",")
     .map((provider) => provider.trim())
     .filter(Boolean),
-  enableUnofficialVivino: parseBoolean(process.env.ENABLE_UNOFFICIAL_VIVINO, true),
-  apifyToken: process.env.APIFY_TOKEN ?? "",
-  apifyVivinoActorId: process.env.APIFY_VIVINO_ACTOR_ID ?? "",
-  apifyVivinoEndpoint: process.env.APIFY_VIVINO_ENDPOINT ?? "",
-  wineSearcherApiKey: process.env.WINE_SEARCHER_API_KEY ?? "",
-  wineSearcherEndpoint: process.env.WINE_SEARCHER_ENDPOINT ?? "",
-  spoonacularApiKey: process.env.SPOONACULAR_API_KEY ?? "",
   enableVivinoDirect: parseBoolean(process.env.ENABLE_VIVINO_DIRECT, true),
   vivinoDirectUserAgent:
     process.env.VIVINO_DIRECT_USER_AGENT ??
@@ -55,9 +56,8 @@ export const appConfig = {
   vivinoDirectBackoffMs: parseNumber(process.env.VIVINO_DIRECT_BACKOFF_MS, 2000),
   /** Whether to fetch the secondary /api/wines/{id}/tastes endpoint for richer taste data. */
   vivinoDirectFetchTastes: parseBoolean(process.env.VIVINO_DIRECT_FETCH_TASTES, true),
-  /** Optional country codes filter, e.g. "us,fr,it" */
-  vivinoDirectCountryCodes: (process.env.VIVINO_DIRECT_COUNTRY_CODES ?? "")
-    .split(",")
-    .map((c) => c.trim())
-    .filter(Boolean),
+  /** Run Playwright browser headless (default true). Set false for debugging. */
+  vivinoDirectHeadless: parseBoolean(process.env.VIVINO_DIRECT_HEADLESS, true),
+  /** Optional path to Chrome/Chromium executable. Playwright bundled Chromium is used if unset. */
+  vivinoDirectChromeExecutable: process.env.VIVINO_DIRECT_CHROME_EXECUTABLE ?? "",
 };
