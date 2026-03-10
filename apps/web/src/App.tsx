@@ -475,102 +475,86 @@ export function App() {
       <div className="backdrop" />
       <main className="page">
         <section className="hero-card">
-          <p className="eyebrow">Local Debug Surface</p>
-          <h1>Wine Rec</h1>
+          <p className="eyebrow">Smokey&rsquo;s Bottle Shop</p>
+          <h1>Smokey&rsquo;s</h1>
           <p className="lede">
-            Upload a wine list image or PDF, or paste a restaurant / store URL, then rank the
-            wines against a crisp, dry preference profile.
+            Upload a wine list image or PDF, or paste a restaurant URL, and we&rsquo;ll
+            rank every bottle against your taste profile.
           </p>
-          <div className="hero-grid">
-            <div className="panel">
-              <h2>Preferred Profile</h2>
-              <p className="section-copy">
-                Move each scale toward the wine style you want the recommendations to match.
-              </p>
-              <div className="taste-profile-block">
-                <p className="taste-profile-title">How should your wine taste?</p>
-                <div className="taste-scale-stack">
-                  {tasteDimensionOrder.map((dimension) => (
-                    <TasteScale
-                      dimension={dimension}
-                      key={dimension}
-                      onChange={(value) => updatePreference(dimension, value)}
-                      value={preferences[dimension]}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="panel">
-              <h2>Ingest</h2>
-              <div className="ingest-stack">
-                <label className="url-field">
-                  <span>Paste a menu or collection URL</span>
-                  <input
-                    onChange={(event) => setSourceUrl(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        void handleUrlSubmit();
-                      }
-                    }}
-                    placeholder="https://example.com/wine-list"
-                    type="url"
-                    value={sourceUrl}
-                  />
-                </label>
-                <button
-                  className="action action-secondary"
-                  disabled={busy}
-                  onClick={handleUrlSubmit}
-                  type="button"
-                >
-                  {busy ? "Processing…" : "Analyze URL"}
-                </button>
-
-                <div className="ingest-divider">
-                  <span>or</span>
-                </div>
-
-                <label className="upload-zone">
-                  <span>Drop in a screenshot, photo, or PDF</span>
-                  <input
-                    accept="image/*,application/pdf"
-                    onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                    type="file"
-                  />
-                </label>
-                <button className="action" disabled={busy} onClick={handleUpload} type="button">
-                  {busy ? "Processing…" : "Analyze Upload"}
-                </button>
-              </div>
-              {selectedFile ? <p className="helper">Selected: {selectedFile.name}</p> : null}
-              {analysisState ? (
-                <p className="helper">
-                  Analysis {analysisState.analysisId.slice(0, 8)} · {analysisState.status}
-                </p>
-              ) : null}
-            </div>
-          </div>
         </section>
 
-        <section className="stack">
+        <div className="hero-grid">
           <div className="panel">
-            <h2>Provider Health</h2>
-            <p className="helper provider-health-copy">
-              The live enrichment stack is Playwright-backed `vivino-direct` plus local
-              `rule-based` fallback. Retired integration ideas are documented in the README.
+            <h2>Your Taste Profile</h2>
+            <p className="section-copy">
+              Move each scale toward the wine style you want the recommendations to match.
             </p>
-            <div className="provider-list">
-              {providerHealth.map((provider) => (
-                <article className="provider-chip" key={provider.name}>
-                  <strong>{provider.name}</strong>
-                  <span>{provider.enabled ? "enabled" : "disabled"}</span>
-                  <p>{provider.detail}</p>
-                </article>
-              ))}
+            <div className="taste-profile-block">
+              <p className="taste-profile-title">How should your wine taste?</p>
+              <div className="taste-scale-stack">
+                {tasteDimensionOrder.map((dimension) => (
+                  <TasteScale
+                    dimension={dimension}
+                    key={dimension}
+                    onChange={(value) => updatePreference(dimension, value)}
+                    value={preferences[dimension]}
+                  />
+                ))}
+              </div>
             </div>
           </div>
+          <div className="panel">
+            <h2>Analyze a Wine List</h2>
+            <div className="ingest-stack">
+              <label className="url-field">
+                <span>Paste a menu or collection URL</span>
+                <input
+                  onChange={(event) => setSourceUrl(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      void handleUrlSubmit();
+                    }
+                  }}
+                  placeholder="https://example.com/wine-list"
+                  type="url"
+                  value={sourceUrl}
+                />
+              </label>
+              <button
+                className="action action-secondary"
+                disabled={busy}
+                onClick={handleUrlSubmit}
+                type="button"
+              >
+                {busy ? "Processing…" : "Analyze URL"}
+              </button>
 
+              <div className="ingest-divider">
+                <span>or</span>
+              </div>
+
+              <label className="upload-zone">
+                <span>Drop in a screenshot, photo, or PDF</span>
+                <input
+                  accept="image/*,application/pdf"
+                  onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+                  type="file"
+                />
+              </label>
+              <button className="action" disabled={busy} onClick={handleUpload} type="button">
+                {busy ? "Processing…" : "Analyze Upload"}
+              </button>
+            </div>
+            {selectedFile ? <p className="helper">Selected: {selectedFile.name}</p> : null}
+            {analysisState ? (
+              <p className="helper">
+                Analysis {analysisState.analysisId.slice(0, 8)} · {analysisState.status}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <section className="stack">
           <div className="panel">
             <div className="result-header">
               <h2>Results</h2>
