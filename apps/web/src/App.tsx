@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import type {
@@ -262,6 +262,9 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [stoppingAnalysis, setStoppingAnalysis] = useState(false);
+  const [tastePanelOpen, setTastePanelOpen] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const sortedRecommendations = analysis ? sortRecommendations(analysis, resultSortOrder) : [];
   const inferredRecommendationCount = sortedRecommendations.filter(isInferredRecommendation).length;
   const priceFilterBounds = getPriceFilterBounds(analysis?.candidates ?? []);
@@ -470,90 +473,178 @@ export function App() {
     }
   }
 
+  function scrollToIngest() {
+    document.getElementById("ingest")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function handleDropZoneClick() {
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChange(file: File | null) {
+    setSelectedFile(file);
+  }
+
+  function handleDrop(event: React.DragEvent) {
+    event.preventDefault();
+    setIsDragOver(false);
+    const file = event.dataTransfer.files[0] ?? null;
+    if (file) {
+      setSelectedFile(file);
+    }
+  }
+
+  function handleDragOver(event: React.DragEvent) {
+    event.preventDefault();
+    setIsDragOver(true);
+  }
+
+  function handleDragLeave() {
+    setIsDragOver(false);
+  }
+
   return (
     <div className="page-shell">
-      <div className="backdrop" />
-      <main className="page">
-        <section className="hero-card">
-          <p className="eyebrow">Smokey&rsquo;s Bottle Shop</p>
-          <h1>Smokey&rsquo;s</h1>
-          <p className="lede">
-            Upload a wine list image or PDF, or paste a restaurant URL, and we&rsquo;ll
-            rank every bottle against your taste profile.
-          </p>
-        </section>
+      {/* ── Sticky nav ── */}
+      <nav className="site-nav">
+        <span className="site-nav-brand">Smokey&rsquo;s</span>
+        <button
+          className="site-nav-toggle"
+          onClick={() => setTastePanelOpen((open) => !open)}
+          type="button"
+        >
+          {tastePanelOpen ? "Close" : "My Taste"}
+        </button>
+      </nav>
 
-        <div className="hero-grid">
-          <div className="panel">
-            <h2>Your Taste Profile</h2>
-            <p className="section-copy">
-              Move each scale toward the wine style you want the recommendations to match.
+      {/* ── Taste preferences dropdown ── */}
+      {tastePanelOpen ? (
+        <div className="taste-panel">
+          <div className="taste-panel-inner">
+            <p className="taste-profile-title">How should your wine taste?</p>
+            <div className="taste-scale-stack">
+              {tasteDimensionOrder.map((dimension) => (
+                <TasteScale
+                  dimension={dimension}
+                  key={dimension}
+                  onChange={(value) => updatePreference(dimension, value)}
+                  value={preferences[dimension]}
+                />
+              ))}
+            </div>
+            <p className="taste-panel-hint">
+              Preferences apply automatically on your next analysis.
             </p>
-            <div className="taste-profile-block">
-              <p className="taste-profile-title">How should your wine taste?</p>
-              <div className="taste-scale-stack">
-                {tasteDimensionOrder.map((dimension) => (
-                  <TasteScale
-                    dimension={dimension}
-                    key={dimension}
-                    onChange={(value) => updatePreference(dimension, value)}
-                    value={preferences[dimension]}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="panel">
-            <h2>Analyze a Wine List</h2>
-            <div className="ingest-stack">
-              <label className="url-field">
-                <span>Paste a menu or collection URL</span>
-                <input
-                  onChange={(event) => setSourceUrl(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      void handleUrlSubmit();
-                    }
-                  }}
-                  placeholder="https://example.com/wine-list"
-                  type="url"
-                  value={sourceUrl}
-                />
-              </label>
-              <button
-                className="action action-secondary"
-                disabled={busy}
-                onClick={handleUrlSubmit}
-                type="button"
-              >
-                {busy ? "Processing…" : "Analyze URL"}
-              </button>
-
-              <div className="ingest-divider">
-                <span>or</span>
-              </div>
-
-              <label className="upload-zone">
-                <span>Drop in a screenshot, photo, or PDF</span>
-                <input
-                  accept="image/*,application/pdf"
-                  onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                  type="file"
-                />
-              </label>
-              <button className="action" disabled={busy} onClick={handleUpload} type="button">
-                {busy ? "Processing…" : "Analyze Upload"}
-              </button>
-            </div>
-            {selectedFile ? <p className="helper">Selected: {selectedFile.name}</p> : null}
-            {analysisState ? (
-              <p className="helper">
-                Analysis {analysisState.analysisId.slice(0, 8)} · {analysisState.status}
-              </p>
-            ) : null}
           </div>
         </div>
+      ) : null}
 
+      <main className="page">
+        {/* ── Hero ── */}
+        <section className="hero-card">
+          <h1>Smokey&rsquo;s</h1>
+          <p className="lede">
+            Find the best bottle on any wine list.
+          </p>
+          <button className="hero-cta" onClick={scrollToIngest} type="button">
+            Get Started
+          </button>
+        </section>
+
+        {/* ── Ingest section ── */}
+        <section className="ingest-section" id="ingest">
+          <h2>What&rsquo;s on the list?</h2>
+          <p className="section-copy">Paste a link or snap a photo of any wine list.</p>
+
+          <div className="url-row">
+            <input
+              className="url-row-input"
+              onChange={(event) => setSourceUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void handleUrlSubmit();
+                }
+              }}
+              placeholder="Paste a wine list URL"
+              type="url"
+              value={sourceUrl}
+            />
+            <button
+              className="action url-row-button"
+              disabled={busy}
+              onClick={handleUrlSubmit}
+              type="button"
+            >
+              {busy ? "Going…" : "Go"}
+            </button>
+          </div>
+
+          <div className="ingest-divider">
+            <span>or</span>
+          </div>
+
+          <div
+            className={`drop-zone${isDragOver ? " is-dragover" : ""}${selectedFile ? " has-file" : ""}`}
+            onClick={handleDropZoneClick}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            <input
+              accept="image/*,application/pdf"
+              className="drop-zone-input"
+              onChange={(event) => handleFileChange(event.target.files?.[0] ?? null)}
+              ref={fileInputRef}
+              type="file"
+            />
+            {selectedFile ? (
+              <div className="drop-zone-file">
+                <p className="drop-zone-filename">{selectedFile.name}</p>
+                <button
+                  className="action drop-zone-go"
+                  disabled={busy}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void handleUpload();
+                  }}
+                  type="button"
+                >
+                  {busy ? "Processing…" : "Analyze this file"}
+                </button>
+              </div>
+            ) : (
+              <div className="drop-zone-prompt">
+                <span className="drop-zone-icon" aria-hidden="true">
+                  <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="32" height="32">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" x2="12" y1="3" y2="15" />
+                  </svg>
+                </span>
+                <p className="drop-zone-label">
+                  Drop a photo, screenshot, or PDF here
+                </p>
+                <p className="drop-zone-hint">or click to browse</p>
+              </div>
+            )}
+          </div>
+
+          {error ? <p className="error">{error}</p> : null}
+          {analysisState ? (
+            <p className="helper">
+              Analysis {analysisState.analysisId.slice(0, 8)} &middot; {analysisState.status}
+            </p>
+          ) : null}
+        </section>
+
+        {/* ── Image break: bottles on concrete ── */}
+        <section className="image-break image-break-bottles">
+          <h2 className="image-break-text">
+            Every list.<br />Every bottle.<br />Ranked for you.
+          </h2>
+        </section>
+
+        {/* ── Results ── */}
         <section className="stack">
           <div className="panel">
             <div className="result-header">
@@ -751,6 +842,13 @@ export function App() {
               </section>
             ))}
           </div>
+        </section>
+
+        {/* ── Image break: bottle on shelf ── */}
+        <section className="image-break image-break-shelf">
+          <h2 className="image-break-text">
+            Curated by data.<br />Chosen by taste.
+          </h2>
         </section>
       </main>
     </div>
