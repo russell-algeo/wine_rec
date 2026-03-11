@@ -503,31 +503,31 @@ h1 {
 /* ── Taste profile block ── */
 
 .taste-profile-block {
-  margin-top: 1rem;
-  padding: 1.2rem 1.15rem;
+  margin-top: 0.65rem;
+  padding: 0.7rem 0.85rem;
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: var(--taste-surface);
 }
 
 .taste-profile-block-compact {
-  margin-top: 1.15rem;
+  margin-top: 0.65rem;
 }
 
 .taste-profile-title {
-  margin: 0 0 1.15rem;
+  margin: 0 0 0.65rem;
   font-family: var(--font-body);
-  font-size: clamp(1.2rem, 2.6vw, 1.7rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
+  font-size: clamp(0.85rem, 1.6vw, 1.05rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .taste-profile-heading {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 0.75rem;
-  margin-bottom: 1.15rem;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
 }
 
 .taste-profile-copy {
@@ -559,13 +559,13 @@ h1 {
 
 .taste-scale-stack {
   display: grid;
-  gap: 1.05rem;
+  gap: 0.45rem;
 }
 
 .taste-scale {
-  --taste-track-height: 1rem;
-  --taste-indicator-width: clamp(3.35rem, 9vw, 5.1rem);
-  --taste-indicator-height: 1rem;
+  --taste-track-height: 0.65rem;
+  --taste-indicator-width: clamp(2.5rem, 7vw, 3.8rem);
+  --taste-indicator-height: 0.65rem;
   --taste-track-current: var(--taste-track);
   --taste-indicator-current: var(--taste-indicator);
   --taste-shadow-current: rgba(12, 105, 154, 0.22);
@@ -573,14 +573,14 @@ h1 {
 
 .taste-scale-row {
   display: grid;
-  grid-template-columns: minmax(4.35rem, max-content) minmax(0, 1fr) minmax(4.35rem, max-content);
+  grid-template-columns: minmax(3.5rem, max-content) minmax(0, 1fr) minmax(3.5rem, max-content);
   align-items: center;
-  gap: 1rem;
+  gap: 0.6rem;
 }
 
 .taste-scale-endpoint {
   color: var(--ink);
-  font-size: clamp(1rem, 1.8vw, 1.4rem);
+  font-size: clamp(0.78rem, 1.2vw, 0.92rem);
   font-weight: 500;
 }
 
@@ -616,8 +616,8 @@ h1 {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 1.9rem;
-  margin: calc((var(--taste-track-height) - 1.9rem) / 2) 0;
+  height: 1.4rem;
+  margin: calc((var(--taste-track-height) - 1.4rem) / 2) 0;
   background: transparent;
   cursor: pointer;
 }
@@ -1005,8 +1005,8 @@ h1 {
 
 .result-card {
   display: grid;
-  gap: 1rem;
-  padding: 1.15rem;
+  gap: 0.7rem;
+  padding: 0.85rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--card);
@@ -1027,7 +1027,7 @@ h1 {
   align-items: center;
   justify-content: center;
   min-height: 100%;
-  padding: 0.95rem 0.75rem;
+  padding: 0.6rem 0.5rem;
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background:
@@ -1038,8 +1038,8 @@ h1 {
 .result-card-image {
   display: block;
   width: 100%;
-  max-width: 5.6rem;
-  max-height: 13.5rem;
+  max-width: 4.2rem;
+  max-height: 10rem;
   object-fit: contain;
   filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.12));
 }
@@ -1058,8 +1058,8 @@ h1 {
 
 .tasting-note-section {
   display: grid;
-  gap: 0.8rem;
-  margin-top: 1rem;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
 }
 
 .tasting-note-section-head {
@@ -1079,8 +1079,8 @@ h1 {
 
 .tasting-note-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
-  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+  gap: 0.5rem;
 }
 
 .tasting-note-card {
@@ -1101,8 +1101,8 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 8.4rem;
-  padding: 1.2rem 1rem 1rem;
+  min-height: 5.5rem;
+  padding: 0.75rem 0.75rem 0.65rem;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0)),
     linear-gradient(135deg, var(--note-accent), var(--note-accent-soft));
@@ -1110,20 +1110,20 @@ h1 {
 
 .tasting-note-card-cue-cluster {
   position: relative;
-  width: 10.5rem;
-  height: 5.6rem;
+  width: 7.5rem;
+  height: 4rem;
 }
 
 .tasting-note-card-cue-cluster.is-fallback {
-  width: 8rem;
+  width: 6rem;
 }
 
 .tasting-note-card-cue-frame {
   position: absolute;
   display: grid;
   place-items: center;
-  width: 3.8rem;
-  height: 3.8rem;
+  width: 2.7rem;
+  height: 2.7rem;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.42);
   background: rgba(255, 255, 255, 0.62);
@@ -1139,8 +1139,8 @@ h1 {
 .tasting-note-card-cue-frame.cue-index-2 {
   left: 50%;
   top: 0;
-  width: 4.5rem;
-  height: 4.5rem;
+  width: 3.2rem;
+  height: 3.2rem;
   transform: translateX(-50%);
   z-index: 1;
 }
@@ -1151,27 +1151,27 @@ h1 {
 }
 
 .tasting-note-card-cue-image {
-  width: 2.3rem;
-  height: 2.3rem;
+  width: 1.6rem;
+  height: 1.6rem;
   object-fit: contain;
 }
 
 .tasting-note-card-cue-frame.cue-index-2 .tasting-note-card-cue-image {
-  width: 2.75rem;
-  height: 2.75rem;
+  width: 1.9rem;
+  height: 1.9rem;
 }
 
 .tasting-note-card-icon {
   display: grid;
   place-items: center;
-  width: 1.95rem;
-  height: 1.95rem;
+  width: 1.4rem;
+  height: 1.4rem;
   color: var(--note-art-foreground, white);
 }
 
 .tasting-note-card-cue-frame.cue-index-2 .tasting-note-card-icon {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 1.6rem;
+  height: 1.6rem;
 }
 
 .tasting-note-card-icon svg {
@@ -1181,8 +1181,8 @@ h1 {
 
 .tasting-note-card-body {
   display: grid;
-  gap: 0.55rem;
-  padding: 1.05rem 1rem 1.1rem;
+  gap: 0.3rem;
+  padding: 0.6rem 0.75rem 0.65rem;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82)),
     var(--note-surface);
@@ -1191,16 +1191,16 @@ h1 {
 .tasting-note-card-family {
   margin: 0;
   color: var(--note-family-color, var(--note-accent));
-  font-size: 1.3rem;
+  font-size: 1rem;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   line-height: 1.1;
 }
 
 .tasting-note-card-keywords {
   margin: 0;
   color: var(--muted);
-  font-size: 0.96rem;
+  font-size: 0.8rem;
   font-weight: 700;
   line-height: 1.28;
   text-wrap: balance;
@@ -1284,7 +1284,7 @@ h1 {
 }
 
 .wine-title {
-  font-size: clamp(1.15rem, 2.6vw, 1.55rem);
+  font-size: clamp(1rem, 2.2vw, 1.3rem);
   line-height: 1.05;
   text-wrap: balance;
 }
@@ -1312,12 +1312,12 @@ h1 {
   display: inline-grid;
   grid-template-columns: auto auto;
   align-items: end;
-  gap: 0.75rem;
-  margin-top: 0.95rem;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
 }
 
 .vivino-rating-value {
-  font-size: clamp(2.75rem, 5vw, 4rem);
+  font-size: clamp(1.9rem, 3.5vw, 2.6rem);
   font-weight: 800;
   line-height: 0.84;
   letter-spacing: -0.07em;
@@ -1414,11 +1414,11 @@ h1 {
 .result-footer {
   display: flex;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
-  margin-top: 0.85rem;
+  margin-top: 0.45rem;
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.85rem;
 }
 
 .status-tag {

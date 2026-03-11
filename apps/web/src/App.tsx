@@ -507,7 +507,7 @@ export function App() {
     <div className="page-shell">
       {/* ── Sticky nav ── */}
       <nav className="site-nav">
-        <span className="site-nav-brand">Smokey&rsquo;s</span>
+        <span className="site-nav-brand">Wine Rec</span>
         <button
           className="site-nav-toggle"
           onClick={() => setTastePanelOpen((open) => !open)}
@@ -542,7 +542,7 @@ export function App() {
       <main className="page">
         {/* ── Hero ── */}
         <section className="hero-card">
-          <h1>Smokey&rsquo;s</h1>
+          <h1>WINE REC</h1>
           <p className="lede">
             Find the best bottle on any wine list.
           </p>
