@@ -8,6 +8,7 @@ export interface SearchHit {
   wineName: string;
   regionAndCountry: string;
   rating: number | null;
+  retailPrice: number | null;
   imageUrl: string | null;
   vintagePageUrl: string;
   year: number | null;
@@ -187,12 +188,22 @@ const SEARCH_HITS_EVALUATION = String.raw`
 
     if (!wineryName && !wineName) continue;
 
+    const priceEl =
+      card.querySelector('[class*="addToCart"] [class*="price"]') ||
+      card.querySelector('[class*="addToCart__price"]') ||
+      card.querySelector('[class*="offerPrice"]') ||
+      card.querySelector('[class*="priceSection"] [class*="amount"]');
+    const priceText = (priceEl && priceEl.textContent || "").trim();
+    const priceNumMatch = priceText.match(/[\d]+(?:\.\d{1,2})?/);
+    const retailPrice = priceNumMatch ? parseFloat(priceNumMatch[0]) : null;
+
     results.push({
       wineId,
       wineryName,
       wineName,
       regionAndCountry,
       rating: rating !== null && Number.isFinite(rating) ? rating : null,
+      retailPrice: retailPrice !== null && Number.isFinite(retailPrice) && retailPrice > 0 ? retailPrice : null,
       imageUrl,
       vintagePageUrl,
       year,

@@ -98,6 +98,7 @@ export const wineProfileSchema = z.object({
   tasteReviewCount: z.number().int().nonnegative().nullable().default(null),
   tastingNotes: z.string().nullable(),
   tastingNoteGroups: z.array(tastingNoteGroupSchema).optional(),
+  retailPrice: z.number().min(0).nullable().default(null),
   fetchedAt: z.string(),
 });
 

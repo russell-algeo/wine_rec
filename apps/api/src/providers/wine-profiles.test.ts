@@ -104,6 +104,7 @@ describe("wine profile providers", () => {
         wineName: "Langhe Nebbiolo",
         regionAndCountry: "Langhe, Italy",
         rating: 4.2,
+        retailPrice: null,
         imageUrl: null,
         vintagePageUrl:
           "https://www.vivino.com/en/stefano-occhetti-langhe-nebbiolo/w/9007803?ref=nav-search",
@@ -216,6 +217,7 @@ describe("wine profile providers", () => {
         wineName: "Langhe Nebbiolo",
         regionAndCountry: "Langhe, Italy",
         rating: 4.2,
+        retailPrice: null,
         imageUrl: null,
         vintagePageUrl:
           "https://www.vivino.com/en/stefano-occhetti-langhe-nebbiolo/w/9007803?ref=nav-search",
@@ -295,6 +297,7 @@ describe("wine profile providers", () => {
         wineName: "Langhe Nebbiolo",
         regionAndCountry: "Langhe, Italy",
         rating: 4.2,
+        retailPrice: null,
         imageUrl: null,
         vintagePageUrl:
           "https://www.vivino.com/en/stefano-occhetti-langhe-nebbiolo/w/9007803?ref=nav-search",

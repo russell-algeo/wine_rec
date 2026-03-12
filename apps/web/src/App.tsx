@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import type {
@@ -262,6 +262,14 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [stoppingAnalysis, setStoppingAnalysis] = useState(false);
+  const [tastePanelOpen, setTastePanelOpen] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [urlPreview, setUrlPreview] = useState<{ title: string | null; domain: string } | null>(null);
+  const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const [ingestTastePanelOpen, setIngestTastePanelOpen] = useState(false);
+  const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const sortedRecommendations = analysis ? sortRecommendations(analysis, resultSortOrder) : [];
   const inferredRecommendationCount = sortedRecommendations.filter(isInferredRecommendation).length;
   const priceFilterBounds = getPriceFilterBounds(analysis?.candidates ?? []);
@@ -295,6 +303,7 @@ export function App() {
       ? resultSections
       : resultSections.filter((section) => section.id === selectedResultSectionId);
   const analysisProgress = getAnalysisProgress(analysis);
+  const isFirstTimeUser = preferencesEqual(loadedPreferences, defaultPreferences);
 
   function updatePreference(dimension: TasteDimension, value: number) {
     setPreferences((current) => {
@@ -329,6 +338,12 @@ export function App() {
       setError(cause instanceof Error ? cause.message : "Failed to load API state");
     });
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    };
+  }, [filePreviewUrl]);
 
   useEffect(() => {
     if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
@@ -396,6 +411,7 @@ export function App() {
       });
 
       await launchAnalysis(upload);
+      setIngestTastePanelOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed");
     } finally {
@@ -403,7 +419,7 @@ export function App() {
     }
   }
 
-  async function handleUrlSubmit() {
+  async function handleUrlConfirm() {
     const normalizedUrl = normalizeUrlInput(sourceUrl);
     if (!normalizedUrl) {
       setError("Paste a menu or wine-list URL first.");
@@ -414,22 +430,55 @@ export function App() {
     setError(null);
 
     try {
-      await prepareAnalysis();
-
-      const created = await getJson<CreateAnalysisResponse>("/api/urls", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url: normalizedUrl }),
-      });
-
-      setSourceUrl(normalizedUrl);
-      await launchAnalysis(created);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "URL analysis failed");
+      const preview = await getJson<{ title: string | null; domain: string }>(
+        `/api/preview?url=${encodeURIComponent(normalizedUrl)}`
+      );
+      setUrlPreview(preview);
+      setPendingUrl(normalizedUrl);
+      setSelectedFile(null);
+      setFilePreviewUrl(null);
+      setIngestTastePanelOpen(true);
+    } catch {
+      // Preview fetch failed — fall back to domain only
+      const domain = new URL(normalizedUrl).hostname;
+      setUrlPreview({ title: null, domain });
+      setPendingUrl(normalizedUrl);
+      setSelectedFile(null);
+      setFilePreviewUrl(null);
+      setIngestTastePanelOpen(true);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleUrlAnalyze() {
+    if (!pendingUrl) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      await prepareAnalysis();
+      const created = await getJson<CreateAnalysisResponse>("/api/urls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: pendingUrl }),
+      });
+      setSourceUrl(pendingUrl);
+      await launchAnalysis(created);
+      setIngestTastePanelOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to start analysis");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleIngestAnalyze() {
+    if (selectedFile) {
+      await handleUpload();
+    } else if (pendingUrl) {
+      await handleUrlAnalyze();
     }
   }
 
@@ -445,6 +494,14 @@ export function App() {
     const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${next.analysisId}`);
     setAnalysisState({ analysisId: next.analysisId, status: nextAnalysis.status });
     setAnalysis(nextAnalysis);
+    setTimeout(() => {
+      const results = document.getElementById("results");
+      const nav = document.querySelector("nav");
+      if (results) {
+        const navHeight = nav?.getBoundingClientRect().height ?? 0;
+        window.scrollTo({ top: results.getBoundingClientRect().top + window.scrollY - navHeight, behavior: "smooth" });
+      }
+    }, 50);
   }
 
   async function handleCancelAnalysis() {
@@ -470,108 +527,289 @@ export function App() {
     }
   }
 
+  function scrollToIngest() {
+    document.getElementById("ingest")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function handleDropZoneClick() {
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChange(file: File | null) {
+    if (filePreviewUrl) {
+      URL.revokeObjectURL(filePreviewUrl);
+    }
+    setSelectedFile(file);
+    setUrlPreview(null);
+    setPendingUrl(null);
+    if (file) {
+      setFilePreviewUrl(URL.createObjectURL(file));
+      setIngestTastePanelOpen(true);
+    } else {
+      setFilePreviewUrl(null);
+      setIngestTastePanelOpen(false);
+    }
+  }
+
+  function handleDrop(event: React.DragEvent) {
+    event.preventDefault();
+    setIsDragOver(false);
+    const file = event.dataTransfer.files[0] ?? null;
+    if (file) {
+      handleFileChange(file);
+    }
+  }
+
+  function handleDragOver(event: React.DragEvent) {
+    event.preventDefault();
+    setIsDragOver(true);
+  }
+
+  function handleDragLeave() {
+    setIsDragOver(false);
+  }
+
   return (
     <div className="page-shell">
-      <div className="backdrop" />
-      <main className="page">
-        <section className="hero-card">
-          <p className="eyebrow">Local Debug Surface</p>
-          <h1>Wine Rec</h1>
-          <p className="lede">
-            Upload a wine list image or PDF, or paste a restaurant / store URL, then rank the
-            wines against a crisp, dry preference profile.
-          </p>
-          <div className="hero-grid">
-            <div className="panel">
-              <h2>Preferred Profile</h2>
-              <p className="section-copy">
-                Move each scale toward the wine style you want the recommendations to match.
-              </p>
-              <div className="taste-profile-block">
-                <p className="taste-profile-title">How should your wine taste?</p>
-                <div className="taste-scale-stack">
-                  {tasteDimensionOrder.map((dimension) => (
-                    <TasteScale
-                      dimension={dimension}
-                      key={dimension}
-                      onChange={(value) => updatePreference(dimension, value)}
-                      value={preferences[dimension]}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="panel">
-              <h2>Ingest</h2>
-              <div className="ingest-stack">
-                <label className="url-field">
-                  <span>Paste a menu or collection URL</span>
-                  <input
-                    onChange={(event) => setSourceUrl(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        void handleUrlSubmit();
-                      }
-                    }}
-                    placeholder="https://example.com/wine-list"
-                    type="url"
-                    value={sourceUrl}
-                  />
-                </label>
-                <button
-                  className="action action-secondary"
-                  disabled={busy}
-                  onClick={handleUrlSubmit}
-                  type="button"
-                >
-                  {busy ? "Processing…" : "Analyze URL"}
-                </button>
+      {/* ── Sticky nav ── */}
+      <nav className="site-nav">
+        <span className="site-nav-brand">Wine Rec</span>
+        <button
+          className="site-nav-toggle"
+          onClick={() => setTastePanelOpen((open) => !open)}
+          type="button"
+        >
+          {tastePanelOpen ? "Close" : "My Taste"}
+        </button>
+      </nav>
 
-                <div className="ingest-divider">
-                  <span>or</span>
-                </div>
-
-                <label className="upload-zone">
-                  <span>Drop in a screenshot, photo, or PDF</span>
-                  <input
-                    accept="image/*,application/pdf"
-                    onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                    type="file"
-                  />
-                </label>
-                <button className="action" disabled={busy} onClick={handleUpload} type="button">
-                  {busy ? "Processing…" : "Analyze Upload"}
-                </button>
-              </div>
-              {selectedFile ? <p className="helper">Selected: {selectedFile.name}</p> : null}
-              {analysisState ? (
-                <p className="helper">
-                  Analysis {analysisState.analysisId.slice(0, 8)} · {analysisState.status}
-                </p>
-              ) : null}
-            </div>
-          </div>
-        </section>
-
-        <section className="stack">
-          <div className="panel">
-            <h2>Provider Health</h2>
-            <p className="helper provider-health-copy">
-              The live enrichment stack is Playwright-backed `vivino-direct` plus local
-              `rule-based` fallback. Retired integration ideas are documented in the README.
-            </p>
-            <div className="provider-list">
-              {providerHealth.map((provider) => (
-                <article className="provider-chip" key={provider.name}>
-                  <strong>{provider.name}</strong>
-                  <span>{provider.enabled ? "enabled" : "disabled"}</span>
-                  <p>{provider.detail}</p>
-                </article>
+      {/* ── Taste preferences dropdown ── */}
+      {tastePanelOpen ? (
+        <div className="taste-panel">
+          <div className="taste-panel-inner">
+            <p className="taste-profile-title">How should your wine taste?</p>
+            <div className="taste-scale-stack">
+              {tasteDimensionOrder.map((dimension) => (
+                <TasteScale
+                  dimension={dimension}
+                  key={dimension}
+                  onChange={(value) => updatePreference(dimension, value)}
+                  value={preferences[dimension]}
+                />
               ))}
             </div>
+            <p className="taste-panel-hint">
+              Preferences apply automatically on your next analysis.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      <main className="page">
+        {/* ── Hero ── */}
+        <section className="hero-card">
+          <h1>WINE REC</h1>
+          <p className="lede">
+            Find the best bottle on any wine list.
+          </p>
+          <button className="hero-cta" onClick={scrollToIngest} type="button">
+            Get Started
+          </button>
+        </section>
+
+        {/* ── Ingest section ── */}
+        <section className="ingest-section" id="ingest">
+          <h2>What&rsquo;s on the list?</h2>
+          <p className="section-copy">Paste a link or snap a photo of any wine list.</p>
+
+          <div className="url-row">
+            <input
+              className="url-row-input"
+              onChange={(event) => setSourceUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void handleUrlConfirm();
+                }
+              }}
+              placeholder="Paste a wine list URL"
+              type="url"
+              value={sourceUrl}
+            />
+            <button
+              className="action url-row-button"
+              disabled={busy}
+              onClick={handleUrlConfirm}
+              type="button"
+            >
+              {busy ? "Loading…" : "Next →"}
+            </button>
           </div>
 
+          {urlPreview && (
+            <div className="url-preview-card">
+              <img
+                alt={`${urlPreview.domain} favicon`}
+                className="url-preview-favicon"
+                src={`https://www.google.com/s2/favicons?domain=${urlPreview.domain}&sz=32`}
+              />
+              <div className="url-preview-meta">
+                <span className="url-preview-title">
+                  {urlPreview.title ?? urlPreview.domain}
+                </span>
+                <span className="url-preview-domain">{urlPreview.domain}</span>
+              </div>
+              <span className="url-preview-check" aria-label="URL confirmed">✓</span>
+            </div>
+          )}
+
+          <div className="ingest-divider">
+            <span>or</span>
+          </div>
+
+          <div
+            className={`drop-zone${isDragOver ? " is-dragover" : ""}${selectedFile ? " has-file" : ""}`}
+            onClick={handleDropZoneClick}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            <input
+              accept="image/*,application/pdf"
+              className="drop-zone-input"
+              onChange={(event) => handleFileChange(event.target.files?.[0] ?? null)}
+              ref={fileInputRef}
+              type="file"
+            />
+            {selectedFile ? (
+              <div className="drop-zone-file-row">
+                <div className="drop-zone-thumbnail-wrap">
+                  {filePreviewUrl && (
+                    <img
+                      alt="Selected file preview"
+                      className="drop-zone-thumbnail"
+                      src={filePreviewUrl}
+                    />
+                  )}
+                  <div className="drop-zone-image-badge">
+                    <span className="drop-zone-filesize">
+                      {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                    </span>
+                    <button
+                      className="drop-zone-clear"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleFileChange(null);
+                      }}
+                      type="button"
+                      aria-label="Remove selected file"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+                <p className="drop-zone-filename">{selectedFile.name}</p>
+              </div>
+            ) : (
+              <div className="drop-zone-prompt">
+                <span className="drop-zone-icon" aria-hidden="true">
+                  <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="32" height="32">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" x2="12" y1="3" y2="15" />
+                  </svg>
+                </span>
+                <p className="drop-zone-label">
+                  Drop a photo, screenshot, or PDF here
+                </p>
+                <p className="drop-zone-hint">or click to browse</p>
+              </div>
+            )}
+          </div>
+
+          {ingestTastePanelOpen && (
+            <div className="ingest-taste-panel">
+              <p className="ingest-taste-heading">
+                {isFirstTimeUser ? "How do you like your wine?" : "Your preferences are saved."}
+              </p>
+              <p className="ingest-taste-sub">
+                {isFirstTimeUser
+                  ? "Set your preferences — results are sorted to match."
+                  : "Adjust if you'd like, then analyze."}
+              </p>
+              <div className="taste-scale-stack">
+                {tasteDimensionOrder.map((dimension) => (
+                  <TasteScale
+                    dimension={dimension}
+                    key={dimension}
+                    onChange={(value) => updatePreference(dimension, value)}
+                    value={preferences[dimension]}
+                  />
+                ))}
+              </div>
+              <button
+                className="action ingest-taste-analyze"
+                disabled={busy}
+                onClick={() => void handleIngestAnalyze()}
+                type="button"
+              >
+                {busy ? "Starting…" : "Analyze →"}
+              </button>
+            </div>
+          )}
+
+          {error ? <p className="error">{error}</p> : null}
+          {analysisState ? (
+            <p className="helper">
+              Analysis {analysisState.analysisId.slice(0, 8)} &middot; {analysisState.status}
+            </p>
+          ) : null}
+        </section>
+
+        {/* ── Image break: bottles on concrete ── */}
+        <section className="image-break image-break-bottles">
+          <h2 className="image-break-text">
+            Every list.<br />Every bottle.<br />Ranked for you.
+          </h2>
+        </section>
+
+        {/* ── Results ── */}
+        <section id="results" className="stack">
           <div className="panel">
+            {analysis && (
+              <>
+                <div
+                  className="result-taste-toggle"
+                  onClick={() => setResultsTastePanelOpen((open) => !open)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setResultsTastePanelOpen((open) => !open);
+                    }
+                  }}
+                >
+                  <span className="result-taste-toggle-label">My Taste Preferences</span>
+                  <span className="result-taste-toggle-caret" aria-hidden="true">
+                    {resultsTastePanelOpen ? "▾" : "▸"}
+                  </span>
+                </div>
+                {resultsTastePanelOpen && (
+                  <div className="result-taste-panel">
+                    <div className="taste-scale-stack">
+                      {tasteDimensionOrder.map((dimension) => (
+                        <TasteScale
+                          dimension={dimension}
+                          key={dimension}
+                          onChange={(value) => updatePreference(dimension, value)}
+                          value={preferences[dimension]}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
             <div className="result-header">
               <h2>Results</h2>
               {analysis?.recommendations.length ? (
@@ -757,16 +995,25 @@ export function App() {
                     </p>
                   </div>
                 ) : null}
-                {section.recommendations.map((recommendation) => (
-                  <ResultCard
-                    candidate={candidateById.get(recommendation.candidateId)}
-                    key={recommendation.candidateId}
-                    recommendation={recommendation}
-                  />
-                ))}
+                <div className="result-section-cards">
+                  {section.recommendations.map((recommendation) => (
+                    <ResultCard
+                      candidate={candidateById.get(recommendation.candidateId)}
+                      key={recommendation.candidateId}
+                      recommendation={recommendation}
+                    />
+                  ))}
+                </div>
               </section>
             ))}
           </div>
+        </section>
+
+        {/* ── Image break: bottle on shelf ── */}
+        <section className="image-break image-break-shelf">
+          <h2 className="image-break-text">
+            Curated by data.<br />Chosen by taste.
+          </h2>
         </section>
       </main>
     </div>
@@ -989,6 +1236,20 @@ function ResultCard(props: {
   candidate: ResultCandidate | undefined;
 }) {
   const { candidate, recommendation } = props;
+  const [showTastingNotes, setShowTastingNotes] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const stack = containerRef.current?.closest<HTMLElement>(".stack");
+    if (!stack) return;
+    if (showTastingNotes && dropdownRef.current) {
+      const height = dropdownRef.current.getBoundingClientRect().height;
+      stack.style.setProperty("--notes-dropdown-height", `${height}px`);
+    } else {
+      stack.style.removeProperty("--notes-dropdown-height");
+    }
+  }, [showTastingNotes]);
   const isInferred = isInferredRecommendation(recommendation);
   const menuTitle = candidate?.rawText ?? recommendation.profile?.displayName ?? "Unmatched wine";
   const menuContext = formatMenuContext(candidate?.menuTab, candidate?.menuSection);
@@ -1026,9 +1287,15 @@ function ResultCard(props: {
   const showNoTastingNotesIndicator = Boolean(
     recommendation.profile && !isInferred && !hasTastingNoteContent,
   );
+  const restaurantPrice = parseCandidatePrice(candidate?.price);
+  const retailPrice = recommendation.profile?.retailPrice ?? null;
+  const priceBenchmark =
+    restaurantPrice !== null && retailPrice !== null
+      ? computePriceBenchmark(restaurantPrice, retailPrice)
+      : null;
 
   return (
-    <article className={`result-card${isInferred ? " is-inferred" : ""}${imageUrl ? " has-image" : ""}`}>
+    <article className={`result-card${isInferred ? " is-inferred" : ""}${imageUrl ? " has-image" : ""}${showTastingNotes ? " is-notes-open" : ""}`} ref={containerRef}>
       {imageUrl ? (
         <div className="result-card-media">
           <img
@@ -1071,12 +1338,6 @@ function ResultCard(props: {
             </div>
           </div>
         </div>
-        <div className="result-footer">
-          <span>{detailSummary}</span>
-          <span className={`status-tag${isInferred ? " is-inferred" : ""}`}>
-            {isInferred ? "Estimated profile" : formatStatusLabel(recommendation.status)}
-          </span>
-        </div>
         <div className={`taste-profile-block taste-profile-block-compact${isInferred ? " is-inferred" : ""}`}>
           <div className="taste-profile-heading">
             <div className="taste-profile-copy">
@@ -1100,16 +1361,50 @@ function ResultCard(props: {
             </p>
           ) : null}
         </div>
-        {showNoTastingNotesIndicator ? (
-          <p className="tasting-notes-empty">No tasting notes reported.</p>
-        ) : tastingNoteGroups.length > 0 ? (
-          <TastingNoteGroupSection groups={tastingNoteGroups} />
-        ) : tastingNotesText ? (
-          <p className="tasting-notes-fallback">
-            <span className="tasting-notes-label">Tasting notes: </span>
-            {tastingNotesText}
-          </p>
-        ) : null}
+        <div className="tasting-notes-collapsible">
+          <button
+            className="tasting-notes-toggle"
+            onClick={() => setShowTastingNotes((v) => !v)}
+            type="button"
+          >
+            <span>Tasting notes &amp; details</span>
+            <span className={`tasting-notes-toggle-icon${showTastingNotes ? " is-open" : ""}`}>▾</span>
+          </button>
+          {showTastingNotes ? (
+            <div className="tasting-notes-dropdown" ref={dropdownRef}>
+              {hasTastingNoteContent || showNoTastingNotesIndicator ? (
+                <div className="detail-tasting-notes-section">
+                  <p className="detail-section-label">Tasting notes</p>
+                  {showNoTastingNotesIndicator ? (
+                    <p className="tasting-notes-empty">No tasting notes reported.</p>
+                  ) : tastingNoteGroups.length > 0 ? (
+                    <TastingNoteGroupSection groups={tastingNoteGroups} />
+                  ) : tastingNotesText ? (
+                    <p className="tasting-notes-fallback">
+                      {tastingNotesText}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {candidate?.price || priceBenchmark ? (
+                <div className={`detail-price-section${hasTastingNoteContent || showNoTastingNotesIndicator ? " has-separator" : ""}`}>
+                  <p className="detail-section-label">Price</p>
+                  <p className="detail-price-restaurant">
+                    {candidate?.price ?? "Not listed"} on the menu
+                  </p>
+                  {priceBenchmark ? (
+                    <p className={`detail-price-benchmark is-${priceBenchmark.tier}`}>
+                      ~{formatPriceValue(priceBenchmark.retailPrice)} avg retail &middot; {priceBenchmark.multiplier.toFixed(1)}× markup
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {!candidate?.price && !priceBenchmark && !hasTastingNoteContent && !showNoTastingNotesIndicator ? (
+                <p className="tasting-notes-empty">No additional details available.</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </article>
   );
@@ -1120,9 +1415,6 @@ function TastingNoteGroupSection(props: {
 }) {
   return (
     <section aria-label="Top tasting note families" className="tasting-note-section">
-      <div className="tasting-note-section-head">
-        <p className="tasting-note-section-title">Top tasting note families</p>
-      </div>
       <div className="tasting-note-groups">
         {props.groups.map((group, index) => (
           <TastingNoteGroupCard
@@ -1161,6 +1453,12 @@ function TastingNoteGroupCard(props: {
       className={`tasting-note-card${props.isPrimary ? " is-primary" : ""}`}
       style={cardStyle}
     >
+      <div className="tasting-note-card-body">
+        <p className="tasting-note-card-family">{props.group.label}</p>
+        <p className="tasting-note-card-keywords">
+          {cueNotes.map((cue) => cue.keyword).join(", ")}
+        </p>
+      </div>
       <div className="tasting-note-card-art">
         <div
           className={`tasting-note-card-cue-cluster${hasCueImages ? "" : " is-fallback"}`}
@@ -1185,12 +1483,6 @@ function TastingNoteGroupCard(props: {
             </div>
           ))}
         </div>
-      </div>
-      <div className="tasting-note-card-body">
-        <p className="tasting-note-card-family">{props.group.label}</p>
-        <p className="tasting-note-card-keywords">
-          {cueNotes.map((cue) => cue.keyword).join(", ")}
-        </p>
       </div>
     </article>
   );
@@ -1349,6 +1641,19 @@ function formatPriceValue(value: number): string {
     minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
     maximumFractionDigits: Number.isInteger(value) ? 0 : 2,
   }).format(value);
+}
+
+type PriceBenchmarkTier = "fair" | "average" | "steep";
+
+function computePriceBenchmark(
+  restaurantPrice: number,
+  retailPrice: number,
+): { retailPrice: number; multiplier: number; tier: PriceBenchmarkTier } | null {
+  if (retailPrice <= 0 || restaurantPrice <= 0) return null;
+  const multiplier = restaurantPrice / retailPrice;
+  const tier: PriceBenchmarkTier =
+    multiplier <= 2.5 ? "fair" : multiplier <= 3.5 ? "average" : "steep";
+  return { retailPrice, multiplier, tier };
 }
 
 function formatTasteReviewCountLabel(count: number): string {

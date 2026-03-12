@@ -15,4 +15,6 @@ apps/api/uploads/
 task_plan.md
 progress.md
 findings.md
-
+.superpowers/
+docs/
+.claude/
