@@ -37,6 +37,7 @@ import {
   saveUrlSource,
   writeAnalysisMetadata,
 } from "./services/storage.js";
+import { fetchUrlPreview } from "./services/url-preview.js";
 
 const uploadSourceSchema = z.object({
   sourceType: sourceTypeSchema,
@@ -107,6 +108,28 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get("/favicon.ico", async (_, reply) => {
     return reply.status(204).send();
+  });
+
+  app.get("/api/preview", async (request, reply) => {
+    const { url } = request.query as { url?: string };
+    if (!url) {
+      return reply.status(400).send({ error: "url query parameter is required" });
+    }
+
+    let parsed: URL;
+    try {
+      parsed = assertHttpUrl(url);
+    } catch {
+      return reply.status(400).send({ error: "Invalid URL" });
+    }
+
+    try {
+      const preview = await fetchUrlPreview(parsed.href);
+      return reply.send(preview);
+    } catch {
+      // Always return something — never hard-fail the preview
+      return reply.send({ title: null, domain: parsed.hostname });
+    }
   });
 
   app.get("/api/health/providers", async () => {
