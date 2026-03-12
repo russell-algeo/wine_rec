@@ -42,6 +42,7 @@ type RawExternalProfile = {
   tastingNotes?: string | undefined;
   tasteReviewCount?: number | undefined;
   tastingNoteGroups?: TastingNoteGroup[] | undefined;
+  retailPrice?: number | null | undefined;
 };
 
 function buildProfile(
@@ -104,6 +105,7 @@ function buildProfile(
       tasteReviewCount: external.tasteReviewCount ?? null,
       tastingNotes: external.tastingNotes ?? null,
       ...(external.tastingNoteGroups ? { tastingNoteGroups: external.tastingNoteGroups } : {}),
+      retailPrice: external.retailPrice ?? null,
       fetchedAt: new Date().toISOString(),
     },
   };
@@ -569,6 +571,7 @@ class VivinoDirectProvider implements WineProfileProvider {
         ),
         tastingNotes: extractTastingNotes(flavorData),
         ...(tastingNoteGroups ? { tastingNoteGroups } : {}),
+        retailPrice: bestHit.retailPrice ?? null,
         fetchedAt: new Date().toISOString(),
       },
     };

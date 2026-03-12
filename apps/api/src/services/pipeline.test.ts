@@ -70,6 +70,7 @@ function buildProfile(overrides: Partial<WineProfile> = {}): WineProfile {
     },
     tasteReviewCount: 12,
     tastingNotes: "Cherry, herbs",
+    retailPrice: null,
     fetchedAt: "2026-03-10T00:00:00.000Z",
     ...overrides,
   };

@@ -494,6 +494,14 @@ export function App() {
     const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${next.analysisId}`);
     setAnalysisState({ analysisId: next.analysisId, status: nextAnalysis.status });
     setAnalysis(nextAnalysis);
+    setTimeout(() => {
+      const results = document.getElementById("results");
+      const nav = document.querySelector("nav");
+      if (results) {
+        const navHeight = nav?.getBoundingClientRect().height ?? 0;
+        window.scrollTo({ top: results.getBoundingClientRect().top + window.scrollY - navHeight, behavior: "smooth" });
+      }
+    }, 50);
   }
 
   async function handleCancelAnalysis() {
@@ -633,7 +641,7 @@ export function App() {
               onClick={handleUrlConfirm}
               type="button"
             >
-              {busy ? "Going…" : "Go"}
+              {busy ? "Loading…" : "Next →"}
             </button>
           </div>
 
@@ -674,30 +682,32 @@ export function App() {
             />
             {selectedFile ? (
               <div className="drop-zone-file-row">
-                {filePreviewUrl && (
-                  <img
-                    alt="Selected file preview"
-                    className="drop-zone-thumbnail"
-                    src={filePreviewUrl}
-                  />
-                )}
-                <div className="drop-zone-file-meta">
-                  <p className="drop-zone-filename">{selectedFile.name}</p>
-                  <p className="drop-zone-filesize">
-                    {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
-                  </p>
+                <div className="drop-zone-thumbnail-wrap">
+                  {filePreviewUrl && (
+                    <img
+                      alt="Selected file preview"
+                      className="drop-zone-thumbnail"
+                      src={filePreviewUrl}
+                    />
+                  )}
+                  <div className="drop-zone-image-badge">
+                    <span className="drop-zone-filesize">
+                      {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                    </span>
+                    <button
+                      className="drop-zone-clear"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleFileChange(null);
+                      }}
+                      type="button"
+                      aria-label="Remove selected file"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
-                <button
-                  className="drop-zone-clear"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleFileChange(null);
-                  }}
-                  type="button"
-                  aria-label="Remove selected file"
-                >
-                  ✕
-                </button>
+                <p className="drop-zone-filename">{selectedFile.name}</p>
               </div>
             ) : (
               <div className="drop-zone-prompt">
@@ -763,7 +773,7 @@ export function App() {
         </section>
 
         {/* ── Results ── */}
-        <section className="stack">
+        <section id="results" className="stack">
           <div className="panel">
             {analysis && (
               <>
@@ -1277,6 +1287,12 @@ function ResultCard(props: {
   const showNoTastingNotesIndicator = Boolean(
     recommendation.profile && !isInferred && !hasTastingNoteContent,
   );
+  const restaurantPrice = parseCandidatePrice(candidate?.price);
+  const retailPrice = recommendation.profile?.retailPrice ?? null;
+  const priceBenchmark =
+    restaurantPrice !== null && retailPrice !== null
+      ? computePriceBenchmark(restaurantPrice, retailPrice)
+      : null;
 
   return (
     <article className={`result-card${isInferred ? " is-inferred" : ""}${imageUrl ? " has-image" : ""}${showTastingNotes ? " is-notes-open" : ""}`} ref={containerRef}>
@@ -1351,20 +1367,40 @@ function ResultCard(props: {
             onClick={() => setShowTastingNotes((v) => !v)}
             type="button"
           >
-            <span>Tasting notes</span>
+            <span>Tasting notes &amp; details</span>
             <span className={`tasting-notes-toggle-icon${showTastingNotes ? " is-open" : ""}`}>▾</span>
           </button>
           {showTastingNotes ? (
             <div className="tasting-notes-dropdown" ref={dropdownRef}>
-              {showNoTastingNotesIndicator ? (
-                <p className="tasting-notes-empty">No tasting notes reported.</p>
-              ) : tastingNoteGroups.length > 0 ? (
-                <TastingNoteGroupSection groups={tastingNoteGroups} />
-              ) : tastingNotesText ? (
-                <p className="tasting-notes-fallback">
-                  <span className="tasting-notes-label">Tasting notes: </span>
-                  {tastingNotesText}
-                </p>
+              {hasTastingNoteContent || showNoTastingNotesIndicator ? (
+                <div className="detail-tasting-notes-section">
+                  <p className="detail-section-label">Tasting notes</p>
+                  {showNoTastingNotesIndicator ? (
+                    <p className="tasting-notes-empty">No tasting notes reported.</p>
+                  ) : tastingNoteGroups.length > 0 ? (
+                    <TastingNoteGroupSection groups={tastingNoteGroups} />
+                  ) : tastingNotesText ? (
+                    <p className="tasting-notes-fallback">
+                      {tastingNotesText}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {candidate?.price || priceBenchmark ? (
+                <div className={`detail-price-section${hasTastingNoteContent || showNoTastingNotesIndicator ? " has-separator" : ""}`}>
+                  <p className="detail-section-label">Price</p>
+                  <p className="detail-price-restaurant">
+                    {candidate?.price ?? "Not listed"} on the menu
+                  </p>
+                  {priceBenchmark ? (
+                    <p className={`detail-price-benchmark is-${priceBenchmark.tier}`}>
+                      ~{formatPriceValue(priceBenchmark.retailPrice)} avg retail &middot; {priceBenchmark.multiplier.toFixed(1)}× markup
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {!candidate?.price && !priceBenchmark && !hasTastingNoteContent && !showNoTastingNotesIndicator ? (
+                <p className="tasting-notes-empty">No additional details available.</p>
               ) : null}
             </div>
           ) : null}
@@ -1605,6 +1641,19 @@ function formatPriceValue(value: number): string {
     minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
     maximumFractionDigits: Number.isInteger(value) ? 0 : 2,
   }).format(value);
+}
+
+type PriceBenchmarkTier = "fair" | "average" | "steep";
+
+function computePriceBenchmark(
+  restaurantPrice: number,
+  retailPrice: number,
+): { retailPrice: number; multiplier: number; tier: PriceBenchmarkTier } | null {
+  if (retailPrice <= 0 || restaurantPrice <= 0) return null;
+  const multiplier = restaurantPrice / retailPrice;
+  const tier: PriceBenchmarkTier =
+    multiplier <= 2.5 ? "fair" : multiplier <= 3.5 ? "average" : "steep";
+  return { retailPrice, multiplier, tier };
 }
 
 function formatTasteReviewCountLabel(count: number): string {

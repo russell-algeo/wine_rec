@@ -34,4 +34,26 @@ describe("fetchUrlPreview", () => {
 
     await expect(fetchUrlPreview("https://example.com")).rejects.toThrow("404");
   });
+
+  it("decodes HTML entities in the title", async () => {
+    const fakeHtml = `<html><head><title>Orange Wine &ndash; Graham Wine Co.</title></head></html>`;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => fakeHtml,
+    } as unknown as Response);
+
+    const result = await fetchUrlPreview("https://grahamwine.co/collections/orange");
+    expect(result.title).toBe("Orange Wine – Graham Wine Co.");
+  });
+
+  it("decodes numeric and hex HTML entities", async () => {
+    const fakeHtml = `<html><head><title>Bern&#8217;s &amp; Wine &#x26; Spirits</title></head></html>`;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => fakeHtml,
+    } as unknown as Response);
+
+    const result = await fetchUrlPreview("https://example.com");
+    expect(result.title).toBe("Bern\u2019s & Wine & Spirits");
+  });
 });
