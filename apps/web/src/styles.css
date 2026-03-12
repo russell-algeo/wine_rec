@@ -376,11 +376,6 @@ input {
   word-break: break-all;
 }
 
-.drop-zone-go {
-  width: 100%;
-  max-width: 16rem;
-}
-
 /* ── Drop zone: file confirmation row ── */
 
 .drop-zone-file-row {
@@ -1792,7 +1787,7 @@ h1 {
     margin-bottom: 0.95rem;
   }
 
-.hero-card > h1 {
+  .hero-card > h1 {
     font-size: clamp(3rem, 10vw, 6rem);
   }
 

@@ -772,7 +772,12 @@ export function App() {
                   onClick={() => setResultsTastePanelOpen((open) => !open)}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => e.key === "Enter" && setResultsTastePanelOpen((open) => !open)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setResultsTastePanelOpen((open) => !open);
+                    }
+                  }}
                 >
                   <span className="result-taste-toggle-label">My Taste Preferences</span>
                   <span className="result-taste-toggle-caret" aria-hidden="true">
