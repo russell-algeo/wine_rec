@@ -264,6 +264,11 @@ export function App() {
   const [stoppingAnalysis, setStoppingAnalysis] = useState(false);
   const [tastePanelOpen, setTastePanelOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [urlPreview, setUrlPreview] = useState<{ title: string | null; domain: string } | null>(null);
+  const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const [ingestTastePanelOpen, setIngestTastePanelOpen] = useState(false);
+  const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sortedRecommendations = analysis ? sortRecommendations(analysis, resultSortOrder) : [];
   const inferredRecommendationCount = sortedRecommendations.filter(isInferredRecommendation).length;
@@ -332,6 +337,12 @@ export function App() {
       setError(cause instanceof Error ? cause.message : "Failed to load API state");
     });
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    };
+  }, [filePreviewUrl]);
 
   useEffect(() => {
     if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
@@ -482,7 +493,19 @@ export function App() {
   }
 
   function handleFileChange(file: File | null) {
+    if (filePreviewUrl) {
+      URL.revokeObjectURL(filePreviewUrl);
+    }
     setSelectedFile(file);
+    setUrlPreview(null);
+    setPendingUrl(null);
+    if (file) {
+      setFilePreviewUrl(URL.createObjectURL(file));
+      setIngestTastePanelOpen(true);
+    } else {
+      setFilePreviewUrl(null);
+      setIngestTastePanelOpen(false);
+    }
   }
 
   function handleDrop(event: React.DragEvent) {
@@ -490,7 +513,7 @@ export function App() {
     setIsDragOver(false);
     const file = event.dataTransfer.files[0] ?? null;
     if (file) {
-      setSelectedFile(file);
+      handleFileChange(file);
     }
   }
 
@@ -832,13 +855,15 @@ export function App() {
                     </p>
                   </div>
                 ) : null}
-                {section.recommendations.map((recommendation) => (
-                  <ResultCard
-                    candidate={candidateById.get(recommendation.candidateId)}
-                    key={recommendation.candidateId}
-                    recommendation={recommendation}
-                  />
-                ))}
+                <div className="result-section-cards">
+                  {section.recommendations.map((recommendation) => (
+                    <ResultCard
+                      candidate={candidateById.get(recommendation.candidateId)}
+                      key={recommendation.candidateId}
+                      recommendation={recommendation}
+                    />
+                  ))}
+                </div>
               </section>
             ))}
           </div>
@@ -1071,6 +1096,19 @@ function ResultCard(props: {
   candidate: ResultCandidate | undefined;
 }) {
   const { candidate, recommendation } = props;
+  const [showTastingNotes, setShowTastingNotes] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const stack = document.querySelector<HTMLElement>(".stack");
+    if (!stack) return;
+    if (showTastingNotes && dropdownRef.current) {
+      const height = dropdownRef.current.getBoundingClientRect().height;
+      stack.style.setProperty("--notes-dropdown-height", `${height}px`);
+    } else {
+      stack.style.removeProperty("--notes-dropdown-height");
+    }
+  }, [showTastingNotes]);
   const isInferred = isInferredRecommendation(recommendation);
   const menuTitle = candidate?.rawText ?? recommendation.profile?.displayName ?? "Unmatched wine";
   const menuContext = formatMenuContext(candidate?.menuTab, candidate?.menuSection);
@@ -1110,7 +1148,7 @@ function ResultCard(props: {
   );
 
   return (
-    <article className={`result-card${isInferred ? " is-inferred" : ""}${imageUrl ? " has-image" : ""}`}>
+    <article className={`result-card${isInferred ? " is-inferred" : ""}${imageUrl ? " has-image" : ""}${showTastingNotes ? " is-notes-open" : ""}`}>
       {imageUrl ? (
         <div className="result-card-media">
           <img
@@ -1153,12 +1191,6 @@ function ResultCard(props: {
             </div>
           </div>
         </div>
-        <div className="result-footer">
-          <span>{detailSummary}</span>
-          <span className={`status-tag${isInferred ? " is-inferred" : ""}`}>
-            {isInferred ? "Estimated profile" : formatStatusLabel(recommendation.status)}
-          </span>
-        </div>
         <div className={`taste-profile-block taste-profile-block-compact${isInferred ? " is-inferred" : ""}`}>
           <div className="taste-profile-heading">
             <div className="taste-profile-copy">
@@ -1182,16 +1214,30 @@ function ResultCard(props: {
             </p>
           ) : null}
         </div>
-        {showNoTastingNotesIndicator ? (
-          <p className="tasting-notes-empty">No tasting notes reported.</p>
-        ) : tastingNoteGroups.length > 0 ? (
-          <TastingNoteGroupSection groups={tastingNoteGroups} />
-        ) : tastingNotesText ? (
-          <p className="tasting-notes-fallback">
-            <span className="tasting-notes-label">Tasting notes: </span>
-            {tastingNotesText}
-          </p>
-        ) : null}
+        <div className="tasting-notes-collapsible">
+          <button
+            className="tasting-notes-toggle"
+            onClick={() => setShowTastingNotes((v) => !v)}
+            type="button"
+          >
+            <span>Tasting notes</span>
+            <span className={`tasting-notes-toggle-icon${showTastingNotes ? " is-open" : ""}`}>▾</span>
+          </button>
+          {showTastingNotes ? (
+            <div className="tasting-notes-dropdown" ref={dropdownRef}>
+              {showNoTastingNotesIndicator ? (
+                <p className="tasting-notes-empty">No tasting notes reported.</p>
+              ) : tastingNoteGroups.length > 0 ? (
+                <TastingNoteGroupSection groups={tastingNoteGroups} />
+              ) : tastingNotesText ? (
+                <p className="tasting-notes-fallback">
+                  <span className="tasting-notes-label">Tasting notes: </span>
+                  {tastingNotesText}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </article>
   );
@@ -1202,9 +1248,6 @@ function TastingNoteGroupSection(props: {
 }) {
   return (
     <section aria-label="Top tasting note families" className="tasting-note-section">
-      <div className="tasting-note-section-head">
-        <p className="tasting-note-section-title">Top tasting note families</p>
-      </div>
       <div className="tasting-note-groups">
         {props.groups.map((group, index) => (
           <TastingNoteGroupCard
@@ -1243,6 +1286,12 @@ function TastingNoteGroupCard(props: {
       className={`tasting-note-card${props.isPrimary ? " is-primary" : ""}`}
       style={cardStyle}
     >
+      <div className="tasting-note-card-body">
+        <p className="tasting-note-card-family">{props.group.label}</p>
+        <p className="tasting-note-card-keywords">
+          {cueNotes.map((cue) => cue.keyword).join(", ")}
+        </p>
+      </div>
       <div className="tasting-note-card-art">
         <div
           className={`tasting-note-card-cue-cluster${hasCueImages ? "" : " is-fallback"}`}
@@ -1267,12 +1316,6 @@ function TastingNoteGroupCard(props: {
             </div>
           ))}
         </div>
-      </div>
-      <div className="tasting-note-card-body">
-        <p className="tasting-note-card-family">{props.group.label}</p>
-        <p className="tasting-note-card-keywords">
-          {cueNotes.map((cue) => cue.keyword).join(", ")}
-        </p>
       </div>
     </article>
   );
