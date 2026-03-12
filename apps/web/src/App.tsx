@@ -434,18 +434,21 @@ export function App() {
         `/api/preview?url=${encodeURIComponent(normalizedUrl)}`
       );
       setUrlPreview(preview);
+      setPendingUrl(normalizedUrl);
+      setSelectedFile(null);
+      setFilePreviewUrl(null);
+      setIngestTastePanelOpen(true);
     } catch {
       // Preview fetch failed — fall back to domain only
       const domain = new URL(normalizedUrl).hostname;
       setUrlPreview({ title: null, domain });
+      setPendingUrl(normalizedUrl);
+      setSelectedFile(null);
+      setFilePreviewUrl(null);
+      setIngestTastePanelOpen(true);
     } finally {
       setBusy(false);
     }
-
-    setPendingUrl(normalizedUrl);
-    setSelectedFile(null);
-    setFilePreviewUrl(null);
-    setIngestTastePanelOpen(true);
   }
 
   async function handleUrlAnalyze() {
@@ -1190,9 +1193,10 @@ function ResultCard(props: {
   const { candidate, recommendation } = props;
   const [showTastingNotes, setShowTastingNotes] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const stack = document.querySelector<HTMLElement>(".stack");
+    const stack = containerRef.current?.closest<HTMLElement>(".stack");
     if (!stack) return;
     if (showTastingNotes && dropdownRef.current) {
       const height = dropdownRef.current.getBoundingClientRect().height;
@@ -1240,7 +1244,7 @@ function ResultCard(props: {
   );
 
   return (
-    <article className={`result-card${isInferred ? " is-inferred" : ""}${imageUrl ? " has-image" : ""}${showTastingNotes ? " is-notes-open" : ""}`}>
+    <article className={`result-card${isInferred ? " is-inferred" : ""}${imageUrl ? " has-image" : ""}${showTastingNotes ? " is-notes-open" : ""}`} ref={containerRef}>
       {imageUrl ? (
         <div className="result-card-media">
           <img
