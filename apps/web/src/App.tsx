@@ -410,6 +410,7 @@ export function App() {
       });
 
       await launchAnalysis(upload);
+      setIngestTastePanelOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed");
     } finally {
@@ -417,7 +418,7 @@ export function App() {
     }
   }
 
-  async function handleUrlSubmit() {
+  async function handleUrlConfirm() {
     const normalizedUrl = normalizeUrlInput(sourceUrl);
     if (!normalizedUrl) {
       setError("Paste a menu or wine-list URL first.");
@@ -428,22 +429,52 @@ export function App() {
     setError(null);
 
     try {
-      await prepareAnalysis();
-
-      const created = await getJson<CreateAnalysisResponse>("/api/urls", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url: normalizedUrl }),
-      });
-
-      setSourceUrl(normalizedUrl);
-      await launchAnalysis(created);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "URL analysis failed");
+      const preview = await getJson<{ title: string | null; domain: string }>(
+        `/api/preview?url=${encodeURIComponent(normalizedUrl)}`
+      );
+      setUrlPreview(preview);
+    } catch {
+      // Preview fetch failed — fall back to domain only
+      const domain = new URL(normalizedUrl).hostname;
+      setUrlPreview({ title: null, domain });
     } finally {
       setBusy(false);
+    }
+
+    setPendingUrl(normalizedUrl);
+    setSelectedFile(null);
+    setFilePreviewUrl(null);
+    setIngestTastePanelOpen(true);
+  }
+
+  async function handleUrlAnalyze() {
+    if (!pendingUrl) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      await prepareAnalysis();
+      const created = await getJson<CreateAnalysisResponse>("/api/urls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: pendingUrl }),
+      });
+      setSourceUrl(pendingUrl);
+      await launchAnalysis(created);
+      setIngestTastePanelOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to start analysis");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleIngestAnalyze() {
+    if (selectedFile) {
+      await handleUpload();
+    } else if (pendingUrl) {
+      await handleUrlAnalyze();
     }
   }
 
@@ -585,7 +616,7 @@ export function App() {
               onChange={(event) => setSourceUrl(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
-                  void handleUrlSubmit();
+                  void handleUrlConfirm();
                 }
               }}
               placeholder="Paste a wine list URL"
@@ -595,7 +626,7 @@ export function App() {
             <button
               className="action url-row-button"
               disabled={busy}
-              onClick={handleUrlSubmit}
+              onClick={handleUrlConfirm}
               type="button"
             >
               {busy ? "Going…" : "Go"}
