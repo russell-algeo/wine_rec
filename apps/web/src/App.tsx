@@ -765,6 +765,36 @@ export function App() {
         {/* ── Results ── */}
         <section className="stack">
           <div className="panel">
+            {analysis && (
+              <>
+                <div
+                  className="result-taste-toggle"
+                  onClick={() => setResultsTastePanelOpen((open) => !open)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === "Enter" && setResultsTastePanelOpen((open) => !open)}
+                >
+                  <span className="result-taste-toggle-label">My Taste Preferences</span>
+                  <span className="result-taste-toggle-caret" aria-hidden="true">
+                    {resultsTastePanelOpen ? "▾" : "▸"}
+                  </span>
+                </div>
+                {resultsTastePanelOpen && (
+                  <div className="result-taste-panel">
+                    <div className="taste-scale-stack">
+                      {tasteDimensionOrder.map((dimension) => (
+                        <TasteScale
+                          dimension={dimension}
+                          key={dimension}
+                          onChange={(value) => updatePreference(dimension, value)}
+                          value={preferences[dimension]}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
             <div className="result-header">
               <h2>Results</h2>
               {analysis?.recommendations.length ? (

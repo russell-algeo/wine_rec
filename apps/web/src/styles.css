@@ -947,6 +947,45 @@ h1 {
   flex-wrap: wrap;
 }
 
+/* ── Result taste panel ── */
+
+.result-taste-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1rem;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0.5rem;
+  transition: background 120ms ease;
+}
+
+.result-taste-toggle:hover {
+  background: rgba(12, 105, 154, 0.04);
+}
+
+.result-taste-toggle-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.result-taste-toggle-caret {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.result-taste-panel {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
 .result-controls {
   display: flex;
   align-items: center;
