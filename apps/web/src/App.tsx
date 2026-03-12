@@ -303,6 +303,7 @@ export function App() {
       ? resultSections
       : resultSections.filter((section) => section.id === selectedResultSectionId);
   const analysisProgress = getAnalysisProgress(analysis);
+  const isFirstTimeUser = preferencesEqual(loadedPreferences, defaultPreferences);
 
   function updatePreference(dimension: TasteDimension, value: number) {
     setPreferences((current) => {
@@ -633,6 +634,23 @@ export function App() {
             </button>
           </div>
 
+          {urlPreview && (
+            <div className="url-preview-card">
+              <img
+                alt={`${urlPreview.domain} favicon`}
+                className="url-preview-favicon"
+                src={`https://www.google.com/s2/favicons?domain=${urlPreview.domain}&sz=32`}
+              />
+              <div className="url-preview-meta">
+                <span className="url-preview-title">
+                  {urlPreview.title ?? urlPreview.domain}
+                </span>
+                <span className="url-preview-domain">{urlPreview.domain}</span>
+              </div>
+              <span className="url-preview-check" aria-label="URL confirmed">✓</span>
+            </div>
+          )}
+
           <div className="ingest-divider">
             <span>or</span>
           </div>
@@ -652,18 +670,30 @@ export function App() {
               type="file"
             />
             {selectedFile ? (
-              <div className="drop-zone-file">
-                <p className="drop-zone-filename">{selectedFile.name}</p>
+              <div className="drop-zone-file-row">
+                {filePreviewUrl && (
+                  <img
+                    alt="Selected file preview"
+                    className="drop-zone-thumbnail"
+                    src={filePreviewUrl}
+                  />
+                )}
+                <div className="drop-zone-file-meta">
+                  <p className="drop-zone-filename">{selectedFile.name}</p>
+                  <p className="drop-zone-filesize">
+                    {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                  </p>
+                </div>
                 <button
-                  className="action drop-zone-go"
-                  disabled={busy}
+                  className="drop-zone-clear"
                   onClick={(event) => {
                     event.stopPropagation();
-                    void handleUpload();
+                    handleFileChange(null);
                   }}
                   type="button"
+                  aria-label="Remove selected file"
                 >
-                  {busy ? "Processing…" : "Analyze this file"}
+                  ✕
                 </button>
               </div>
             ) : (
@@ -682,6 +712,37 @@ export function App() {
               </div>
             )}
           </div>
+
+          {ingestTastePanelOpen && (
+            <div className="ingest-taste-panel">
+              <p className="ingest-taste-heading">
+                {isFirstTimeUser ? "How do you like your wine?" : "Your preferences are saved."}
+              </p>
+              <p className="ingest-taste-sub">
+                {isFirstTimeUser
+                  ? "Set your preferences — results are sorted to match."
+                  : "Adjust if you'd like, then analyze."}
+              </p>
+              <div className="taste-scale-stack">
+                {tasteDimensionOrder.map((dimension) => (
+                  <TasteScale
+                    dimension={dimension}
+                    key={dimension}
+                    onChange={(value) => updatePreference(dimension, value)}
+                    value={preferences[dimension]}
+                  />
+                ))}
+              </div>
+              <button
+                className="action ingest-taste-analyze"
+                disabled={busy}
+                onClick={() => void handleIngestAnalyze()}
+                type="button"
+              >
+                {busy ? "Starting…" : "Analyze →"}
+              </button>
+            </div>
+          )}
 
           {error ? <p className="error">{error}</p> : null}
           {analysisState ? (
