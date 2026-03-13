@@ -112,11 +112,26 @@ function getWorkerUrl(): string {
 }
 
 async function publishWorkerJob(payload: WorkerJobPayload): Promise<{ messageId: string }> {
-  return getQStashClient().publishJSON({
+  const request = {
     url: getWorkerUrl(),
     body: payload,
     retries: 0,
-  });
+  };
+  const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  const response = bypassSecret
+    ? await getQStashClient().publishJSON({
+        ...request,
+        headers: {
+          "x-vercel-protection-bypass": bypassSecret,
+        },
+      })
+    : await getQStashClient().publishJSON(request);
+
+  if (!("messageId" in response)) {
+    throw new Error("QStash publish did not return a message id");
+  }
+
+  return { messageId: response.messageId };
 }
 
 function toCreateAnalysisResponse(job: AnalysisRun): CreateAnalysisResponse {
