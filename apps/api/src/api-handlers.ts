@@ -36,6 +36,13 @@ export class RequestError extends Error {
   }
 }
 
+class JobCanceledError extends Error {
+  constructor(readonly jobId: string) {
+    super(`Analysis ${jobId} was canceled`);
+    this.name = "JobCanceledError";
+  }
+}
+
 const uploadSourceSchema = z.object({
   sourceType: sourceTypeSchema,
 });
@@ -104,8 +111,8 @@ function getWorkerUrl(): string {
   return normalized.endsWith("/api/worker") ? normalized : `${normalized}/api/worker`;
 }
 
-async function publishWorkerJob(payload: WorkerJobPayload): Promise<void> {
-  await getQStashClient().publishJSON({
+async function publishWorkerJob(payload: WorkerJobPayload): Promise<{ messageId: string }> {
+  return getQStashClient().publishJSON({
     url: getWorkerUrl(),
     body: payload,
     retries: 0,
@@ -182,17 +189,19 @@ export async function createUploadAnalysis(input: {
   });
 
   try {
-    await publishWorkerJob({
+    const { messageId } = await publishWorkerJob({
       jobId: id,
       sourceType,
       sourceFilename: input.filename,
       mimeType,
       fileBase64: input.buffer.toString("base64"),
     });
+    await updateJob(id, { queueMessageId: messageId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to enqueue analysis";
     await updateJob(id, {
       status: "failed",
+      queueMessageId: null,
       errorMessage: message,
     });
     throw error;
@@ -221,16 +230,18 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
   });
 
   try {
-    await publishWorkerJob({
+    const { messageId } = await publishWorkerJob({
       jobId: id,
       sourceType,
       sourceFilename: url.toString(),
       sourceUrl: url.toString(),
     });
+    await updateJob(id, { queueMessageId: messageId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to enqueue analysis";
     await updateJob(id, {
       status: "failed",
+      queueMessageId: null,
       errorMessage: message,
     });
     throw error;
@@ -245,8 +256,43 @@ export async function getAnalysisRun(id: string): Promise<AnalysisRun | null> {
   return job ? analysisRunSchema.parse(job) : null;
 }
 
+export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
+  const { getJob, updateJob } = await loadJobStore();
+  const existing = await getJob(id);
+
+  if (!existing) {
+    return null;
+  }
+
+  if (existing.status === "completed" || existing.status === "failed" || existing.status === "canceled") {
+    return analysisRunSchema.parse(existing);
+  }
+
+  if (existing.queueMessageId) {
+    await getQStashClient().messages.delete(existing.queueMessageId).catch(() => undefined);
+  }
+
+  await updateJob(id, {
+    status: "canceled",
+    queueMessageId: null,
+    errorMessage: "Analysis stopped. Start a new scan when you're ready.",
+  });
+
+  const canceled = await getJob(id);
+  return canceled ? analysisRunSchema.parse(canceled) : null;
+}
+
 export function parseWorkerJobPayload(input: unknown): WorkerJobPayload {
   return workerJobPayloadSchema.parse(input);
+}
+
+async function assertJobActive(jobId: string): Promise<void> {
+  const { getJob } = await loadJobStore();
+  const current = await getJob(jobId);
+
+  if (!current || current.status === "canceled") {
+    throw new JobCanceledError(jobId);
+  }
 }
 
 export async function processWorkerJob(input: unknown): Promise<void> {
@@ -262,14 +308,21 @@ export async function processWorkerJob(input: unknown): Promise<void> {
     return;
   }
 
+  if (existing.status === "canceled") {
+    return;
+  }
+
   try {
     await updateJob(payload.jobId, {
       status: "processing",
+      queueMessageId: null,
       errorMessage: null,
       extractedText: null,
       candidates: [],
       recommendations: [],
     });
+
+    await assertJobActive(payload.jobId);
 
     const result = await runAnalysisPipeline(
       {
@@ -284,6 +337,7 @@ export async function processWorkerJob(input: unknown): Promise<void> {
       },
       {
         onCandidatesParsed: async ({ extractedText, candidates }) => {
+          await assertJobActive(payload.jobId);
           await updateJob(payload.jobId, {
             extractedText,
             candidates,
@@ -291,11 +345,13 @@ export async function processWorkerJob(input: unknown): Promise<void> {
           });
         },
         onCandidateProcessed: async ({ recommendations }) => {
+          await assertJobActive(payload.jobId);
           await updateJobRecommendations(payload.jobId, recommendations);
         },
       },
     );
 
+    await assertJobActive(payload.jobId);
     await updateJob(payload.jobId, {
       status: "completed",
       errorMessage: null,
@@ -304,9 +360,19 @@ export async function processWorkerJob(input: unknown): Promise<void> {
       recommendations: result.recommendations,
     });
   } catch (error) {
+    if (error instanceof JobCanceledError) {
+      return;
+    }
+
+    const current = await getJob(payload.jobId);
+    if (current?.status === "canceled") {
+      return;
+    }
+
     const message = error instanceof Error ? error.message : "Unknown worker error";
     await updateJob(payload.jobId, {
       status: "failed",
+      queueMessageId: null,
       errorMessage: message,
     });
   } finally {

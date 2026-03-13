@@ -116,6 +116,8 @@ type TasteDimension = "body" | "tannin" | "sweetness" | "acidity";
 const tasteDimensionOrder: TasteDimension[] = ["body", "tannin", "sweetness", "acidity"];
 const allResultSectionsId = "__all_sections__";
 const terminalAnalysisStatuses = new Set<AnalysisRun["status"]>(["canceled", "completed", "failed"]);
+const analysisPollingIntervalMs = 2500;
+const analysisPollingStaleAfterMs = 75_000;
 const ratingFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
@@ -302,6 +304,7 @@ export function App() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [analysisState, setAnalysisState] = useState<AnalysisState | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisRun | null>(null);
+  const [analysisNotice, setAnalysisNotice] = useState<string | null>(null);
   const [resultSortOrder, setResultSortOrder] = useState<ResultSortOrder>("recommended");
   const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter>("exclude-inferred");
   const [selectedResultSectionId, setSelectedResultSectionId] = useState(allResultSectionsId);
@@ -309,6 +312,8 @@ export function App() {
   const [includePriceUnavailable, setIncludePriceUnavailable] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [pollingPaused, setPollingPaused] = useState(false);
   const [tastePanelOpen, setTastePanelOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -362,6 +367,9 @@ export function App() {
       : resultSections.filter((section) => section.id === selectedResultSectionId);
   const analysisProgress = getAnalysisProgress(analysis);
   const isFirstTimeUser = preferencesEqual(loadedPreferences, defaultPreferences);
+  const hasActiveAnalysis = Boolean(
+    analysisState && !terminalAnalysisStatuses.has(analysisState.status),
+  );
 
   function updatePreference(dimension: TasteDimension, value: number) {
     setPreferences((current) => {
@@ -395,23 +403,42 @@ export function App() {
   }, [analysis, preferences]);
 
   useEffect(() => {
-    if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
+    if (!analysisState || terminalAnalysisStatuses.has(analysisState.status) || pollingPaused) {
       return;
     }
 
-    const handle = window.setInterval(() => {
+    const handle = window.setTimeout(() => {
       void getJson<AnalysisRun>(`/api/analyses/${analysisState.analysisId}`)
         .then((response) => {
           setAnalysis(response);
           setAnalysisState({ analysisId: response.id, status: response.status });
+
+          if (terminalAnalysisStatuses.has(response.status)) {
+            setPollingPaused(false);
+            setAnalysisNotice(null);
+            return;
+          }
+
+          const updatedAtMs = Date.parse(response.updatedAt);
+          if (Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs >= analysisPollingStaleAfterMs) {
+            setPollingPaused(true);
+            setAnalysisNotice(
+              "Analysis looks stalled. Polling paused to conserve usage. Resume polling or stop this run.",
+            );
+            return;
+          }
+
+          setAnalysisNotice(null);
         })
         .catch((cause) => {
+          setPollingPaused(true);
+          setAnalysisNotice("Live updates paused after a refresh error. Resume polling or stop this run.");
           setError(cause instanceof Error ? cause.message : "Failed to refresh analysis");
         });
-    }, 1000);
+    }, analysisPollingIntervalMs);
 
-    return () => window.clearInterval(handle);
-  }, [analysisState]);
+    return () => window.clearTimeout(handle);
+  }, [analysisState, pollingPaused]);
 
   useEffect(() => {
     if (
@@ -522,12 +549,16 @@ export function App() {
   function prepareAnalysis() {
     storePreferences(preferences);
     setLoadedPreferences(preferences);
+    setAnalysisNotice(null);
+    setPollingPaused(false);
   }
 
   async function launchAnalysis(next: CreateAnalysisResponse) {
     const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${next.analysisId}`);
     setAnalysisState({ analysisId: next.analysisId, status: nextAnalysis.status });
     setAnalysis(nextAnalysis);
+    setAnalysisNotice(null);
+    setPollingPaused(false);
     setTimeout(() => {
       const results = document.getElementById("results");
       const nav = document.querySelector("nav");
@@ -536,6 +567,35 @@ export function App() {
         window.scrollTo({ top: results.getBoundingClientRect().top + window.scrollY - navHeight, behavior: "smooth" });
       }
     }, 50);
+  }
+
+  function resumePolling() {
+    setError(null);
+    setAnalysisNotice(null);
+    setPollingPaused(false);
+  }
+
+  async function handleCancelAnalysis() {
+    if (!analysisState) {
+      return;
+    }
+
+    setCancelBusy(true);
+    setError(null);
+    setAnalysisNotice(null);
+
+    try {
+      const canceled = await getJson<AnalysisRun>(`/api/analyses/${analysisState.analysisId}/cancel`, {
+        method: "POST",
+      });
+      setAnalysis(canceled);
+      setAnalysisState({ analysisId: canceled.id, status: canceled.status });
+      setPollingPaused(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to stop analysis");
+    } finally {
+      setCancelBusy(false);
+    }
   }
 
   function scrollToIngest() {
@@ -770,10 +830,34 @@ export function App() {
 
           {error ? <p className="error">{error}</p> : null}
           {analysisState ? (
-            <p className="helper">
-              Analysis {analysisState.analysisId.slice(0, 8)} &middot; {analysisState.status}
-            </p>
+            <div className="analysis-meta">
+              <p className="helper">
+                Analysis {analysisState.analysisId.slice(0, 8)} &middot; {analysisState.status}
+              </p>
+              {hasActiveAnalysis ? (
+                <div className="analysis-actions">
+                  {pollingPaused ? (
+                    <button
+                      className="action action-quiet"
+                      onClick={resumePolling}
+                      type="button"
+                    >
+                      Resume polling
+                    </button>
+                  ) : null}
+                  <button
+                    className="action action-secondary"
+                    disabled={cancelBusy}
+                    onClick={() => void handleCancelAnalysis()}
+                    type="button"
+                  >
+                    {cancelBusy ? "Stopping…" : "Stop analysis"}
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ) : null}
+          {analysisNotice ? <p className="helper">{analysisNotice}</p> : null}
         </section>
 
         {/* ── Image break: bottles on concrete ── */}

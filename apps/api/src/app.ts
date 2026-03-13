@@ -13,6 +13,7 @@ import {
 import { appConfig } from "./config.js";
 import {
   RequestError,
+  cancelAnalysis,
   createUploadAnalysis,
   createUrlAnalysis,
   getAnalysisRun,
@@ -120,6 +121,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/api/analyses/:id", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
     const analysis = await getAnalysisRun(params.id);
+    if (!analysis) {
+      return reply.status(404).send({ message: "Analysis not found" });
+    }
+    return analysis;
+  });
+
+  app.post("/api/analyses/:id/cancel", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const analysis = await cancelAnalysis(params.id);
     if (!analysis) {
       return reply.status(404).send({ message: "Analysis not found" });
     }

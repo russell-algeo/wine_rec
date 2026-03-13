@@ -654,6 +654,20 @@ h1 {
   color: var(--muted);
 }
 
+.analysis-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.analysis-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 /* ── Taste profile block ── */
 
 .taste-profile-block {

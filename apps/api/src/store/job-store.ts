@@ -9,6 +9,7 @@ export type JobRecord = {
   sourceType: AnalysisRun["sourceType"];
   sourceFilename: string;
   status: AnalysisRun["status"];
+  queueMessageId: string | null;
   errorMessage: string | null;
   extractedText: string | null;
   candidates: WineCandidate[];
@@ -32,6 +33,7 @@ export async function createJob(input: {
     sourceType: input.sourceType,
     sourceFilename: input.sourceFilename,
     status: "queued",
+    queueMessageId: null,
     errorMessage: null,
     extractedText: null,
     candidates: [],
