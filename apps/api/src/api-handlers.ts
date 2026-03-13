@@ -17,12 +17,6 @@ import { VivinoBrowser } from "./providers/vivino-browser.js";
 import { createWineProfileProviders } from "./providers/wine-profiles.js";
 import { runAnalysisPipeline } from "./services/pipeline.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
-import {
-  createJob,
-  getJob,
-  updateJob,
-  updateJobRecommendations,
-} from "./store/job-store.js";
 
 const workerJobPayloadSchema = z.object({
   jobId: z.string(),
@@ -86,6 +80,10 @@ function getQStashClient(): QStashClient {
   }
 
   return new QStashClient({ token });
+}
+
+async function loadJobStore() {
+  return import("./store/job-store.js");
 }
 
 function getWorkerUrl(): string {
@@ -174,6 +172,7 @@ export async function createUploadAnalysis(input: {
   }).sourceType;
   const mimeType = inferMimeType(input.filename, input.mimeType);
   const id = nanoid();
+  const { createJob, updateJob } = await loadJobStore();
   const job = await createJob({
     id,
     sourceType,
@@ -212,6 +211,7 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
 
   const id = nanoid();
   const sourceType = inferUrlSourceType(url.toString());
+  const { createJob, updateJob } = await loadJobStore();
   const job = await createJob({
     id,
     sourceType,
@@ -238,6 +238,7 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
 }
 
 export async function getAnalysisRun(id: string): Promise<AnalysisRun | null> {
+  const { getJob } = await loadJobStore();
   const job = await getJob(id);
   return job ? analysisRunSchema.parse(job) : null;
 }
@@ -248,6 +249,11 @@ export function parseWorkerJobPayload(input: unknown): WorkerJobPayload {
 
 export async function processWorkerJob(input: unknown): Promise<void> {
   const payload = parseWorkerJobPayload(input);
+  const {
+    getJob,
+    updateJob,
+    updateJobRecommendations,
+  } = await loadJobStore();
   const existing = await getJob(payload.jobId);
 
   if (!existing) {

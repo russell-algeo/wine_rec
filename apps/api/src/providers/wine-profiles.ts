@@ -325,7 +325,7 @@ export function extractTastingNoteGroups(
   if (!flavor?.length) return undefined;
 
   const groups = flavor
-    .map((group) => {
+    .map((group): TastingNoteGroup | null => {
       const keywords: string[] = [];
       const keywordImageUrls: Array<string | null> = [];
       const keywordIndexes = new Map<string, number>();
@@ -374,7 +374,7 @@ export function extractTastingNoteGroups(
         imageUrl,
       } satisfies TastingNoteGroup;
     })
-    .filter((group): group is TastingNoteGroup => Boolean(group))
+    .filter((group): group is TastingNoteGroup => group !== null)
     .sort((left, right) => {
       const scoreDelta = (right.score ?? 0) - (left.score ?? 0);
       if (scoreDelta !== 0) return scoreDelta;

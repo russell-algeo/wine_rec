@@ -18,10 +18,10 @@ export default async function handler(req: VercelRequestLike, res: VercelRespons
   }
 
   try {
-    const body = createAnalysisFromUrlRequestSchema.parse(
+    const parsed = createAnalysisFromUrlRequestSchema.parse(
       await readJsonBody<unknown>(req),
     );
-    const response = await createUrlAnalysis(body);
+    const response = await createUrlAnalysis({ url: parsed.url });
     return sendJson(res, 200, response);
   } catch (error) {
     if (error instanceof RequestError) {

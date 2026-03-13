@@ -1,1 +1,4 @@
-export { default } from "../apps/api/api/preview.js";
+export default async function handler(...args: unknown[]) {
+  const mod = await import("../apps/api/api/preview.js");
+  return mod.default(...args);
+}
