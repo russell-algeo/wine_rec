@@ -4,15 +4,9 @@
   "installCommand": "npm install",
   "framework": null,
   "functions": {
-    "apps/api/api/**/*.ts": {
+    "api/**/*.ts": {
       "maxDuration": 60,
       "memory": 1024
     }
-  },
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "/apps/api/api/:path*"
-    }
-  ]
+  }
 }
