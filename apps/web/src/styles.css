@@ -757,12 +757,16 @@ h1 {
 .taste-scale-marker {
   position: absolute;
   top: 50%;
-  left: var(--taste-indicator-position, 50%);
+  left: clamp(
+    0px,
+    calc(var(--taste-indicator-ratio, 0.5) * (100% - var(--taste-indicator-width))),
+    calc(100% - var(--taste-indicator-width))
+  );
   width: var(--taste-indicator-width);
   height: var(--taste-indicator-height);
   border-radius: 999px;
   background: var(--taste-indicator-current);
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   box-shadow: 0 6px 14px var(--taste-shadow-current);
 }
 
@@ -1001,12 +1005,31 @@ h1 {
   color: var(--muted);
 }
 
+.result-taste-live-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  background: rgba(12, 105, 154, 0.1);
+  color: var(--accent);
+  border-radius: 99px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
 .result-taste-panel {
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   padding: 1rem 1.25rem;
   margin-bottom: 0.75rem;
+}
+
+.result-taste-panel-hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 .result-controls {

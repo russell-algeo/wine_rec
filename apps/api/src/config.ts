@@ -37,7 +37,7 @@ export const appConfig = {
   workerConcurrency: parsePositiveInteger(process.env.WORKER_CONCURRENCY, 2),
   analysisCandidateConcurrency: parsePositiveInteger(
     process.env.ANALYSIS_CANDIDATE_CONCURRENCY,
-    3,
+    5,
   ),
   ocrProvider: process.env.OCR_PROVIDER ?? "mock",
   ocrSpaceApiKey: process.env.OCR_SPACE_API_KEY ?? "",

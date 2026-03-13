@@ -5,6 +5,7 @@ import type {
   AnalysisRun,
   CreateAnalysisResponse,
   ProviderHealth,
+  TasteVector,
   UserTastePreference,
   WineRatingSource,
 } from "@wine-rec/contracts";
@@ -37,6 +38,21 @@ function preferencesEqual(left: UserTastePreference, right: UserTastePreference)
     left.weights.tannin === right.weights.tannin &&
     left.weights.sweetness === right.weights.sweetness
   );
+}
+
+function scoreRecommendation(preference: UserTastePreference, taste: TasteVector): number {
+  const weightedDistance =
+    Math.abs(preference.body - taste.body) * preference.weights.body +
+    Math.abs(preference.acidity - taste.acidity) * preference.weights.acidity +
+    Math.abs(preference.tannin - taste.tannin) * preference.weights.tannin +
+    Math.abs(preference.sweetness - taste.sweetness) * preference.weights.sweetness;
+  const maxDistance =
+    4 * preference.weights.body +
+    4 * preference.weights.acidity +
+    4 * preference.weights.tannin +
+    4 * preference.weights.sweetness;
+  if (maxDistance === 0) return 100;
+  return Math.max(0, Math.min(100, Math.round((1 - weightedDistance / maxDistance) * 100)));
 }
 
 type AnalysisState = {
@@ -211,27 +227,46 @@ const tasteScaleCopy: Record<
 async function getJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${input}`, init);
   if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}`);
+    let message = "";
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (contentType.includes("application/json")) {
+      try {
+        const payload = await response.json() as { message?: string; error?: string };
+        message = payload.message ?? payload.error ?? "";
+      } catch {
+        message = "";
+      }
+    } else {
+      try {
+        message = (await response.text()).trim();
+      } catch {
+        message = "";
+      }
+    }
+
+    throw new Error(message || `Request failed with ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
 
 function sortRecommendations(
-  analysis: AnalysisRun,
+  recommendations: AnalysisRun["recommendations"],
+  candidates: AnalysisRun["candidates"],
   sortOrder: ResultSortOrder,
 ): AnalysisRun["recommendations"] {
   if (sortOrder === "recommended") {
-    return analysis.recommendations;
+    return recommendations;
   }
 
   const discoveredOrder = new Map(
-    analysis.candidates.map((candidate, index) => [candidate.id, index]),
+    candidates.map((candidate, index) => [candidate.id, index]),
   );
   const rankedOrder = new Map(
-    analysis.recommendations.map((recommendation, index) => [recommendation.candidateId, index]),
+    recommendations.map((recommendation, index) => [recommendation.candidateId, index]),
   );
 
-  return [...analysis.recommendations].sort((left, right) => {
+  return [...recommendations].sort((left, right) => {
     const leftDiscovered = discoveredOrder.get(left.candidateId) ?? Number.MAX_SAFE_INTEGER;
     const rightDiscovered = discoveredOrder.get(right.candidateId) ?? Number.MAX_SAFE_INTEGER;
 
@@ -254,7 +289,7 @@ export function App() {
   const [analysisState, setAnalysisState] = useState<AnalysisState | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisRun | null>(null);
   const [resultSortOrder, setResultSortOrder] = useState<ResultSortOrder>("recommended");
-  const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter>("all");
+  const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter>("exclude-inferred");
   const [selectedResultSectionId, setSelectedResultSectionId] = useState(allResultSectionsId);
   const [maxPriceFilter, setMaxPriceFilter] = useState<number | null>(null);
   const [includePriceUnavailable, setIncludePriceUnavailable] = useState(true);
@@ -270,7 +305,18 @@ export function App() {
   const [ingestTastePanelOpen, setIngestTastePanelOpen] = useState(false);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const sortedRecommendations = analysis ? sortRecommendations(analysis, resultSortOrder) : [];
+  const isLiveReranking = Boolean(analysis && !preferencesEqual(preferences, loadedPreferences));
+  const baseRecommendations = isLiveReranking && analysis
+    ? [...analysis.recommendations]
+        .map((rec) => ({
+          ...rec,
+          fitScore: rec.profile ? scoreRecommendation(preferences, rec.profile.taste) : rec.fitScore,
+        }))
+        .sort((a, b) => b.fitScore !== a.fitScore ? b.fitScore - a.fitScore : b.matchConfidence - a.matchConfidence)
+    : analysis?.recommendations ?? [];
+  const sortedRecommendations = analysis
+    ? sortRecommendations(baseRecommendations, analysis.candidates, resultSortOrder)
+    : [];
   const inferredRecommendationCount = sortedRecommendations.filter(isInferredRecommendation).length;
   const priceFilterBounds = getPriceFilterBounds(analysis?.candidates ?? []);
   const effectiveMaxPrice = priceFilterBounds ? (maxPriceFilter ?? priceFilterBounds.max) : null;
@@ -789,7 +835,12 @@ export function App() {
                     }
                   }}
                 >
-                  <span className="result-taste-toggle-label">My Taste Preferences</span>
+                  <span className="result-taste-toggle-label">
+                    My Taste Preferences
+                    {isLiveReranking && (
+                      <span className="result-taste-live-badge" aria-label="Results re-ranked">Updated</span>
+                    )}
+                  </span>
                   <span className="result-taste-toggle-caret" aria-hidden="true">
                     {resultsTastePanelOpen ? "▾" : "▸"}
                   </span>
@@ -806,6 +857,11 @@ export function App() {
                         />
                       ))}
                     </div>
+                    <p className="result-taste-panel-hint">
+                      {isLiveReranking
+                        ? "Results are re-ranked to match your updated preferences."
+                        : "Adjust sliders to instantly re-rank results without re-running analysis."}
+                    </p>
                   </div>
                 )}
               </>
@@ -1518,7 +1574,7 @@ function TasteScale(props: {
     props.value === null
       ? undefined
       : ({
-          "--taste-indicator-position": `${getTasteIndicatorPosition(props.value)}%`,
+          "--taste-indicator-ratio": getTasteIndicatorRatio(props.value),
         } as CSSProperties);
 
   return (
@@ -1560,8 +1616,8 @@ function TasteScale(props: {
   );
 }
 
-function getTasteIndicatorPosition(value: number): number {
-  return 7 + ((Math.max(1, Math.min(5, value)) - 1) / 4) * 86;
+function getTasteIndicatorRatio(value: number): number {
+  return (Math.max(1, Math.min(5, value)) - 1) / 4;
 }
 
 function isInferredRecommendation(recommendation: ResultRecommendation): boolean {

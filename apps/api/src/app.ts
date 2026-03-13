@@ -53,6 +53,10 @@ function inferMimeType(filename: string, mimeType: string | undefined): string {
   return "image/jpeg";
 }
 
+function buildDisabledOcrUploadMessage(detail: string): string {
+  return `Image and PDF uploads require OCR. ${detail} Use a wine-list URL instead or configure an available OCR provider.`;
+}
+
 function inferUrlSourceType(input: string): "url-html" | "url-pdf" {
   const url = new URL(input);
   return url.pathname.toLowerCase().endsWith(".pdf") ? "url-pdf" : "url-html";
@@ -175,6 +179,14 @@ export async function buildApp(): Promise<FastifyInstance> {
       sourceType: inferSourceType(file.mimetype),
     }).sourceType;
     const mimeType = inferMimeType(file.filename, file.mimetype);
+    const ocrProvider = createOcrProvider();
+
+    if (!ocrProvider.isEnabled) {
+      return reply.status(503).send({
+        message: buildDisabledOcrUploadMessage(ocrProvider.detail),
+      });
+    }
+
     const analysis = await createAnalysis({
       sourceType,
       sourceFilename: file.filename,
