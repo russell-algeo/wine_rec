@@ -1,6 +1,11 @@
-import { chromium, type Browser, type BrowserContext } from "playwright";
+import chromium from "@sparticuz/chromium-min";
+import { chromium as playwrightChromium, type Browser, type Page } from "playwright-core";
 
 import { appConfig } from "../config.js";
+
+const CHROMIUM_PACK_URL =
+  process.env.CHROMIUM_PACK_URL ??
+  "https://github.com/Sparticuz/chromium/releases/download/v135/chromium-v135-pack.tar";
 
 export interface SearchHit {
   wineId: number;
@@ -252,7 +257,6 @@ const VINTAGE_PAGE_META_EVALUATION = String.raw`
 export class VivinoBrowser {
   private static instance: VivinoBrowser | null = null;
   private browser: Browser | null = null;
-  private context: BrowserContext | null = null;
 
   static getInstance(): VivinoBrowser {
     if (!VivinoBrowser.instance) {
@@ -262,8 +266,7 @@ export class VivinoBrowser {
   }
 
   async search(query: string): Promise<SearchHit[]> {
-    const context = await this.getOrLaunchContext();
-    const page = await context.newPage();
+    const page = await this.newPage();
 
     try {
       await page.goto(
@@ -295,7 +298,6 @@ export class VivinoBrowser {
       const message = error instanceof Error ? error.message : String(error);
       console.log("[vivino-browser] Search failed for %j: %s", query, message);
       if (message.includes("Target page, context or browser has been closed")) {
-        this.context = null;
         this.browser = null;
       }
       return [];
@@ -305,8 +307,7 @@ export class VivinoBrowser {
   }
 
   async fetchVintagePageMeta(vintagePageUrl: string): Promise<VivinoVintagePageMeta | null> {
-    const context = await this.getOrLaunchContext();
-    const page = await context.newPage();
+    const page = await this.newPage();
 
     try {
       await page.goto(vintagePageUrl, {
@@ -336,7 +337,6 @@ export class VivinoBrowser {
         message,
       );
       if (message.includes("Target page, context or browser has been closed")) {
-        this.context = null;
         this.browser = null;
       }
       return null;
@@ -350,52 +350,67 @@ export class VivinoBrowser {
   }
 
   async close(): Promise<void> {
-    if (this.context) {
-      await this.context.close().catch(() => null);
-      this.context = null;
-    }
     if (this.browser) {
       await this.browser.close().catch(() => null);
       this.browser = null;
     }
   }
 
-  private async getOrLaunchContext(): Promise<BrowserContext> {
-    if (this.context && this.browser?.isConnected()) return this.context;
+  private async newPage(): Promise<Page> {
+    const browser = await this.getOrLaunchBrowser();
+    const page = await browser.newPage();
 
-    const launchOptions: Parameters<typeof chromium.launch>[0] = {
-      headless: appConfig.vivinoDirectHeadless,
-      args: [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-      ],
-    };
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.setExtraHTTPHeaders({
+      "Accept-Language": "en-US,en;q=0.9",
+      "User-Agent": appConfig.vivinoDirectUserAgent,
+    });
+    await page.addInitScript(({ userAgent }) => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      Object.defineProperty(navigator, "userAgent", { get: () => userAgent });
+      Object.defineProperty(navigator, "language", { get: () => "en-US" });
+      Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+    }, { userAgent: appConfig.vivinoDirectUserAgent });
 
-    if (appConfig.vivinoDirectChromeExecutable) {
-      launchOptions.executablePath = appConfig.vivinoDirectChromeExecutable;
+    return page;
+  }
+
+  private async getOrLaunchBrowser(): Promise<Browser> {
+    if (this.browser?.isConnected()) {
+      return this.browser;
     }
 
-    this.browser = await chromium.launch(launchOptions);
+    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-    this.context = await this.browser.newContext({
-      userAgent: appConfig.vivinoDirectUserAgent,
-      viewport: { width: 1280, height: 800 },
-      locale: "en-US",
-      extraHTTPHeaders: {
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-    });
+    if (isServerless) {
+      this.browser = await playwrightChromium.launch({
+        args: [...chromium.args, "--disable-blink-features=AutomationControlled"],
+        executablePath: await chromium.executablePath(CHROMIUM_PACK_URL),
+        headless: true,
+      });
+    } else {
+      const { chromium: localChromium } = await import("playwright");
+      const launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
+        headless: appConfig.vivinoDirectHeadless,
+        args: [
+          "--disable-blink-features=AutomationControlled",
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+        ],
+      };
 
-    // Mask navigator.webdriver
-    await this.context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-    });
+      if (appConfig.vivinoDirectChromeExecutable) {
+        launchOptions.executablePath = appConfig.vivinoDirectChromeExecutable;
+      }
+
+      this.browser = await localChromium.launch(launchOptions);
+    }
 
     console.log(
-      "[vivino-browser] Chromium launched (headless=%s)",
-      appConfig.vivinoDirectHeadless,
+      "[vivino-browser] Chromium launched (serverless=%s, headless=%s)",
+      isServerless,
+      isServerless ? true : appConfig.vivinoDirectHeadless,
     );
-    return this.context;
+    return this.browser;
   }
 }

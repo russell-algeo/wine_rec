@@ -1,10 +1,10 @@
 import type { Recommendation, SourceType, WineCandidate } from "@wine-rec/contracts";
-import { rankMatch, scoreRecommendation } from "@wine-rec/core";
+import type { UserTastePreference } from "@wine-rec/contracts";
+import { defaultPreference, rankMatch, scoreRecommendation } from "@wine-rec/core";
 
 import { appConfig } from "../config.js";
 import { createWineProfileProviders } from "../providers/wine-profiles.js";
 import { parseWineCandidates } from "./parser.js";
-import { getPreferences } from "./repository.js";
 import { extractSourceText } from "./source-extractor.js";
 
 type AnalysisPipelineHooks = {
@@ -43,7 +43,7 @@ async function throwIfCanceled(
 
 async function buildCandidateRecommendation(
   candidate: WineCandidate,
-  preference: Awaited<ReturnType<typeof getPreferences>>,
+  preference: UserTastePreference,
   providers: ReturnType<typeof createWineProfileProviders>,
 ): Promise<Recommendation> {
   let best:
@@ -91,6 +91,7 @@ export async function runAnalysisPipeline(input: {
   mimeType: string;
   storagePath: string;
   sourceUrl?: string;
+  fileBuffer?: Buffer;
 }, hooks: AnalysisPipelineHooks = {}, options: AnalysisPipelineOptions = {}): Promise<{
   extractedText: string;
   candidates: WineCandidate[];
@@ -106,7 +107,7 @@ export async function runAnalysisPipeline(input: {
     candidates,
   });
   await throwIfCanceled(hooks.shouldCancel);
-  const preference = await getPreferences();
+  const preference = defaultPreference();
   const providers = createWineProfileProviders();
   const candidateConcurrency = Math.min(
     Math.max(1, options.candidateConcurrency ?? appConfig.analysisCandidateConcurrency),

@@ -4,7 +4,6 @@ import type { CSSProperties } from "react";
 import type {
   AnalysisRun,
   CreateAnalysisResponse,
-  ProviderHealth,
   TasteVector,
   UserTastePreference,
   WineRatingSource,
@@ -12,7 +11,9 @@ import type {
 
 const apiBaseUrl =
   import.meta.env.VITE_API_BASE_URL ??
-  `${window.location.protocol}//${window.location.hostname}:3001`;
+  (import.meta.env.PROD
+    ? ""
+    : `${window.location.protocol}//${window.location.hostname}:3001`);
 
 const defaultPreferences: UserTastePreference = {
   body: 3,
@@ -26,6 +27,19 @@ const defaultPreferences: UserTastePreference = {
     sweetness: 0.4,
   },
 };
+
+function loadPreferences(): UserTastePreference {
+  try {
+    const stored = window.localStorage.getItem("wine-rec-preferences");
+    return stored ? JSON.parse(stored) as UserTastePreference : defaultPreferences;
+  } catch {
+    return defaultPreferences;
+  }
+}
+
+function storePreferences(preferences: UserTastePreference): void {
+  window.localStorage.setItem("wine-rec-preferences", JSON.stringify(preferences));
+}
 
 function preferencesEqual(left: UserTastePreference, right: UserTastePreference): boolean {
   return (
@@ -282,8 +296,8 @@ function sortRecommendations(
 }
 
 export function App() {
-  const [preferences, setPreferences] = useState<UserTastePreference>(defaultPreferences);
-  const [loadedPreferences, setLoadedPreferences] = useState<UserTastePreference>(defaultPreferences);
+  const [preferences, setPreferences] = useState<UserTastePreference>(() => loadPreferences());
+  const [loadedPreferences, setLoadedPreferences] = useState<UserTastePreference>(() => loadPreferences());
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [analysisState, setAnalysisState] = useState<AnalysisState | null>(null);
@@ -293,10 +307,8 @@ export function App() {
   const [selectedResultSectionId, setSelectedResultSectionId] = useState(allResultSectionsId);
   const [maxPriceFilter, setMaxPriceFilter] = useState<number | null>(null);
   const [includePriceUnavailable, setIncludePriceUnavailable] = useState(true);
-  const [providerHealth, setProviderHealth] = useState<ProviderHealth[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [stoppingAnalysis, setStoppingAnalysis] = useState(false);
   const [tastePanelOpen, setTastePanelOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -370,26 +382,17 @@ export function App() {
   }
 
   useEffect(() => {
-    void Promise.all([
-      getJson<{ preferences: UserTastePreference }>("/api/preferences").then((response) =>
-        {
-          setPreferences(response.preferences);
-          setLoadedPreferences(response.preferences);
-        },
-      ),
-      getJson<ProviderHealth[]>("/api/health/providers").then(
-        setProviderHealth,
-      ),
-    ]).catch((cause) => {
-      setError(cause instanceof Error ? cause.message : "Failed to load API state");
-    });
-  }, []);
-
-  useEffect(() => {
     return () => {
       if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
     };
   }, [filePreviewUrl]);
+
+  useEffect(() => {
+    storePreferences(preferences);
+    if (!analysis) {
+      setLoadedPreferences(preferences);
+    }
+  }, [analysis, preferences]);
 
   useEffect(() => {
     if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
@@ -424,18 +427,6 @@ export function App() {
     setIncludePriceUnavailable(true);
   }, [analysis?.id]);
 
-  async function savePreferences(next: UserTastePreference) {
-    setPreferences(next);
-    await getJson<{ preferences: UserTastePreference }>("/api/preferences", {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(next),
-    });
-    setLoadedPreferences(next);
-  }
-
   async function handleUpload() {
     if (!selectedFile) {
       setError("Choose an image or PDF first.");
@@ -446,7 +437,7 @@ export function App() {
     setError(null);
 
     try {
-      await prepareAnalysis();
+      prepareAnalysis();
 
       const formData = new FormData();
       formData.set("file", selectedFile);
@@ -504,7 +495,7 @@ export function App() {
     setError(null);
 
     try {
-      await prepareAnalysis();
+      prepareAnalysis();
       const created = await getJson<CreateAnalysisResponse>("/api/urls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -528,15 +519,12 @@ export function App() {
     }
   }
 
-  async function prepareAnalysis() {
-    if (!preferencesEqual(preferences, loadedPreferences)) {
-      await savePreferences(preferences);
-    }
+  function prepareAnalysis() {
+    storePreferences(preferences);
+    setLoadedPreferences(preferences);
   }
 
   async function launchAnalysis(next: CreateAnalysisResponse) {
-    setStoppingAnalysis(false);
-    await getJson(`/api/analyses/${next.analysisId}/process`, { method: "POST" });
     const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${next.analysisId}`);
     setAnalysisState({ analysisId: next.analysisId, status: nextAnalysis.status });
     setAnalysis(nextAnalysis);
@@ -548,29 +536,6 @@ export function App() {
         window.scrollTo({ top: results.getBoundingClientRect().top + window.scrollY - navHeight, behavior: "smooth" });
       }
     }, 50);
-  }
-
-  async function handleCancelAnalysis() {
-    if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
-      return;
-    }
-
-    setStoppingAnalysis(true);
-    setError(null);
-
-    try {
-      await getJson<CreateAnalysisResponse>(`/api/analyses/${analysisState.analysisId}/cancel`, {
-        method: "POST",
-      });
-
-      const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${analysisState.analysisId}`);
-      setAnalysisState({ analysisId: nextAnalysis.id, status: nextAnalysis.status });
-      setAnalysis(nextAnalysis);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to stop analysis");
-    } finally {
-      setStoppingAnalysis(false);
-    }
   }
 
   function scrollToIngest() {
@@ -957,9 +922,6 @@ export function App() {
             {!analysis ? <p className="helper">No analysis yet.</p> : null}
             {analysisProgress && analysisProgress.status !== "completed" ? (
               <AnalysisProgressPanel
-                canCancel={analysisState ? !terminalAnalysisStatuses.has(analysisState.status) : false}
-                isCancelling={stoppingAnalysis}
-                onCancel={handleCancelAnalysis}
                 progress={analysisProgress}
               />
             ) : null}
