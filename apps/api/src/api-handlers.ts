@@ -79,7 +79,9 @@ function getQStashClient(): QStashClient {
     throw new Error("QSTASH_TOKEN is not configured");
   }
 
-  return new QStashClient({ token });
+  const baseUrl = process.env.QSTASH_URL;
+
+  return new QStashClient(baseUrl ? { token, baseUrl } : { token });
 }
 
 async function loadJobStore() {
