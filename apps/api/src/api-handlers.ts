@@ -47,7 +47,9 @@ type CoordinatorWorkerJobPayload = z.infer<typeof coordinatorWorkerJobPayloadSch
 type ChunkWorkerJobPayload = z.infer<typeof chunkWorkerJobPayloadSchema>;
 export type WorkerJobPayload = z.infer<typeof workerJobPayloadSchema>;
 
-const SERVERLESS_WORKER_TIME_BUDGET_MS = 45_000;
+// Leave enough headroom for slow Vivino searches, browser recovery, and the
+// follow-up QStash publish before Vercel's 60-second Hobby timeout.
+const SERVERLESS_WORKER_TIME_BUDGET_MS = 25_000;
 const SERVERLESS_WORKER_CHUNK_COUNT = 5;
 const STOPPED_ANALYSIS_MESSAGE = "Analysis stopped. Start a new scan when you're ready.";
 
