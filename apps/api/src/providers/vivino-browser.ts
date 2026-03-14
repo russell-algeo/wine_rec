@@ -285,6 +285,7 @@ export class VivinoBrowser {
   private static instance: VivinoBrowser | null = null;
   private browser: Browser | null = null;
   private launchPromise: Promise<Browser> | null = null;
+  private browserTaskChain = Promise.resolve();
 
   static getInstance(): VivinoBrowser {
     if (!VivinoBrowser.instance) {
@@ -294,83 +295,87 @@ export class VivinoBrowser {
   }
 
   async search(query: string): Promise<SearchHit[]> {
-    const page = await this.newPage();
+    return this.runBrowserTask(async () => {
+      const page = await this.newPage();
 
-    try {
-      await page.goto(
-        `https://www.vivino.com/search/wines?q=${encodeURIComponent(query)}`,
-        {
-          waitUntil: "domcontentloaded",
-          timeout: 30_000,
-        },
-      );
+      try {
+        await page.goto(
+          `https://www.vivino.com/search/wines?q=${encodeURIComponent(query)}`,
+          {
+            waitUntil: "domcontentloaded",
+            timeout: 30_000,
+          },
+        );
 
-      await page.waitForSelector('[class*="WineCard"]', {
-        timeout: 10_000,
-      }).catch(() => null);
+        await page.waitForSelector('[class*="WineCard"]', {
+          timeout: 10_000,
+        }).catch(() => null);
 
-      const rawHits = await page.evaluate(SEARCH_HITS_EVALUATION);
-      const hits = Array.isArray(rawHits) ? (rawHits as SearchHit[]) : [];
-      const normalizedHits = hits.map((hit) => ({
-        ...hit,
-        imageUrl: pickPreferredVivinoImageUrl(hit.imageUrl),
-      }));
+        const rawHits = await page.evaluate(SEARCH_HITS_EVALUATION);
+        const hits = Array.isArray(rawHits) ? (rawHits as SearchHit[]) : [];
+        const normalizedHits = hits.map((hit) => ({
+          ...hit,
+          imageUrl: pickPreferredVivinoImageUrl(hit.imageUrl),
+        }));
 
-      console.log(
-        "[vivino-browser] Search for %j returned %d hits",
-        query,
-        normalizedHits.length,
-      );
-      return normalizedHits;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log("[vivino-browser] Search failed for %j: %s", query, message);
-      if (message.includes("Target page, context or browser has been closed")) {
-        this.browser = null;
+        console.log(
+          "[vivino-browser] Search for %j returned %d hits",
+          query,
+          normalizedHits.length,
+        );
+        return normalizedHits;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log("[vivino-browser] Search failed for %j: %s", query, message);
+        if (message.includes("Target page, context or browser has been closed")) {
+          this.browser = null;
+        }
+        return [];
+      } finally {
+        await page.close().catch(() => null);
       }
-      return [];
-    } finally {
-      await page.close().catch(() => null);
-    }
+    });
   }
 
   async fetchVintagePageMeta(vintagePageUrl: string): Promise<VivinoVintagePageMeta | null> {
-    const page = await this.newPage();
+    return this.runBrowserTask(async () => {
+      const page = await this.newPage();
 
-    try {
-      await page.goto(vintagePageUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 30_000,
-      });
+      try {
+        await page.goto(vintagePageUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
 
-      const rawEvaluation = await page.evaluate(VINTAGE_PAGE_META_EVALUATION);
-      const evaluation =
-        rawEvaluation && typeof rawEvaluation === "object"
-          ? (rawEvaluation as VivinoVintagePageEvaluation)
-          : { pageInformation: null, imageUrl: null };
+        const rawEvaluation = await page.evaluate(VINTAGE_PAGE_META_EVALUATION);
+        const evaluation =
+          rawEvaluation && typeof rawEvaluation === "object"
+            ? (rawEvaluation as VivinoVintagePageEvaluation)
+            : { pageInformation: null, imageUrl: null };
 
-      const aggregateRating = pickVivinoAggregateRating(evaluation.pageInformation);
-      return {
-        aggregateRating:
-          aggregateRating.rating !== null && aggregateRating.ratingCount !== null
-            ? aggregateRating
-            : null,
-        imageUrl: pickPreferredVivinoImageUrl(evaluation.imageUrl),
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(
-        "[vivino-browser] Vintage page fetch failed for %j: %s",
-        vintagePageUrl,
-        message,
-      );
-      if (message.includes("Target page, context or browser has been closed")) {
-        this.browser = null;
+        const aggregateRating = pickVivinoAggregateRating(evaluation.pageInformation);
+        return {
+          aggregateRating:
+            aggregateRating.rating !== null && aggregateRating.ratingCount !== null
+              ? aggregateRating
+              : null,
+          imageUrl: pickPreferredVivinoImageUrl(evaluation.imageUrl),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(
+          "[vivino-browser] Vintage page fetch failed for %j: %s",
+          vintagePageUrl,
+          message,
+        );
+        if (message.includes("Target page, context or browser has been closed")) {
+          this.browser = null;
+        }
+        return null;
+      } finally {
+        await page.close().catch(() => null);
       }
-      return null;
-    } finally {
-      await page.close().catch(() => null);
-    }
+    });
   }
 
   async fetchAggregateRating(vintagePageUrl: string): Promise<VivinoAggregateRating | null> {
@@ -379,6 +384,7 @@ export class VivinoBrowser {
 
   async close(): Promise<void> {
     this.launchPromise = null;
+    this.browserTaskChain = Promise.resolve();
     if (this.browser) {
       await this.browser.close().catch(() => null);
       this.browser = null;
@@ -390,9 +396,15 @@ export class VivinoBrowser {
     const page = await browser.newPage();
 
     await page.setViewportSize({ width: 1280, height: 800 });
+    const cdpSession = await page.context().newCDPSession(page);
+    await cdpSession.send("Network.enable");
+    await cdpSession.send("Network.setUserAgentOverride", {
+      userAgent: appConfig.vivinoDirectUserAgent,
+      acceptLanguage: "en-US,en;q=0.9",
+      platform: "Windows",
+    });
     await page.setExtraHTTPHeaders({
       "Accept-Language": "en-US,en;q=0.9",
-      "User-Agent": appConfig.vivinoDirectUserAgent,
     });
     await page.addInitScript(({ userAgent }) => {
       Object.defineProperty(navigator, "webdriver", { get: () => undefined });
@@ -402,6 +414,27 @@ export class VivinoBrowser {
     }, { userAgent: appConfig.vivinoDirectUserAgent });
 
     return page;
+  }
+
+  private async runBrowserTask<T>(task: () => Promise<T>): Promise<T> {
+    const shouldSerialize = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+    if (!shouldSerialize) {
+      return task();
+    }
+
+    const previous = this.browserTaskChain;
+    let release!: () => void;
+    this.browserTaskChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous.catch(() => undefined);
+
+    try {
+      return await task();
+    } finally {
+      release();
+    }
   }
 
   private async getOrLaunchBrowser(): Promise<Browser> {
