@@ -1,3 +1,7 @@
+import { readdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import chromium from "@sparticuz/chromium-min";
 import { chromium as playwrightChromium, type Browser, type Page } from "playwright-core";
 
@@ -5,6 +9,12 @@ import { appConfig } from "../config.js";
 
 const SERVERLESS_CHROMIUM_VERSION = "143.0.4";
 const SERVERLESS_CHROMIUM_PACK_URL = `https://github.com/Sparticuz/chromium/releases/download/v${SERVERLESS_CHROMIUM_VERSION}/chromium-v${SERVERLESS_CHROMIUM_VERSION}-pack.${process.arch === "arm64" ? "arm64" : "x64"}.tar`;
+const STALE_PLAYWRIGHT_TMP_PATTERNS = [
+  /^playwright_chromiumdev_profile-/,
+  /^playwright-artifacts-/,
+  /^playwright-download-/,
+  /^playwright-video-/,
+];
 
 function getConfiguredChromiumPackUrl(): string {
   const configured = process.env.CHROMIUM_PACK_URL?.trim();
@@ -31,6 +41,35 @@ async function getServerlessChromiumExecutablePath(): Promise<string> {
     }
 
     throw error;
+  }
+}
+
+async function cleanupServerlessPlaywrightTempDirs(): Promise<void> {
+  const tmpDir = os.tmpdir();
+
+  try {
+    const entries = await readdir(tmpDir, { withFileTypes: true });
+    const stalePaths = entries
+      .filter((entry) => STALE_PLAYWRIGHT_TMP_PATTERNS.some((pattern) => pattern.test(entry.name)))
+      .map((entry) => path.join(tmpDir, entry.name));
+
+    if (stalePaths.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      stalePaths.map((stalePath) =>
+        rm(stalePath, { recursive: true, force: true }).catch(() => undefined),
+      ),
+    );
+    console.log(
+      "[vivino-browser] Removed %d stale Playwright temp paths from %s",
+      stalePaths.length,
+      tmpDir,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log("[vivino-browser] Failed to clean stale Playwright temp paths: %s", message);
   }
 }
 
@@ -480,6 +519,10 @@ export class VivinoBrowser {
 
   private async launchBrowser(): Promise<Browser> {
     const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+    if (isServerless) {
+      await cleanupServerlessPlaywrightTempDirs();
+    }
 
     const browser = isServerless
       ? await playwrightChromium.launch({
