@@ -3,9 +3,36 @@ import { chromium as playwrightChromium, type Browser, type Page } from "playwri
 
 import { appConfig } from "../config.js";
 
-const CHROMIUM_PACK_URL =
-  process.env.CHROMIUM_PACK_URL ??
-  "https://github.com/Sparticuz/chromium/releases/download/v135/chromium-v135-pack.tar";
+const SERVERLESS_CHROMIUM_VERSION = "143.0.4";
+const SERVERLESS_CHROMIUM_PACK_URL = `https://github.com/Sparticuz/chromium/releases/download/v${SERVERLESS_CHROMIUM_VERSION}/chromium-v${SERVERLESS_CHROMIUM_VERSION}-pack.${process.arch === "arm64" ? "arm64" : "x64"}.tar`;
+
+function getConfiguredChromiumPackUrl(): string {
+  const configured = process.env.CHROMIUM_PACK_URL?.trim();
+  return configured || SERVERLESS_CHROMIUM_PACK_URL;
+}
+
+async function getServerlessChromiumExecutablePath(): Promise<string> {
+  const configuredUrl = getConfiguredChromiumPackUrl();
+
+  try {
+    return await chromium.executablePath(configuredUrl);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      configuredUrl !== SERVERLESS_CHROMIUM_PACK_URL &&
+      /Unexpected status code|Failed to download|ECONN|ENOTFOUND/i.test(message)
+    ) {
+      console.log(
+        "[vivino-browser] Falling back to bundled Chromium pack URL after %s failed: %s",
+        configuredUrl,
+        message,
+      );
+      return chromium.executablePath(SERVERLESS_CHROMIUM_PACK_URL);
+    }
+
+    throw error;
+  }
+}
 
 export interface SearchHit {
   wineId: number;
@@ -385,7 +412,7 @@ export class VivinoBrowser {
     if (isServerless) {
       this.browser = await playwrightChromium.launch({
         args: [...chromium.args, "--disable-blink-features=AutomationControlled"],
-        executablePath: await chromium.executablePath(CHROMIUM_PACK_URL),
+        executablePath: await getServerlessChromiumExecutablePath(),
         headless: true,
       });
     } else {
