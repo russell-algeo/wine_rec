@@ -296,9 +296,10 @@ export class VivinoBrowser {
 
   async search(query: string): Promise<SearchHit[]> {
     return this.runBrowserTask(async () => {
-      const page = await this.newPage();
+      let page: Page | null = null;
 
       try {
+        page = await this.newPage();
         await page.goto(
           `https://www.vivino.com/search/wines?q=${encodeURIComponent(query)}`,
           {
@@ -327,21 +328,22 @@ export class VivinoBrowser {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.log("[vivino-browser] Search failed for %j: %s", query, message);
-        if (message.includes("Target page, context or browser has been closed")) {
-          this.browser = null;
+        if (this.isRecoverableBrowserError(message)) {
+          await this.resetBrowser();
         }
         return [];
       } finally {
-        await page.close().catch(() => null);
+        await page?.close().catch(() => null);
       }
     });
   }
 
   async fetchVintagePageMeta(vintagePageUrl: string): Promise<VivinoVintagePageMeta | null> {
     return this.runBrowserTask(async () => {
-      const page = await this.newPage();
+      let page: Page | null = null;
 
       try {
+        page = await this.newPage();
         await page.goto(vintagePageUrl, {
           waitUntil: "domcontentloaded",
           timeout: 30_000,
@@ -368,12 +370,12 @@ export class VivinoBrowser {
           vintagePageUrl,
           message,
         );
-        if (message.includes("Target page, context or browser has been closed")) {
-          this.browser = null;
+        if (this.isRecoverableBrowserError(message)) {
+          await this.resetBrowser();
         }
         return null;
       } finally {
-        await page.close().catch(() => null);
+        await page?.close().catch(() => null);
       }
     });
   }
@@ -383,37 +385,58 @@ export class VivinoBrowser {
   }
 
   async close(): Promise<void> {
-    this.launchPromise = null;
     this.browserTaskChain = Promise.resolve();
-    if (this.browser) {
-      await this.browser.close().catch(() => null);
-      this.browser = null;
-    }
+    await this.resetBrowser();
   }
 
   private async newPage(): Promise<Page> {
-    const browser = await this.getOrLaunchBrowser();
-    const page = await browser.newPage();
+    let lastError: unknown;
 
-    await page.setViewportSize({ width: 1280, height: 800 });
-    const cdpSession = await page.context().newCDPSession(page);
-    await cdpSession.send("Network.enable");
-    await cdpSession.send("Network.setUserAgentOverride", {
-      userAgent: appConfig.vivinoDirectUserAgent,
-      acceptLanguage: "en-US,en;q=0.9",
-      platform: "Windows",
-    });
-    await page.setExtraHTTPHeaders({
-      "Accept-Language": "en-US,en;q=0.9",
-    });
-    await page.addInitScript(({ userAgent }) => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-      Object.defineProperty(navigator, "userAgent", { get: () => userAgent });
-      Object.defineProperty(navigator, "language", { get: () => "en-US" });
-      Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
-    }, { userAgent: appConfig.vivinoDirectUserAgent });
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      let page: Page | null = null;
 
-    return page;
+      try {
+        const browser = await this.getOrLaunchBrowser();
+        page = await browser.newPage();
+
+        await page.setViewportSize({ width: 1280, height: 800 });
+        const cdpSession = await page.context().newCDPSession(page);
+        await cdpSession.send("Network.enable");
+        await cdpSession.send("Network.setUserAgentOverride", {
+          userAgent: appConfig.vivinoDirectUserAgent,
+          acceptLanguage: "en-US,en;q=0.9",
+          platform: "Windows",
+        });
+        await page.setExtraHTTPHeaders({
+          "Accept-Language": "en-US,en;q=0.9",
+        });
+        await page.addInitScript(({ userAgent }) => {
+          Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+          Object.defineProperty(navigator, "userAgent", { get: () => userAgent });
+          Object.defineProperty(navigator, "language", { get: () => "en-US" });
+          Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+        }, { userAgent: appConfig.vivinoDirectUserAgent });
+
+        return page;
+      } catch (error) {
+        lastError = error;
+        await page?.close().catch(() => null);
+
+        const message = error instanceof Error ? error.message : String(error);
+        if (!this.isRecoverableBrowserError(message) || attempt >= 2) {
+          throw error;
+        }
+
+        console.log(
+          "[vivino-browser] newPage failed on attempt %d, restarting browser: %s",
+          attempt,
+          message,
+        );
+        await this.resetBrowser();
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private async runBrowserTask<T>(task: () => Promise<T>): Promise<T> {
@@ -466,6 +489,13 @@ export class VivinoBrowser {
         })
       : await this.launchLocalBrowser();
 
+    browser.on("disconnected", () => {
+      if (this.browser === browser) {
+        console.log("[vivino-browser] Chromium disconnected");
+        this.browser = null;
+      }
+    });
+
     console.log(
       "[vivino-browser] Chromium launched (serverless=%s, headless=%s)",
       isServerless,
@@ -491,5 +521,21 @@ export class VivinoBrowser {
     }
 
     return localChromium.launch(launchOptions);
+  }
+
+  private isRecoverableBrowserError(message: string): boolean {
+    return /Target page, context or browser has been closed|Target\.closed|Browser has been closed|browser has been closed|Page closed|has been closed/i.test(
+      message,
+    );
+  }
+
+  private async resetBrowser(): Promise<void> {
+    const browser = this.browser;
+    this.browser = null;
+    this.launchPromise = null;
+
+    if (browser) {
+      await browser.close().catch(() => null);
+    }
   }
 }
