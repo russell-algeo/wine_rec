@@ -284,6 +284,7 @@ const VINTAGE_PAGE_META_EVALUATION = String.raw`
 export class VivinoBrowser {
   private static instance: VivinoBrowser | null = null;
   private browser: Browser | null = null;
+  private launchPromise: Promise<Browser> | null = null;
 
   static getInstance(): VivinoBrowser {
     if (!VivinoBrowser.instance) {
@@ -377,6 +378,7 @@ export class VivinoBrowser {
   }
 
   async close(): Promise<void> {
+    this.launchPromise = null;
     if (this.browser) {
       await this.browser.close().catch(() => null);
       this.browser = null;
@@ -407,37 +409,54 @@ export class VivinoBrowser {
       return this.browser;
     }
 
+    if (this.launchPromise) {
+      return this.launchPromise;
+    }
+
+    this.launchPromise = this.launchBrowser();
+    try {
+      this.browser = await this.launchPromise;
+      return this.browser;
+    } finally {
+      this.launchPromise = null;
+    }
+  }
+
+  private async launchBrowser(): Promise<Browser> {
     const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-    if (isServerless) {
-      this.browser = await playwrightChromium.launch({
-        args: [...chromium.args, "--disable-blink-features=AutomationControlled"],
-        executablePath: await getServerlessChromiumExecutablePath(),
-        headless: true,
-      });
-    } else {
-      const { chromium: localChromium } = await import("playwright");
-      const launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
-        headless: appConfig.vivinoDirectHeadless,
-        args: [
-          "--disable-blink-features=AutomationControlled",
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-        ],
-      };
-
-      if (appConfig.vivinoDirectChromeExecutable) {
-        launchOptions.executablePath = appConfig.vivinoDirectChromeExecutable;
-      }
-
-      this.browser = await localChromium.launch(launchOptions);
-    }
+    const browser = isServerless
+      ? await playwrightChromium.launch({
+          args: [...chromium.args, "--disable-blink-features=AutomationControlled"],
+          executablePath: await getServerlessChromiumExecutablePath(),
+          headless: true,
+        })
+      : await this.launchLocalBrowser();
 
     console.log(
       "[vivino-browser] Chromium launched (serverless=%s, headless=%s)",
       isServerless,
       isServerless ? true : appConfig.vivinoDirectHeadless,
     );
-    return this.browser;
+
+    return browser;
+  }
+
+  private async launchLocalBrowser(): Promise<Browser> {
+    const { chromium: localChromium } = await import("playwright");
+    const launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
+      headless: appConfig.vivinoDirectHeadless,
+      args: [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+      ],
+    };
+
+    if (appConfig.vivinoDirectChromeExecutable) {
+      launchOptions.executablePath = appConfig.vivinoDirectChromeExecutable;
+    }
+
+    return localChromium.launch(launchOptions);
   }
 }
