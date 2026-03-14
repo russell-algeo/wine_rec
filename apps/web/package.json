@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
     "@wine-rec/contracts": "0.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
