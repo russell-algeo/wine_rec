@@ -15,7 +15,9 @@ import {
 import { createOcrProvider } from "./providers/ocr.js";
 import { VivinoBrowser } from "./providers/vivino-browser.js";
 import { createWineProfileProviders } from "./providers/wine-profiles.js";
-import { runAnalysisPipeline } from "./services/pipeline.js";
+import { runCandidateAnalysis } from "./services/pipeline.js";
+import { parseWineCandidates } from "./services/parser.js";
+import { extractSourceText } from "./services/source-extractor.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
 
 const workerJobPayloadSchema = z.object({
@@ -28,6 +30,8 @@ const workerJobPayloadSchema = z.object({
 });
 
 export type WorkerJobPayload = z.infer<typeof workerJobPayloadSchema>;
+
+const SERVERLESS_WORKER_TIME_BUDGET_MS = 45_000;
 
 export class RequestError extends Error {
   constructor(message: string, readonly statusCode: number) {
@@ -310,6 +314,13 @@ async function assertJobActive(jobId: string): Promise<void> {
   }
 }
 
+function hasParsedJobState(job: {
+  extractedText: string | null;
+  candidates: AnalysisRun["candidates"];
+}): boolean {
+  return Boolean(job.extractedText && job.candidates.length > 0);
+}
+
 export async function processWorkerJob(input: unknown): Promise<void> {
   const payload = parseWorkerJobPayload(input);
   const {
@@ -328,19 +339,36 @@ export async function processWorkerJob(input: unknown): Promise<void> {
   }
 
   try {
+    const shouldResume = hasParsedJobState(existing);
     await updateJob(payload.jobId, {
       status: "processing",
       queueMessageId: null,
       errorMessage: null,
-      extractedText: null,
-      candidates: [],
-      recommendations: [],
+      ...(shouldResume
+        ? {}
+        : {
+            extractedText: null,
+            candidates: [],
+            recommendations: [],
+          }),
     });
 
     await assertJobActive(payload.jobId);
 
-    const result = await runAnalysisPipeline(
-      {
+    const invocationStartedAt = Date.now();
+    let processedThisInvocation = 0;
+
+    const current = await getJob(payload.jobId);
+    if (!current) {
+      return;
+    }
+
+    let extractedText = current.extractedText;
+    let candidates = current.candidates;
+    let recommendations = current.recommendations;
+
+    if (!hasParsedJobState(current)) {
+      extractedText = await extractSourceText({
         sourceType: payload.sourceType,
         filename: payload.sourceFilename,
         mimeType: payload.mimeType ?? "text/uri-list",
@@ -349,30 +377,72 @@ export async function processWorkerJob(input: unknown): Promise<void> {
         ...(payload.fileBase64
           ? { fileBuffer: Buffer.from(payload.fileBase64, "base64") }
           : {}),
+      });
+      await assertJobActive(payload.jobId);
+      candidates = parseWineCandidates(extractedText);
+      recommendations = [];
+      await updateJob(payload.jobId, {
+        extractedText,
+        candidates,
+        recommendations,
+      });
+    }
+
+    const isCanceled = async (): Promise<boolean> => {
+      try {
+        await assertJobActive(payload.jobId);
+        return false;
+      } catch (error) {
+        if (error instanceof JobCanceledError) {
+          return true;
+        }
+        throw error;
+      }
+    };
+
+    const { recommendations: nextRecommendations, didCompleteAll } = await runCandidateAnalysis(
+      {
+        candidates,
+        existingRecommendations: recommendations,
       },
       {
-        onCandidatesParsed: async ({ extractedText, candidates }) => {
+        shouldCancel: isCanceled,
+        shouldYield: () =>
+          processedThisInvocation > 0 &&
+          Date.now() - invocationStartedAt >= SERVERLESS_WORKER_TIME_BUDGET_MS,
+        onCandidateProcessed: async ({ recommendations: latestRecommendations }) => {
           await assertJobActive(payload.jobId);
-          await updateJob(payload.jobId, {
-            extractedText,
-            candidates,
-            recommendations: [],
-          });
+          processedThisInvocation += 1;
+          recommendations = latestRecommendations;
+          await updateJobRecommendations(payload.jobId, latestRecommendations);
         },
-        onCandidateProcessed: async ({ recommendations }) => {
-          await assertJobActive(payload.jobId);
-          await updateJobRecommendations(payload.jobId, recommendations);
-        },
+      },
+      {
+        candidateConcurrency: 1,
       },
     );
 
     await assertJobActive(payload.jobId);
+
+    if (didCompleteAll) {
+      await updateJob(payload.jobId, {
+        status: "completed",
+        errorMessage: null,
+        extractedText,
+        candidates,
+        recommendations: nextRecommendations,
+      });
+      return;
+    }
+
+    const { messageId } = await publishWorkerJob(payload);
     await updateJob(payload.jobId, {
-      status: "completed",
+      status: "processing",
+      queueMessageId: messageId,
       errorMessage: null,
-      extractedText: result.extractedText,
-      candidates: result.candidates,
-      recommendations: result.recommendations,
+      extractedText,
+      candidates,
+      recommendations: nextRecommendations,
     });
   } catch (error) {
     if (error instanceof JobCanceledError) {
