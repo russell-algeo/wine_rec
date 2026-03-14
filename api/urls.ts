@@ -1,4 +1,9 @@
-export default async function handler(...args: unknown[]) {
+import type {
+  VercelRequestLike,
+  VercelResponseLike,
+} from "../apps/api/src/vercel-utils.js";
+
+export default async function handler(req: VercelRequestLike, res: VercelResponseLike) {
   const mod = await import("../apps/api/api/urls.js");
-  return mod.default(...args);
+  return mod.default(req, res);
 }
