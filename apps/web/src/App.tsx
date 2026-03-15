@@ -557,17 +557,34 @@ export function App() {
   }
 
   async function handleIngestAnalyze() {
-    if (selectedFile) {
-      await handleUpload();
-    } else if (pendingUrl) {
-      await handleUrlAnalyze();
+    const allSet = tasteDimensionOrder.every((d) => modalPreferences[d] !== null);
+    if (!allSet) return;
+    const confirmedPrefs: UserTastePreference = {
+      ...loadPreferences(),
+      body: modalPreferences.body!,
+      tannin: modalPreferences.tannin!,
+      sweetness: modalPreferences.sweetness!,
+      acidity: modalPreferences.acidity!,
+    };
+    setPreferences(confirmedPrefs);
+    prepareAnalysis(confirmedPrefs);
+    try {
+      if (selectedFile) {
+        await handleUpload();
+      } else if (pendingUrl) {
+        await handleUrlAnalyze();
+      }
+      setOnboardingStep(null);
+    } catch {
+      // handleUpload / handleUrlAnalyze manage their own error state
     }
   }
 
-  function prepareAnalysis() {
-    storePreferences(preferences);
+  function prepareAnalysis(prefsToUse?: UserTastePreference) {
+    const prefs = prefsToUse ?? preferences;
+    storePreferences(prefs);
     setHasStoredPreferences(true);
-    setLoadedPreferences(preferences);
+    setLoadedPreferences(prefs);
     setAnalysisNotice(null);
     setPollingPaused(false);
   }
@@ -615,10 +632,6 @@ export function App() {
     } finally {
       setCancelBusy(false);
     }
-  }
-
-  function scrollToIngest() {
-    document.getElementById("ingest")?.scrollIntoView({ behavior: "smooth" });
   }
 
   function handleDropZoneClick() {
@@ -727,7 +740,7 @@ export function App() {
           <p className="lede">
             Find the best bottle on any wine list.
           </p>
-          <button className="hero-cta" onClick={scrollToIngest} type="button">
+          <button className="hero-cta" onClick={openOnboardingModal} type="button">
             Get Started
           </button>
         </section>
