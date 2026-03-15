@@ -333,6 +333,7 @@ export function App() {
   const [urlPreview, setUrlPreview] = useState<{ title: string | null; domain: string } | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [onboardingStep, setOnboardingStep] = useState<1 | 2>(1);
+  const [urlFetching, setUrlFetching] = useState(false);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
   const [modalPreferences, setModalPreferences] = useState<Record<TasteDimension, number | null>>(
@@ -480,6 +481,36 @@ export function App() {
     setIncludePriceUnavailable(true);
   }, [analysis?.id]);
 
+  useEffect(() => {
+    const normalized = normalizeUrlInput(sourceUrl);
+    if (!normalized) {
+      setUrlPreview(null);
+      setPendingUrl(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setUrlFetching(true);
+      try {
+        const preview = await getJson<{ title: string | null; domain: string }>(
+          `/api/preview?url=${encodeURIComponent(normalized)}`
+        );
+        setUrlPreview(preview);
+        setPendingUrl(normalized);
+      } catch {
+        try {
+          const domain = new URL(normalized).hostname;
+          setUrlPreview({ title: null, domain });
+          setPendingUrl(normalized);
+        } catch {
+          // Not yet a valid URL — leave preview unchanged
+        }
+      } finally {
+        setUrlFetching(false);
+      }
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [sourceUrl]);
+
   async function handleUpload() {
     if (!selectedFile) {
       setError("Choose an image or PDF first.");
@@ -501,36 +532,6 @@ export function App() {
       await launchAnalysis(upload);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleUrlConfirm() {
-    const normalizedUrl = normalizeUrlInput(sourceUrl);
-    if (!normalizedUrl) {
-      setError("Paste a menu or wine-list URL first.");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-
-    try {
-      const preview = await getJson<{ title: string | null; domain: string }>(
-        `/api/preview?url=${encodeURIComponent(normalizedUrl)}`
-      );
-      setUrlPreview(preview);
-      setPendingUrl(normalizedUrl);
-      setSelectedFile(null);
-      setFilePreviewUrl(null);
-    } catch {
-      // Preview fetch failed — fall back to domain only
-      const domain = new URL(normalizedUrl).hostname;
-      setUrlPreview({ title: null, domain });
-      setPendingUrl(normalizedUrl);
-      setSelectedFile(null);
-      setFilePreviewUrl(null);
     } finally {
       setBusy(false);
     }
@@ -766,20 +767,12 @@ export function App() {
                   <input
                     className="url-row-input"
                     onChange={(e) => setSourceUrl(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") void handleUrlConfirm(); }}
                     placeholder="Paste a wine list URL"
                     type="url"
                     value={sourceUrl}
                   />
-                  <button
-                    className="action url-row-button"
-                    disabled={busy}
-                    onClick={() => void handleUrlConfirm()}
-                    type="button"
-                  >
-                    {busy ? "Loading…" : "Confirm"}
-                  </button>
                 </div>
+                {urlFetching && <p className="url-fetching-hint">Checking link…</p>}
 
                 {urlPreview && (
                   <div className="url-preview-card">
@@ -895,7 +888,7 @@ export function App() {
                 {error && <p className="error">{error}</p>}
 
                 <div className="onboarding-footer">
-                  <button className="onboarding-btn-cancel" onClick={() => setOnboardingStep(1)} type="button">
+                  <button className="onboarding-btn-cancel" onClick={() => setOnboardingStep(1)} style={{ marginRight: "auto" }} type="button">
                     ← Back
                   </button>
                   <button

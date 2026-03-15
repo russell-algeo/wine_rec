@@ -498,6 +498,11 @@ input {
   flex-shrink: 0;
 }
 
+.url-fetching-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 4px 0 0;
+}
 
 .ingest-divider {
   display: flex;
@@ -810,7 +815,35 @@ h1 {
 }
 
 .taste-scale.is-empty .taste-scale-track {
-  opacity: 0.55;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--taste-track) 0px,
+    var(--taste-track) 5px,
+    transparent 5px,
+    transparent 11px
+  );
+}
+
+/* Hide the thumb when empty so it looks completely unset */
+.taste-scale.is-empty .taste-scale-input::-webkit-slider-thumb {
+  opacity: 0;
+  pointer-events: none;
+}
+.taste-scale.is-empty .taste-scale-input::-moz-range-thumb {
+  opacity: 0;
+  pointer-events: none;
+}
+/* Also hide any fill/progress on the track */
+.taste-scale.is-empty .taste-scale-input::-moz-range-progress {
+  background: transparent;
+}
+.taste-scale.is-empty .taste-scale-input::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.taste-scale.is-empty .taste-scale-track::before,
+.taste-scale.is-empty .taste-scale-track::after {
+  display: none;
 }
 
 .taste-scale.is-uncertain {
@@ -1779,7 +1812,7 @@ h1 {
 
 .onboarding-footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 10px;
   margin-top: 20px;
