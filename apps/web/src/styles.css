@@ -2168,6 +2168,45 @@ h1 {
     font-size: 0.7rem;
   }
 
+  /* Taste profile block — compact */
+  .result-card .taste-profile-block {
+    padding: 0.5rem 0.65rem;
+    margin-top: 0.4rem;
+  }
+
+  .result-card .taste-profile-title {
+    font-size: 0.78rem;
+    margin-bottom: 0.45rem;
+  }
+
+  .result-card .taste-profile-footnote {
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  /* Smaller endpoint labels free up space for the bar */
+  .result-card .taste-scale-endpoint {
+    font-size: 0.68rem;
+  }
+
+  /* Narrow label columns so the bar expands to fill the freed width */
+  .result-card .taste-scale-row {
+    grid-template-columns: minmax(2.4rem, max-content) minmax(0, 1fr) minmax(2.4rem, max-content);
+    gap: 0.35rem;
+  }
+
+  /* Shorter track and pill */
+  .result-card .taste-scale {
+    --taste-track-height: 0.5rem;
+    --taste-indicator-width: 1.8rem;
+    --taste-indicator-height: 0.5rem;
+  }
+
+  /* Tighter gap between scale rows */
+  .result-card .taste-scale-stack {
+    gap: 0.3rem;
+  }
+
   /* Tasting notes toggle and dropdown content */
   .result-card .tasting-notes-toggle {
     font-size: 0.72rem;
