@@ -1933,7 +1933,7 @@ h1 {
     grid-template-columns: 1fr auto;
     column-gap: 8px;
     row-gap: 6px;
-    align-items: start;
+    align-items: center;
   }
 
   /* Flatten the two inner wrappers so children participate directly in the grid */
@@ -1954,7 +1954,7 @@ h1 {
     grid-column: 2;
     grid-row: 1;
     justify-self: end;
-    align-self: start;
+    align-self: center;
     min-width: 3.4rem;
     padding: 0.4rem 0.6rem 0.5rem;
   }
@@ -2159,19 +2159,6 @@ h1 {
 
   .result-card .vivino-rating-count {
     font-size: 0.7rem;
-  }
-
-  .result-card .taste-profile-title {
-    font-size: 0.78rem;
-  }
-
-  .result-card .taste-profile-footnote {
-    font-size: 0.75rem;
-  }
-
-  /* Taste scale endpoint labels ("Light", "Bold", etc.) */
-  .result-card .taste-scale-endpoint {
-    font-size: 0.68rem;
   }
 
   /* Tasting notes toggle and dropdown content */
