@@ -1927,13 +1927,20 @@ h1 {
     max-height: 8.5rem;
   }
 
+  /* Vertically center the two rows within the image column height */
+  .result-card .result-card-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
   /* Card content: 2-column grid — name+fit row, then rating+price row */
   .result-head {
     display: grid;
     grid-template-columns: 1fr auto;
     column-gap: 8px;
     row-gap: 6px;
-    align-items: center;
+    align-items: start;
   }
 
   /* Flatten the two inner wrappers so children participate directly in the grid */
@@ -1954,7 +1961,7 @@ h1 {
     grid-column: 2;
     grid-row: 1;
     justify-self: end;
-    align-self: center;
+    align-self: start;
     min-width: 3.4rem;
     padding: 0.4rem 0.6rem 0.5rem;
   }
@@ -1977,7 +1984,7 @@ h1 {
   .result-head .price-tag {
     grid-column: 2;
     grid-row: 2;
-    align-self: center;
+    align-self: start;
     justify-self: end;
     font-size: 0.8rem;
     padding: 0.3rem 0.6rem;
