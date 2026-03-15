@@ -167,10 +167,6 @@ struct UserTastePreference: Codable {
     )
 }
 
-struct PreferencesResponse: Codable {
-    let preferences: UserTastePreference
-}
-
 struct CreateAnalysisResponse: Codable {
     let analysisId: String
     let status: AnalysisStatus

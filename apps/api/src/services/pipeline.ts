@@ -3,7 +3,10 @@ import type { UserTastePreference } from "@wine-rec/contracts";
 import { defaultPreference, rankMatch, scoreRecommendation } from "@wine-rec/core";
 
 import { appConfig } from "../config.js";
-import { createWineProfileProviders } from "../providers/wine-profiles.js";
+import {
+  createWineProfileProviders,
+  RetryableWineProfileLookupError,
+} from "../providers/wine-profiles.js";
 import { parseWineCandidates } from "./parser.js";
 import { extractSourceText } from "./source-extractor.js";
 
@@ -34,6 +37,16 @@ export class AnalysisCanceledError extends Error {
   }
 }
 
+export class AnalysisRetryableError extends Error {
+  constructor(
+    readonly candidateId: string,
+    readonly cause: unknown,
+  ) {
+    super(`Analysis retry required while processing candidate ${candidateId}.`);
+    this.name = "AnalysisRetryableError";
+  }
+}
+
 async function throwIfCanceled(
   shouldCancel: AnalysisPipelineHooks["shouldCancel"],
 ): Promise<void> {
@@ -58,7 +71,16 @@ async function buildCandidateRecommendation(
 
   for (const provider of providers) {
     if (!provider.isEnabled) continue;
-    const result = await provider.lookup(candidate);
+    let result: Awaited<ReturnType<typeof provider.lookup>>;
+    try {
+      result = await provider.lookup(candidate);
+    } catch (error) {
+      if (error instanceof RetryableWineProfileLookupError) {
+        throw new AnalysisRetryableError(candidate.id, error);
+      }
+      throw error;
+    }
+
     if (!result) continue;
 
     const status = rankMatch(result.matchScore);
@@ -110,12 +132,13 @@ export async function runCandidateAnalysis(input: {
   );
 
   const shouldSerialize = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-  const desiredConcurrency = shouldSerialize
-    ? 1
-    : Math.min(
-        Math.max(1, options.candidateConcurrency ?? appConfig.analysisCandidateConcurrency),
-        Math.max(1, input.candidates.length),
-      );
+  const configuredConcurrency = shouldSerialize
+    ? options.candidateConcurrency ?? 1
+    : options.candidateConcurrency ?? appConfig.analysisCandidateConcurrency;
+  const desiredConcurrency = Math.min(
+    Math.max(1, configuredConcurrency),
+    Math.max(1, input.candidates.length),
+  );
 
   let nextCandidateIndex = 0;
   let didYield = false;

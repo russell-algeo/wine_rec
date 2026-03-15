@@ -15,9 +15,12 @@ import {
 } from "@wine-rec/contracts";
 
 import { createOcrProvider } from "./providers/ocr.js";
-import { VivinoBrowser } from "./providers/vivino-browser.js";
 import { createWineProfileProviders } from "./providers/wine-profiles.js";
-import { runCandidateAnalysis } from "./services/pipeline.js";
+import {
+  AnalysisCanceledError,
+  AnalysisRetryableError,
+  runCandidateAnalysis,
+} from "./services/pipeline.js";
 import { parseWineCandidates } from "./services/parser.js";
 import { extractSourceText } from "./services/source-extractor.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
@@ -47,10 +50,14 @@ type CoordinatorWorkerJobPayload = z.infer<typeof coordinatorWorkerJobPayloadSch
 type ChunkWorkerJobPayload = z.infer<typeof chunkWorkerJobPayloadSchema>;
 export type WorkerJobPayload = z.infer<typeof workerJobPayloadSchema>;
 
-// Leave enough headroom for slow Vivino searches, browser recovery, and the
-// follow-up QStash publish before Vercel's 60-second Hobby timeout.
-const SERVERLESS_WORKER_TIME_BUDGET_MS = 25_000;
-const SERVERLESS_WORKER_CHUNK_COUNT = 5;
+const SERVERLESS_WORKER_TIME_BUDGET_MS = 50_000;
+const SERVERLESS_WORKER_CHUNK_SIZE = 4;
+const MAX_SERVERLESS_CONCURRENT_WORKERS = 10;
+const SERVERLESS_WORKER_CANDIDATE_CONCURRENCY = 1;
+const SERVERLESS_WORKER_INITIAL_JITTER_MAX_SECONDS = 3;
+const SERVERLESS_WORKER_REQUEUE_DELAY_BASE_SECONDS = 2;
+const SERVERLESS_WORKER_REQUEUE_DELAY_JITTER_SECONDS = 4;
+const SERVERLESS_WORKER_RETRY_DELAY_EXPRESSION = "5 + min(20, retried * 5)";
 const STOPPED_ANALYSIS_MESSAGE = "Analysis stopped. Start a new scan when you're ready.";
 
 export class RequestError extends Error {
@@ -121,6 +128,21 @@ async function loadJobStore() {
 
 type JobStore = Awaited<ReturnType<typeof loadJobStore>>;
 
+function getWorkerFailureUrl(): string {
+  const vercelUrl = process.env.VERCEL_URL;
+  if (vercelUrl) {
+    const base = vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`;
+    return `${base.replace(/\/$/, "")}/api/worker-failure`;
+  }
+
+  const workerUrl = process.env.WORKER_URL;
+  if (!workerUrl) {
+    throw new Error("WORKER_URL is not configured");
+  }
+
+  return `${workerUrl.replace(/\/$/, "")}/api/worker-failure`;
+}
+
 function getWorkerUrl(): string {
   const vercelUrl = process.env.VERCEL_URL;
   if (vercelUrl) {
@@ -137,11 +159,29 @@ function getWorkerUrl(): string {
   return normalized.endsWith("/api/worker") ? normalized : `${normalized}/api/worker`;
 }
 
-async function publishWorkerJob(payload: WorkerJobPayload): Promise<{ messageId: string }> {
+async function publishWorkerJob(
+  payload: WorkerJobPayload,
+  options: {
+    retries?: number;
+    failureCallback?: string;
+    retryDelay?: string;
+    delaySeconds?: number;
+    flowControl?: {
+      key: string;
+      parallelism: number;
+    };
+  } = {},
+): Promise<{ messageId: string }> {
   const request = {
     url: getWorkerUrl(),
     body: payload,
-    retries: 0,
+    retries: options.retries ?? 0,
+    ...(options.retryDelay ? { retryDelay: options.retryDelay } : {}),
+    ...(options.delaySeconds && options.delaySeconds > 0
+      ? { delay: options.delaySeconds }
+      : {}),
+    ...(options.flowControl ? { flowControl: options.flowControl } : {}),
+    ...(options.failureCallback ? { failureCallback: options.failureCallback } : {}),
   };
   const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   const response = bypassSecret
@@ -302,8 +342,8 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
 }
 
 export async function getAnalysisRun(id: string): Promise<AnalysisRun | null> {
-  const { getJob } = await loadJobStore();
-  const job = await getJob(id);
+  const store = await loadJobStore();
+  const job = await store.getJob(id);
   return job ? analysisRunSchema.parse(job) : null;
 }
 
@@ -367,28 +407,139 @@ function hasParsedJobState(job: {
 
 function splitCandidatesIntoChunks(
   candidates: WineCandidate[],
-  desiredChunkCount: number,
+  chunkSize: number,
 ): WineCandidate[][] {
   if (candidates.length === 0) {
     return [];
   }
 
-  const chunkCount = Math.min(desiredChunkCount, candidates.length);
-  const baseChunkSize = Math.floor(candidates.length / chunkCount);
-  const remainder = candidates.length % chunkCount;
   const chunks: WineCandidate[][] = [];
-  let nextStartIndex = 0;
+  const resolvedChunkSize = Math.max(1, chunkSize);
 
-  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-    const chunkSize = baseChunkSize + (chunkIndex < remainder ? 1 : 0);
-    const chunk = candidates.slice(nextStartIndex, nextStartIndex + chunkSize);
-    nextStartIndex += chunkSize;
-    if (chunk.length > 0) {
-      chunks.push(chunk);
-    }
+  for (let index = 0; index < candidates.length; index += resolvedChunkSize) {
+    chunks.push(candidates.slice(index, index + resolvedChunkSize));
   }
 
   return chunks;
+}
+
+function getChunkFlowControl(jobId: string): {
+  key: string;
+  parallelism: number;
+} {
+  const sanitizedJobId = jobId.replace(/[^A-Za-z0-9._-]+/g, "-");
+  return {
+    key: `analysis.${sanitizedJobId}.chunk`,
+    parallelism: MAX_SERVERLESS_CONCURRENT_WORKERS,
+  };
+}
+
+function getRandomizedDelaySeconds(baseSeconds: number, jitterRangeSeconds: number): number {
+  const resolvedBase = Math.max(0, Math.floor(baseSeconds));
+  const resolvedRange = Math.max(0, Math.floor(jitterRangeSeconds));
+  if (resolvedRange === 0) {
+    return resolvedBase;
+  }
+
+  return resolvedBase + Math.floor(Math.random() * (resolvedRange + 1));
+}
+
+function getInitialChunkLaunchDelaySeconds(): number {
+  return getRandomizedDelaySeconds(0, SERVERLESS_WORKER_INITIAL_JITTER_MAX_SECONDS);
+}
+
+function getChunkRequeueDelaySeconds(): number {
+  return getRandomizedDelaySeconds(
+    SERVERLESS_WORKER_REQUEUE_DELAY_BASE_SECONDS,
+    SERVERLESS_WORKER_REQUEUE_DELAY_JITTER_SECONDS,
+  );
+}
+
+function getChunkPublishOptions(
+  jobId: string,
+  delaySeconds = 0,
+): {
+  retries: number;
+  failureCallback: string;
+  retryDelay: string;
+  delaySeconds?: number;
+  flowControl: {
+    key: string;
+    parallelism: number;
+  };
+} {
+  return {
+    retries: 3,
+    failureCallback: getWorkerFailureUrl(),
+    retryDelay: SERVERLESS_WORKER_RETRY_DELAY_EXPRESSION,
+    ...(delaySeconds > 0 ? { delaySeconds } : {}),
+    flowControl: getChunkFlowControl(jobId),
+  };
+}
+
+async function queueChunkForQStashRetry(
+  payload: ChunkWorkerJobPayload,
+  store: JobStore,
+  options: {
+    recommendations?: Recommendation[];
+  } = {},
+): Promise<void> {
+  await assertJobActive(payload.jobId, store);
+  const currentChunk = await store.getJobChunk(payload.jobId, payload.chunkIndex);
+  if (!currentChunk || currentChunk.status === "completed" || currentChunk.status === "canceled") {
+    return;
+  }
+
+  await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
+    status: "queued",
+    queueMessageId: currentChunk.queueMessageId,
+    errorMessage: null,
+    ...(options.recommendations ? { recommendations: options.recommendations } : {}),
+  });
+  await store.updateJob(payload.jobId, {
+    status: "processing",
+    queueMessageId: null,
+    errorMessage: null,
+  });
+}
+
+async function requeueChunkJob(
+  payload: ChunkWorkerJobPayload,
+  store: JobStore,
+  options: {
+    delaySeconds?: number;
+    recommendations?: Recommendation[];
+  } = {},
+): Promise<void> {
+  await assertJobActive(payload.jobId, store);
+  const currentChunk = await store.getJobChunk(payload.jobId, payload.chunkIndex);
+  if (!currentChunk || currentChunk.status === "completed" || currentChunk.status === "canceled") {
+    return;
+  }
+
+  const { messageId } = await publishWorkerJob(
+    {
+      mode: "chunk",
+      jobId: payload.jobId,
+      chunkIndex: payload.chunkIndex,
+    },
+    getChunkPublishOptions(
+      payload.jobId,
+      options.delaySeconds ?? getChunkRequeueDelaySeconds(),
+    ),
+  );
+
+  await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
+    status: "queued",
+    queueMessageId: messageId,
+    errorMessage: null,
+    ...(options.recommendations ? { recommendations: options.recommendations } : {}),
+  });
+  await store.updateJob(payload.jobId, {
+    status: "processing",
+    queueMessageId: null,
+    errorMessage: null,
+  });
 }
 
 async function syncJobFromChunks(store: JobStore, jobId: string): Promise<void> {
@@ -485,18 +636,21 @@ async function processCoordinatorJob(
     return;
   }
 
-  const candidateChunks = splitCandidatesIntoChunks(candidates, SERVERLESS_WORKER_CHUNK_COUNT);
+  const candidateChunks = splitCandidatesIntoChunks(candidates, SERVERLESS_WORKER_CHUNK_SIZE);
   const chunkRecords = await store.createJobChunks(payload.jobId, candidateChunks);
   const publishedChunks: Array<{ chunkIndex: number; messageId: string }> = [];
 
   try {
     for (const chunkRecord of chunkRecords) {
       await assertJobActive(payload.jobId, store);
-      const { messageId } = await publishWorkerJob({
-        mode: "chunk",
-        jobId: payload.jobId,
-        chunkIndex: chunkRecord.index,
-      });
+      const { messageId } = await publishWorkerJob(
+        {
+          mode: "chunk",
+          jobId: payload.jobId,
+          chunkIndex: chunkRecord.index,
+        },
+        getChunkPublishOptions(payload.jobId, getInitialChunkLaunchDelaySeconds()),
+      );
       publishedChunks.push({ chunkIndex: chunkRecord.index, messageId });
       await store.updateJobChunk(payload.jobId, chunkRecord.index, {
         status: "queued",
@@ -553,13 +707,10 @@ async function processChunkJob(payload: ChunkWorkerJobPayload, store: JobStore):
 
   await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
     status: "processing",
-    queueMessageId: null,
     errorMessage: null,
   });
 
-  let processedThisInvocation = 0;
   const invocationStartedAt = Date.now();
-
   const shouldStop = async (): Promise<boolean> => {
     try {
       await assertJobActive(payload.jobId, store);
@@ -579,41 +730,28 @@ async function processChunkJob(payload: ChunkWorkerJobPayload, store: JobStore):
     },
     {
       shouldCancel: shouldStop,
-      shouldYield: () =>
-        processedThisInvocation > 0 &&
-        Date.now() - invocationStartedAt >= SERVERLESS_WORKER_TIME_BUDGET_MS,
+      shouldYield: () => Date.now() - invocationStartedAt >= SERVERLESS_WORKER_TIME_BUDGET_MS,
       onCandidateProcessed: async ({ recommendations: latestRecommendations }) => {
         await assertJobActive(payload.jobId, store);
-        processedThisInvocation += 1;
         await store.updateJobChunkRecommendations(payload.jobId, payload.chunkIndex, latestRecommendations);
       },
     },
     {
-      candidateConcurrency: 1,
+      candidateConcurrency: SERVERLESS_WORKER_CANDIDATE_CONCURRENCY,
     },
   );
 
   await assertJobActive(payload.jobId, store);
-
-  if (didCompleteAll) {
-    await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
-      status: "completed",
-      queueMessageId: null,
-      errorMessage: null,
+  if (!didCompleteAll) {
+    await requeueChunkJob(payload, store, {
       recommendations,
     });
-    await syncJobFromChunks(store, payload.jobId);
     return;
   }
 
-  const { messageId } = await publishWorkerJob({
-    mode: "chunk",
-    jobId: payload.jobId,
-    chunkIndex: payload.chunkIndex,
-  });
   await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
-    status: "queued",
-    queueMessageId: messageId,
+    status: "completed",
+    queueMessageId: null,
     errorMessage: null,
     recommendations,
   });
@@ -644,27 +782,57 @@ export async function processWorkerJob(input: unknown): Promise<void> {
       return;
     }
 
-    const message = error instanceof Error ? error.message : "Unknown worker error";
     if (payload.mode === "chunk") {
-      await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
-        status: "failed",
-        queueMessageId: null,
-        errorMessage: message,
-      });
-      await syncJobFromChunks(store, payload.jobId);
-    } else {
-      const current = await store.getJob(payload.jobId);
-      if (!current || current.status === "canceled") {
+      if (error instanceof AnalysisCanceledError) {
+        // Job was canceled mid-analysis — return 200, no retry needed.
         return;
       }
-
-      await store.updateJob(payload.jobId, {
-        status: "failed",
-        queueMessageId: null,
-        errorMessage: message,
-      });
+      if (error instanceof AnalysisRetryableError) {
+        await queueChunkForQStashRetry(payload, store);
+      }
+      if (error instanceof AnalysisRetryableError) {
+        // Re-throw so the route handler returns 500, letting QStash own retry gating.
+        throw error;
+      }
+      // Re-throw so the route handler returns 500, triggering a QStash retry.
+      throw error;
     }
-  } finally {
-    await VivinoBrowser.getInstance().close();
+
+    // Coordinator: mark failed immediately (no retries).
+    const message = error instanceof Error ? error.message : "Unknown worker error";
+    const current = await store.getJob(payload.jobId);
+    if (!current || current.status === "canceled") {
+      return;
+    }
+
+    await store.updateJob(payload.jobId, {
+      status: "failed",
+      queueMessageId: null,
+      errorMessage: message,
+    });
   }
+}
+
+export async function processWorkerFailure(sourceBody: string): Promise<void> {
+  let payload: ChunkWorkerJobPayload;
+  try {
+    const decoded = JSON.parse(Buffer.from(sourceBody, "base64").toString("utf8"));
+    payload = chunkWorkerJobPayloadSchema.parse(decoded);
+  } catch {
+    // Not a chunk job or malformed payload — nothing to do.
+    return;
+  }
+
+  const store = await loadJobStore();
+  const chunk = await store.getJobChunk(payload.jobId, payload.chunkIndex);
+  if (!chunk || chunk.status === "completed" || chunk.status === "canceled") {
+    return;
+  }
+
+  await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
+    status: "failed",
+    queueMessageId: null,
+    errorMessage: "Analysis failed after exhausting all retry attempts.",
+  });
+  await syncJobFromChunks(store, payload.jobId);
 }

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Wine fill in bowl -->
+  <path d="M7.5 4 h17 L20.5 15 Q16 22 11.5 15 Z" fill="#c7361f" opacity="0.9"/>
+  <!-- Glass bowl outline -->
+  <path d="M7.5 4 h17 L20.5 15 Q16 22 11.5 15 Z" fill="none" stroke="#0c699a" stroke-width="1.6" stroke-linejoin="round"/>
+  <!-- Stem -->
+  <line x1="16" y1="22" x2="16" y2="28" stroke="#0c699a" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- Base -->
+  <line x1="10" y1="28" x2="22" y2="28" stroke="#0c699a" stroke-width="2.2" stroke-linecap="round"/>
+</svg>

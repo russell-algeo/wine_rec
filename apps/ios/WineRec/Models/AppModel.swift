@@ -9,6 +9,8 @@ struct AnalysisState {
 @MainActor
 @Observable
 final class AppModel {
+    private static let preferencesStorageKey = "wine-rec-preferences"
+
     var preferences = UserTastePreference.default
     var loadedPreferences = UserTastePreference.default
     var analysis: AnalysisRun?
@@ -22,13 +24,15 @@ final class AppModel {
     var providerHealth: [ProviderHealth] = []
     var errorMessage: String?
     var isBusy = false
-    var isStoppingAnalysis = false
 
     @ObservationIgnored
     private let apiClient = APIClient()
 
     @ObservationIgnored
     private var pollingTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private let userDefaults = UserDefaults.standard
 
     var hasPendingSource: Bool {
         selectedFileURL != nil || pendingURL != nil
@@ -48,20 +52,19 @@ final class AppModel {
 
     func load() async {
         errorMessage = nil
-
-        do {
-            let fetchedPreferences = try await apiClient.fetchPreferences()
-            preferences = fetchedPreferences
-            loadedPreferences = fetchedPreferences
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-
+        let storedPreferences = loadStoredPreferences()
+        preferences = storedPreferences
+        loadedPreferences = storedPreferences
         providerHealth = (try? await apiClient.fetchProviderHealth()) ?? []
     }
 
     func updatePreference(_ keyPath: WritableKeyPath<UserTastePreference, Int>, value: Int) {
         preferences[keyPath: keyPath] = value
+        storePreferences(preferences)
+
+        if analysis == nil {
+            loadedPreferences = preferences
+        }
     }
 
     func setSelectedPhotoData(_ data: Data) {
@@ -165,7 +168,7 @@ final class AppModel {
         }
 
         do {
-            try await persistPreferencesIfNeeded()
+            commitPreferencesForAnalysis()
 
             let created: CreateAnalysisResponse
             if let selectedFileURL {
@@ -183,44 +186,12 @@ final class AppModel {
         }
     }
 
-    func cancelCurrentAnalysis() async {
-        guard let analysisState, !analysisState.status.isTerminal else {
-            return
-        }
-
-        isStoppingAnalysis = true
-        errorMessage = nil
-
-        defer {
-            isStoppingAnalysis = false
-        }
-
-        do {
-            let canceled = try await apiClient.cancelAnalysis(id: analysisState.analysisId)
-            let refreshed = try await apiClient.fetchAnalysis(id: canceled.analysisId)
-            analysis = refreshed
-            self.analysisState = AnalysisState(analysisId: refreshed.id, status: refreshed.status)
-
-            if refreshed.status.isTerminal {
-                pollingTask?.cancel()
-                pollingTask = nil
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func persistPreferencesIfNeeded() async throws {
-        guard !preferencesEqual(preferences, loadedPreferences) else {
-            return
-        }
-
-        try await apiClient.savePreferences(preferences)
+    private func commitPreferencesForAnalysis() {
+        storePreferences(preferences)
         loadedPreferences = preferences
     }
 
     private func launchAnalysis(_ created: CreateAnalysisResponse) async throws {
-        _ = try await apiClient.queueAnalysis(id: created.analysisId)
         let refreshed = try await apiClient.fetchAnalysis(id: created.analysisId)
         analysis = refreshed
         analysisState = AnalysisState(analysisId: refreshed.id, status: refreshed.status)
@@ -270,6 +241,25 @@ final class AppModel {
         }
 
         return try? Data(contentsOf: fileURL)
+    }
+
+    private func loadStoredPreferences() -> UserTastePreference {
+        guard
+            let data = userDefaults.data(forKey: Self.preferencesStorageKey),
+            let stored = try? JSONDecoder().decode(UserTastePreference.self, from: data)
+        else {
+            return .default
+        }
+
+        return stored
+    }
+
+    private func storePreferences(_ preferences: UserTastePreference) {
+        guard let data = try? JSONEncoder().encode(preferences) else {
+            return
+        }
+
+        userDefaults.set(data, forKey: Self.preferencesStorageKey)
     }
 }
 

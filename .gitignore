@@ -21,3 +21,5 @@ docs/
 *.swp
 xcuserdata/
 *.xcuserstate
+.vercel
+.playwright-mcp/

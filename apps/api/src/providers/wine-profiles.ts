@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { appConfig } from "../config.js";
 import {
   pickPreferredVivinoImageUrl,
+  RetryableVivinoBrowserError,
   VivinoBrowser,
   type SearchHit,
   type VivinoRatingSource,
@@ -21,6 +22,17 @@ export interface WineProfileProvider {
   isEnabled: boolean;
   detail: string;
   lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null>;
+}
+
+export class RetryableWineProfileLookupError extends Error {
+  constructor(
+    readonly provider: string,
+    readonly candidateQuery: string,
+    readonly cause: unknown,
+  ) {
+    super(`Retryable ${provider} lookup failure for ${candidateQuery}`);
+    this.name = "RetryableWineProfileLookupError";
+  }
 }
 
 type RawExternalProfile = {
@@ -578,7 +590,14 @@ class VivinoDirectProvider implements WineProfileProvider {
   }
 
   private async searchByName(query: string): Promise<SearchHit[]> {
-    return VivinoBrowser.getInstance().search(query);
+    try {
+      return await VivinoBrowser.getInstance().search(query);
+    } catch (error) {
+      if (error instanceof RetryableVivinoBrowserError) {
+        throw new RetryableWineProfileLookupError(this.name, query, error);
+      }
+      throw error;
+    }
   }
 
   private async fetchWineMeta(bestHit: SearchHit): Promise<{
