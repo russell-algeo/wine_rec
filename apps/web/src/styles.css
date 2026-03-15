@@ -2028,9 +2028,9 @@ h1 {
   .result-extra-filters-toggle {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 0.35rem;
-    width: 100%;
+    width: auto;
     padding: 0.4rem 0.75rem;
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -2117,6 +2117,82 @@ h1 {
 
   .image-break-text {
     font-size: clamp(1.75rem, 5vw, 3rem);
+  }
+
+  /* ── Results action row buttons ── */
+  .results-action-row .action {
+    font-size: 0.78rem;
+    padding: 0.5rem 0.75rem;
+    white-space: nowrap;
+  }
+
+  /* ── Wine card — compact text across the board ── */
+  .result-card {
+    padding: 0.65rem;
+  }
+
+  .result-card .wine-title {
+    font-size: 0.85rem;
+  }
+
+  .result-card .wine-subtitle {
+    font-size: 0.75rem;
+  }
+
+  .result-card .menu-context {
+    font-size: 0.67rem;
+  }
+
+  .result-card .vivino-rating {
+    margin-top: 0;
+    gap: 0.4rem;
+  }
+
+  .result-card .vivino-rating-value {
+    font-size: 1.35rem;
+  }
+
+  .result-card .star-rating-base,
+  .result-card .star-rating-fill {
+    font-size: 0.9rem;
+  }
+
+  .result-card .vivino-rating-count {
+    font-size: 0.7rem;
+  }
+
+  .result-card .taste-profile-title {
+    font-size: 0.78rem;
+  }
+
+  .result-card .taste-profile-footnote {
+    font-size: 0.75rem;
+  }
+
+  /* Tasting notes toggle and dropdown content */
+  .result-card .tasting-notes-toggle {
+    font-size: 0.72rem;
+  }
+
+  .result-card .tasting-notes-dropdown {
+    font-size: 0.82rem;
+  }
+
+  .result-card .tasting-notes-text,
+  .result-card .tasting-notes-fallback {
+    font-size: 0.82rem;
+  }
+
+  .result-card .detail-section-label {
+    font-size: 0.62rem;
+  }
+
+  .result-card .detail-price-restaurant {
+    font-size: 0.82rem;
+  }
+
+  .result-card .detail-price-benchmark {
+    font-size: 0.75rem;
   }
 }
 
