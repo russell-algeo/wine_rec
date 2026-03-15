@@ -39,6 +39,11 @@ function loadPreferences(): UserTastePreference {
 
 function storePreferences(preferences: UserTastePreference): void {
   window.localStorage.setItem("wine-rec-preferences", JSON.stringify(preferences));
+  window.localStorage.setItem("wine-rec-has-preferences", "true");
+}
+
+function hasStoredPreferencesFlag(): boolean {
+  return window.localStorage.getItem("wine-rec-has-preferences") === "true";
 }
 
 function preferencesEqual(left: UserTastePreference, right: UserTastePreference): boolean {
@@ -321,6 +326,7 @@ export function App() {
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [ingestTastePanelOpen, setIngestTastePanelOpen] = useState(false);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
+  const [hasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isLiveReranking = Boolean(analysis && !preferencesEqual(preferences, loadedPreferences));
   const baseRecommendations = isLiveReranking && analysis
@@ -366,7 +372,6 @@ export function App() {
       ? resultSections
       : resultSections.filter((section) => section.id === selectedResultSectionId);
   const analysisProgress = getAnalysisProgress(analysis);
-  const isFirstTimeUser = preferencesEqual(loadedPreferences, defaultPreferences);
   const hasActiveAnalysis = Boolean(
     analysisState && !terminalAnalysisStatuses.has(analysisState.status),
   );
@@ -800,10 +805,10 @@ export function App() {
           {ingestTastePanelOpen && (
             <div className="ingest-taste-panel">
               <p className="ingest-taste-heading">
-                {isFirstTimeUser ? "How do you like your wine?" : "Your preferences are saved."}
+                {!hasStoredPreferences ? "How do you like your wine?" : "Your preferences are saved."}
               </p>
               <p className="ingest-taste-sub">
-                {isFirstTimeUser
+                {!hasStoredPreferences
                   ? "Set your preferences — results are sorted to match."
                   : "Adjust if you'd like, then analyze."}
               </p>
