@@ -43,7 +43,11 @@ function storePreferences(preferences: UserTastePreference): void {
 }
 
 function hasStoredPreferencesFlag(): boolean {
-  return window.localStorage.getItem("wine-rec-has-preferences") === "true";
+  try {
+    return window.localStorage.getItem("wine-rec-has-preferences") === "true";
+  } catch {
+    return false;
+  }
 }
 
 function preferencesEqual(left: UserTastePreference, right: UserTastePreference): boolean {
@@ -324,9 +328,18 @@ export function App() {
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [urlPreview, setUrlPreview] = useState<{ title: string | null; domain: string } | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
-  const [ingestTastePanelOpen, setIngestTastePanelOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState<null | 1 | 2>(null);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
-  const [hasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
+  const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
+  const [modalPreferences, setModalPreferences] = useState<Record<TasteDimension, number | null>>(
+    () => {
+      if (hasStoredPreferencesFlag()) {
+        const stored = loadPreferences();
+        return { body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity };
+      }
+      return { body: null, tannin: null, sweetness: null, acidity: null };
+    }
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isLiveReranking = Boolean(analysis && !preferencesEqual(preferences, loadedPreferences));
   const baseRecommendations = isLiveReranking && analysis
@@ -480,7 +493,6 @@ export function App() {
       });
 
       await launchAnalysis(upload);
-      setIngestTastePanelOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed");
     } finally {
@@ -506,7 +518,6 @@ export function App() {
       setPendingUrl(normalizedUrl);
       setSelectedFile(null);
       setFilePreviewUrl(null);
-      setIngestTastePanelOpen(true);
     } catch {
       // Preview fetch failed — fall back to domain only
       const domain = new URL(normalizedUrl).hostname;
@@ -514,7 +525,6 @@ export function App() {
       setPendingUrl(normalizedUrl);
       setSelectedFile(null);
       setFilePreviewUrl(null);
-      setIngestTastePanelOpen(true);
     } finally {
       setBusy(false);
     }
@@ -535,7 +545,6 @@ export function App() {
       });
       setSourceUrl(pendingUrl);
       await launchAnalysis(created);
-      setIngestTastePanelOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to start analysis");
     } finally {
@@ -553,6 +562,7 @@ export function App() {
 
   function prepareAnalysis() {
     storePreferences(preferences);
+    setHasStoredPreferences(true);
     setLoadedPreferences(preferences);
     setAnalysisNotice(null);
     setPollingPaused(false);
@@ -620,10 +630,8 @@ export function App() {
     setPendingUrl(null);
     if (file) {
       setFilePreviewUrl(URL.createObjectURL(file));
-      setIngestTastePanelOpen(true);
     } else {
       setFilePreviewUrl(null);
-      setIngestTastePanelOpen(false);
     }
   }
 
@@ -644,6 +652,33 @@ export function App() {
   function handleDragLeave() {
     setIsDragOver(false);
   }
+
+  function openOnboardingModal() {
+    if (hasStoredPreferencesFlag()) {
+      const stored = loadPreferences();
+      setModalPreferences({ body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity });
+    } else {
+      setModalPreferences({ body: null, tannin: null, sweetness: null, acidity: null });
+    }
+    setOnboardingStep(1);
+  }
+
+  function closeOnboardingModal() {
+    setOnboardingStep(null);
+    setUrlPreview(null);
+    setPendingUrl(null);
+    setSelectedFile(null);
+    if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    setFilePreviewUrl(null);
+    setError(null);
+  }
+
+  function updateModalPreference(dimension: TasteDimension, value: number) {
+    setModalPreferences((prev) => ({ ...prev, [dimension]: value }));
+  }
+
+  const step1Ready = Boolean(urlPreview || selectedFile);
+  const step2Ready = tasteDimensionOrder.every((d) => modalPreferences[d] !== null);
 
   return (
     <div className="page-shell">
@@ -802,7 +837,7 @@ export function App() {
             )}
           </div>
 
-          {ingestTastePanelOpen && (
+          {false && (
             <div className="ingest-taste-panel">
               <p className="ingest-taste-heading">
                 {!hasStoredPreferences ? "How do you like your wine?" : "Your preferences are saved."}
