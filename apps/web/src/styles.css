@@ -814,35 +814,32 @@ h1 {
   box-shadow: 0 0 0 3px rgba(12, 105, 154, 0.18);
 }
 
+/* Empty/unset taste scale — greyed out version of the normal track */
 .taste-scale.is-empty .taste-scale-track {
-  background: repeating-linear-gradient(
-    90deg,
-    var(--taste-track) 0px,
-    var(--taste-track) 5px,
-    transparent 5px,
-    transparent 11px
-  );
+  background: var(--taste-track-muted);
 }
 
-/* Hide the thumb when empty so it looks completely unset */
 .taste-scale.is-empty .taste-scale-input::-webkit-slider-thumb {
-  opacity: 0;
-  pointer-events: none;
+  background: var(--taste-indicator-muted);
+  box-shadow: 0 1px 4px var(--taste-shadow-muted);
+  border-color: var(--taste-indicator-muted);
 }
+
 .taste-scale.is-empty .taste-scale-input::-moz-range-thumb {
-  opacity: 0;
-  pointer-events: none;
+  background: var(--taste-indicator-muted);
+  box-shadow: 0 1px 4px var(--taste-shadow-muted);
+  border-color: var(--taste-indicator-muted);
 }
-/* Also hide any fill/progress on the track */
+
 .taste-scale.is-empty .taste-scale-input::-moz-range-progress {
   background: transparent;
 }
+
 .taste-scale.is-empty .taste-scale-input::-webkit-slider-runnable-track {
   background: transparent;
 }
 
-.taste-scale.is-empty .taste-scale-track::before,
-.taste-scale.is-empty .taste-scale-track::after {
+.taste-scale.is-empty .taste-scale-track::before {
   display: none;
 }
 

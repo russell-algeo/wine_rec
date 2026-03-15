@@ -48,7 +48,10 @@ function storePreferences(preferences: UserTastePreference): void {
 
 function hasStoredPreferencesFlag(): boolean {
   try {
-    return window.localStorage.getItem("wine-rec-has-preferences") === "true";
+    return (
+      window.localStorage.getItem("wine-rec-has-preferences") === "true" ||
+      window.localStorage.getItem("wine-rec-preferences") !== null
+    );
   } catch {
     return false;
   }
