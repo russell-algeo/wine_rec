@@ -340,6 +340,7 @@ export function App() {
   const [inNewAnalysisFlow, setInNewAnalysisFlow] = useState(false);
   const [urlFetching, setUrlFetching] = useState(false);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
+  const [additionalFiltersOpen, setAdditionalFiltersOpen] = useState(false);
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
   const [modalPreferences, setModalPreferences] = useState<Record<TasteDimension, number | null>>(
     () => {
@@ -1013,11 +1014,11 @@ export function App() {
               <>
                 <div className="results-action-row">
                   <button
-                    className="action action-secondary"
+                    className="action"
                     onClick={() => setResultsTastePanelOpen((open) => !open)}
                     type="button"
                   >
-                    Adjust Taste
+                    Adjust Preferences
                     {isLiveReranking && (
                       <span className="result-taste-live-badge" aria-label="Results re-ranked">Updated</span>
                     )}
@@ -1072,78 +1073,90 @@ export function App() {
                         onClick={() => setResultSortOrder("recommended")}
                         type="button"
                       >
-                        Most recommended
+                        Best fit
                       </button>
                       <button
                         className={`sort-option${resultSortOrder === "discovered" ? " is-active" : ""}`}
                         onClick={() => setResultSortOrder("discovered")}
                         type="button"
                       >
-                        Image order
+                        Menu order
                       </button>
                     </div>
                   </div>
-                  {inferredRecommendationCount ? (
-                    <div className="result-control-group">
-                      <span>Taste data</span>
-                      <div aria-label="Filter inferred taste profiles" className="sort-toggle" role="group">
-                        <button
-                          className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
-                          onClick={() => setResultProfileFilter("all")}
-                          type="button"
-                        >
-                          All profiles
-                        </button>
-                        <button
-                          className={`sort-option${resultProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
-                          onClick={() => setResultProfileFilter("exclude-inferred")}
-                          type="button"
-                        >
-                          Hide inferred
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  {priceFilterBounds && effectiveMaxPrice != null ? (
-                    <div className="result-control-group result-control-group-budget">
-                      <span>Budget</span>
-                      <div className="price-filter-control">
-                        <div className="price-filter-head">
-                          <strong>
-                            {effectiveMaxPrice < priceFilterBounds.max
-                              ? `${formatPriceValue(effectiveMaxPrice)} and under`
-                              : "Any price"}
-                          </strong>
-                          <span>
-                            {formatPriceValue(priceFilterBounds.min)} to {formatPriceValue(priceFilterBounds.max)}
-                          </span>
+                  <button
+                    className="result-extra-filters-toggle"
+                    onClick={() => setAdditionalFiltersOpen((o) => !o)}
+                    type="button"
+                  >
+                    Filters
+                    <svg aria-hidden="true" fill="none" height="10" viewBox="0 0 10 10" width="10">
+                      <path d={additionalFiltersOpen ? "M1 7L5 3L9 7" : "M1 3L5 7L9 3"} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                    </svg>
+                  </button>
+                  <div className={`result-controls-extra${additionalFiltersOpen ? " is-open" : ""}`}>
+                    {inferredRecommendationCount ? (
+                      <div className="result-control-group">
+                        <span>Taste data</span>
+                        <div aria-label="Filter inferred taste profiles" className="sort-toggle" role="group">
+                          <button
+                            className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
+                            onClick={() => setResultProfileFilter("all")}
+                            type="button"
+                          >
+                            All profiles
+                          </button>
+                          <button
+                            className={`sort-option${resultProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
+                            onClick={() => setResultProfileFilter("exclude-inferred")}
+                            type="button"
+                          >
+                            Hide inferred
+                          </button>
                         </div>
-                        <input
-                          aria-label="Maximum wine price"
-                          className="price-filter-slider"
-                          max={priceFilterBounds.max}
-                          min={priceFilterBounds.min}
-                          onChange={(event) => setMaxPriceFilter(Number(event.target.value))}
-                          step={1}
-                          type="range"
-                          value={effectiveMaxPrice}
-                        />
-                        <label className="price-filter-toggle">
-                          <input
-                            checked={includePriceUnavailable}
-                            onChange={(event) => setIncludePriceUnavailable(event.target.checked)}
-                            type="checkbox"
-                          />
-                          <span>
-                            Include wines without price
-                            {priceFilterBounds.missingCount > 0
-                              ? ` (${priceFilterBounds.missingCount})`
-                              : ""}
-                          </span>
-                        </label>
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                    {priceFilterBounds && effectiveMaxPrice != null ? (
+                      <div className="result-control-group result-control-group-budget">
+                        <span>Budget</span>
+                        <div className="price-filter-control">
+                          <div className="price-filter-head">
+                            <strong>
+                              {effectiveMaxPrice < priceFilterBounds.max
+                                ? `${formatPriceValue(effectiveMaxPrice)} and under`
+                                : "Any price"}
+                            </strong>
+                            <span>
+                              {formatPriceValue(priceFilterBounds.min)} to {formatPriceValue(priceFilterBounds.max)}
+                            </span>
+                          </div>
+                          <input
+                            aria-label="Maximum wine price"
+                            className="price-filter-slider"
+                            max={priceFilterBounds.max}
+                            min={priceFilterBounds.min}
+                            onChange={(event) => setMaxPriceFilter(Number(event.target.value))}
+                            step={1}
+                            type="range"
+                            value={effectiveMaxPrice}
+                          />
+                          <label className="price-filter-toggle">
+                            <input
+                              checked={includePriceUnavailable}
+                              onChange={(event) => setIncludePriceUnavailable(event.target.checked)}
+                              type="checkbox"
+                            />
+                            <span>
+                              Include wines without price
+                              {priceFilterBounds.missingCount > 0
+                                ? ` (${priceFilterBounds.missingCount})`
+                                : ""}
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -1171,20 +1184,22 @@ export function App() {
                 </p>
               </div>
             ) : null}
-            {analysis && inferredRecommendationCount ? (
-              <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
-                <p className="result-filter-notice-title">
-                  {resultProfileFilter === "exclude-inferred"
-                    ? `${inferredRecommendationCount} inferred ${inferredRecommendationCount === 1 ? "profile" : "profiles"} hidden`
-                    : `${inferredRecommendationCount} ${inferredRecommendationCount === 1 ? "wine uses" : "wines use"} estimated taste data`}
-                </p>
-                <p className="helper">
-                  {resultProfileFilter === "exclude-inferred"
-                    ? "These wines are excluded because Vivino did not return a reliable match."
-                    : "When we cannot confirm a Vivino match, we infer the taste profile from the extracted wine details and show it with muted bars."}
-                </p>
-              </div>
-            ) : null}
+            <div className={`result-extra-notices${additionalFiltersOpen ? " is-open" : ""}`}>
+              {analysis && inferredRecommendationCount ? (
+                <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
+                  <p className="result-filter-notice-title">
+                    {resultProfileFilter === "exclude-inferred"
+                      ? `${inferredRecommendationCount} inferred ${inferredRecommendationCount === 1 ? "profile" : "profiles"} hidden`
+                      : `${inferredRecommendationCount} ${inferredRecommendationCount === 1 ? "wine uses" : "wines use"} estimated taste data`}
+                  </p>
+                  <p className="helper">
+                    {resultProfileFilter === "exclude-inferred"
+                      ? "These wines are excluded because Vivino did not return a reliable match."
+                      : "When we cannot confirm a Vivino match, we infer the taste profile from the extracted wine details and show it with muted bars."}
+                  </p>
+                </div>
+              ) : null}
+            </div>
             {hasStructuredResults ? (
               <div className="result-section-browser">
                 <div className="result-section-browser-copy">
