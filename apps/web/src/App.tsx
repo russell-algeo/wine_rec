@@ -337,6 +337,7 @@ export function App() {
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [onboardingStep, setOnboardingStep] = useState<1 | 2>(1);
   const [stepTwoIsConfirmMode, setStepTwoIsConfirmMode] = useState(false);
+  const [inNewAnalysisFlow, setInNewAnalysisFlow] = useState(false);
   const [urlFetching, setUrlFetching] = useState(false);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
@@ -565,6 +566,7 @@ export function App() {
   async function handleIngestAnalyze() {
     const allSet = tasteDimensionOrder.every((d) => modalPreferences[d] !== null);
     if (!allSet) return;
+    setInNewAnalysisFlow(false);
     const confirmedPrefs: UserTastePreference = {
       ...loadPreferences(),
       body: modalPreferences.body!,
@@ -589,6 +591,13 @@ export function App() {
     setOnboardingStep(1);
     setStepTwoIsConfirmMode(false);
     setError(null);
+    setInNewAnalysisFlow(true);
+    setSourceUrl("");
+    setUrlPreview(null);
+    setPendingUrl(null);
+    setSelectedFile(null);
+    if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    setFilePreviewUrl(null);
   }
 
   function clearAnalysisState() {
@@ -762,7 +771,7 @@ export function App() {
               ))}
             </div>
             <p className="taste-panel-hint">
-              Preferences apply automatically on your next analysis.
+              Adjust your preferences to automatically re-rank wines.
             </p>
           </div>
         </div>
@@ -932,6 +941,15 @@ export function App() {
                     >
                       New Analysis
                     </button>
+                  ) : inNewAnalysisFlow ? (
+                    <button
+                      className="action onboarding-btn-analyze"
+                      disabled={!step2Ready || busy}
+                      onClick={() => void handleIngestAnalyze()}
+                      type="button"
+                    >
+                      {busy ? "Starting…" : "Analyze →"}
+                    </button>
                   ) : analysis ? (
                     <>
                       <button
@@ -994,6 +1012,16 @@ export function App() {
             {analysis && (
               <>
                 <div className="results-action-row">
+                  <button
+                    className="action action-secondary"
+                    onClick={() => setResultsTastePanelOpen((open) => !open)}
+                    type="button"
+                  >
+                    Adjust Taste
+                    {isLiveReranking && (
+                      <span className="result-taste-live-badge" aria-label="Results re-ranked">Updated</span>
+                    )}
+                  </button>
                   {hasActiveAnalysis ? (
                     <button
                       className="action action-danger"
@@ -1013,28 +1041,6 @@ export function App() {
                     </button>
                   )}
                 </div>
-                <div
-                  className="result-taste-toggle"
-                  onClick={() => setResultsTastePanelOpen((open) => !open)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setResultsTastePanelOpen((open) => !open);
-                    }
-                  }}
-                >
-                  <span className="result-taste-toggle-label">
-                    My Taste Preferences
-                    {isLiveReranking && (
-                      <span className="result-taste-live-badge" aria-label="Results re-ranked">Updated</span>
-                    )}
-                  </span>
-                  <span className="result-taste-toggle-caret" aria-hidden="true">
-                    {resultsTastePanelOpen ? "▾" : "▸"}
-                  </span>
-                </div>
                 {resultsTastePanelOpen && (
                   <div className="result-taste-panel">
                     <div className="taste-scale-stack">
@@ -1048,9 +1054,7 @@ export function App() {
                       ))}
                     </div>
                     <p className="result-taste-panel-hint">
-                      {isLiveReranking
-                        ? "Results are re-ranked to match your updated preferences."
-                        : "Adjust sliders to instantly re-rank results without re-running analysis."}
+                      {"Adjust your preferences to automatically re-rank wines."}
                     </p>
                   </div>
                 )}
@@ -1582,73 +1586,73 @@ function ResultCard(props: {
             </div>
           </div>
         </div>
-        <div className={`taste-profile-block taste-profile-block-compact${isInferred ? " is-inferred" : ""}`}>
-          <div className="taste-profile-heading">
-            <div className="taste-profile-copy">
-              <p className="taste-profile-title">What does this wine taste like?</p>
-            </div>
-            {isInferred ? <p className="taste-profile-note">Estimated profile</p> : null}
+      </div>
+      <div className={`taste-profile-block taste-profile-block-compact${isInferred ? " is-inferred" : ""}`}>
+        <div className="taste-profile-heading">
+          <div className="taste-profile-copy">
+            <p className="taste-profile-title">What does this wine taste like?</p>
           </div>
-          <div className="taste-scale-stack">
-            {tasteDimensionOrder.map((dimension) => (
-              <TasteScale
-                dimension={dimension}
-                key={dimension}
-                tone={isInferred ? "uncertain" : "default"}
-                value={recommendation.profile?.taste[dimension] ?? null}
-              />
-            ))}
-          </div>
-          {showTasteReviewCount ? (
-            <p className="taste-profile-footnote">
-              {formatTasteReviewCountLabel(tasteReviewCount)}
-            </p>
-          ) : null}
+          {isInferred ? <p className="taste-profile-note">Estimated profile</p> : null}
         </div>
-        <div className="tasting-notes-collapsible">
-          <button
-            className="tasting-notes-toggle"
-            onClick={() => setShowTastingNotes((v) => !v)}
-            type="button"
-          >
-            <span>Tasting notes &amp; details</span>
-            <span className={`tasting-notes-toggle-icon${showTastingNotes ? " is-open" : ""}`}>▾</span>
-          </button>
-          {showTastingNotes ? (
-            <div className="tasting-notes-dropdown" ref={dropdownRef}>
-              {hasTastingNoteContent || showNoTastingNotesIndicator ? (
-                <div className="detail-tasting-notes-section">
-                  <p className="detail-section-label">Tasting notes</p>
-                  {showNoTastingNotesIndicator ? (
-                    <p className="tasting-notes-empty">No tasting notes reported.</p>
-                  ) : tastingNoteGroups.length > 0 ? (
-                    <TastingNoteGroupSection groups={tastingNoteGroups} />
-                  ) : tastingNotesText ? (
-                    <p className="tasting-notes-fallback">
-                      {tastingNotesText}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {candidate?.price || priceBenchmark ? (
-                <div className={`detail-price-section${hasTastingNoteContent || showNoTastingNotesIndicator ? " has-separator" : ""}`}>
-                  <p className="detail-section-label">Price</p>
-                  <p className="detail-price-restaurant">
-                    {candidate?.price ?? "Not listed"} on the menu
+        <div className="taste-scale-stack">
+          {tasteDimensionOrder.map((dimension) => (
+            <TasteScale
+              dimension={dimension}
+              key={dimension}
+              tone={isInferred ? "uncertain" : "default"}
+              value={recommendation.profile?.taste[dimension] ?? null}
+            />
+          ))}
+        </div>
+        {showTasteReviewCount ? (
+          <p className="taste-profile-footnote">
+            {formatTasteReviewCountLabel(tasteReviewCount)}
+          </p>
+        ) : null}
+      </div>
+      <div className="tasting-notes-collapsible">
+        <button
+          className="tasting-notes-toggle"
+          onClick={() => setShowTastingNotes((v) => !v)}
+          type="button"
+        >
+          <span>Tasting notes &amp; details</span>
+          <span className={`tasting-notes-toggle-icon${showTastingNotes ? " is-open" : ""}`}>▾</span>
+        </button>
+        {showTastingNotes ? (
+          <div className="tasting-notes-dropdown" ref={dropdownRef}>
+            {hasTastingNoteContent || showNoTastingNotesIndicator ? (
+              <div className="detail-tasting-notes-section">
+                <p className="detail-section-label">Tasting notes</p>
+                {showNoTastingNotesIndicator ? (
+                  <p className="tasting-notes-empty">No tasting notes reported.</p>
+                ) : tastingNoteGroups.length > 0 ? (
+                  <TastingNoteGroupSection groups={tastingNoteGroups} />
+                ) : tastingNotesText ? (
+                  <p className="tasting-notes-fallback">
+                    {tastingNotesText}
                   </p>
-                  {priceBenchmark ? (
-                    <p className={`detail-price-benchmark is-${priceBenchmark.tier}`}>
-                      ~{formatPriceValue(priceBenchmark.retailPrice)} avg retail &middot; {priceBenchmark.multiplier.toFixed(1)}× markup
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {!candidate?.price && !priceBenchmark && !hasTastingNoteContent && !showNoTastingNotesIndicator ? (
-                <p className="tasting-notes-empty">No additional details available.</p>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+                ) : null}
+              </div>
+            ) : null}
+            {candidate?.price || priceBenchmark ? (
+              <div className={`detail-price-section${hasTastingNoteContent || showNoTastingNotesIndicator ? " has-separator" : ""}`}>
+                <p className="detail-section-label">Price</p>
+                <p className="detail-price-restaurant">
+                  {candidate?.price ?? "Not listed"} on the menu
+                </p>
+                {priceBenchmark ? (
+                  <p className={`detail-price-benchmark is-${priceBenchmark.tier}`}>
+                    ~{formatPriceValue(priceBenchmark.retailPrice)} avg retail &middot; {priceBenchmark.multiplier.toFixed(1)}× markup
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {!candidate?.price && !priceBenchmark && !hasTastingNoteContent && !showNoTastingNotesIndicator ? (
+              <p className="tasting-notes-empty">No additional details available.</p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </article>
   );

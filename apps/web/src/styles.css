@@ -1295,8 +1295,17 @@ h1 {
 
 .result-card.has-image {
   grid-template-columns: minmax(6.8rem, 7.6rem) minmax(0, 1fr);
+  grid-template-areas:
+    "media content"
+    "media taste"
+    "media notes";
   align-items: stretch;
 }
+
+.result-card.has-image > .result-card-media   { grid-area: media; }
+.result-card.has-image > .result-card-content { grid-area: content; }
+.result-card.has-image > .taste-profile-block { grid-area: taste; }
+.result-card.has-image > .tasting-notes-collapsible { grid-area: notes; }
 
 .result-card.is-inferred {
   border-color: rgba(107, 107, 107, 0.15);
@@ -1852,7 +1861,7 @@ h1 {
 
 .results-action-row {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   margin-bottom: 12px;
 }
 
@@ -1868,16 +1877,20 @@ h1 {
   }
 
   .result-card.has-image {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(5rem, 5.5rem) minmax(0, 1fr);
+    grid-template-areas:
+      "media content"
+      "taste taste"
+      "notes notes";
   }
 
   .result-card-media {
-    min-height: 9.5rem;
+    min-height: unset;
   }
 
   .result-card-image {
-    max-width: 4.9rem;
-    max-height: 10rem;
+    max-width: 3.8rem;
+    max-height: 8.5rem;
   }
 
   .result-head {
@@ -1889,6 +1902,7 @@ h1 {
   }
 
   .result-summary {
+    order: -1;
     width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: center;
