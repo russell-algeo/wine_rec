@@ -567,7 +567,6 @@ export function App() {
   async function handleIngestAnalyze() {
     const allSet = tasteDimensionOrder.every((d) => modalPreferences[d] !== null);
     if (!allSet) return;
-    setInNewAnalysisFlow(false);
     const confirmedPrefs: UserTastePreference = {
       ...loadPreferences(),
       body: modalPreferences.body!,
@@ -586,6 +585,7 @@ export function App() {
     } catch {
       // handleUpload / handleUrlAnalyze manage their own error state
     }
+    setInNewAnalysisFlow(false);
   }
 
   function handleNewAnalysis() {
@@ -943,14 +943,24 @@ export function App() {
                       New Analysis
                     </button>
                   ) : inNewAnalysisFlow ? (
-                    <button
-                      className="action onboarding-btn-analyze"
-                      disabled={!step2Ready || busy}
-                      onClick={() => void handleIngestAnalyze()}
-                      type="button"
-                    >
-                      {busy ? "Starting…" : "Analyze →"}
-                    </button>
+                    <>
+                      <button
+                        className="onboarding-btn-cancel"
+                        onClick={() => setOnboardingStep(1)}
+                        style={{ marginRight: "auto" }}
+                        type="button"
+                      >
+                        ← Back
+                      </button>
+                      <button
+                        className="action onboarding-btn-analyze"
+                        disabled={!step2Ready || busy}
+                        onClick={() => void handleIngestAnalyze()}
+                        type="button"
+                      >
+                        {busy ? "Starting…" : "Analyze →"}
+                      </button>
+                    </>
                   ) : analysis ? (
                     <>
                       <button
