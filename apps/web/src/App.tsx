@@ -37,6 +37,10 @@ function loadPreferences(): UserTastePreference {
   }
 }
 
+function writePreferencesJson(preferences: UserTastePreference): void {
+  window.localStorage.setItem("wine-rec-preferences", JSON.stringify(preferences));
+}
+
 function storePreferences(preferences: UserTastePreference): void {
   window.localStorage.setItem("wine-rec-preferences", JSON.stringify(preferences));
   window.localStorage.setItem("wine-rec-has-preferences", "true");
@@ -418,7 +422,7 @@ export function App() {
   }, [filePreviewUrl]);
 
   useEffect(() => {
-    storePreferences(preferences);
+    writePreferencesJson(preferences);
     if (!analysis) {
       setLoadedPreferences(preferences);
     }
@@ -486,8 +490,6 @@ export function App() {
     setError(null);
 
     try {
-      prepareAnalysis();
-
       const formData = new FormData();
       formData.set("file", selectedFile);
 
@@ -541,7 +543,6 @@ export function App() {
     setError(null);
 
     try {
-      prepareAnalysis();
       const created = await getJson<CreateAnalysisResponse>("/api/urls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
