@@ -1927,19 +1927,21 @@ h1 {
     max-height: 8.5rem;
   }
 
-  /* Vertically center the two rows within the image column height */
+  /* Stretch content area to full image height so space-evenly can work */
   .result-card .result-card-content {
     display: flex;
     flex-direction: column;
-    justify-content: center;
   }
 
   /* Card content: 2-column grid — name+fit row, then rating+price row */
+  /* flex:1 fills the content area; align-content:space-evenly distributes
+     equal whitespace above row 1, between rows, and below row 2 */
   .result-head {
+    flex: 1;
     display: grid;
     grid-template-columns: 1fr auto;
     column-gap: 8px;
-    row-gap: 6px;
+    align-content: space-evenly;
     align-items: start;
   }
 
