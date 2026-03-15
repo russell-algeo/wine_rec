@@ -1090,6 +1090,40 @@ h1 {
   align-items: center;
 }
 
+/* Extra filters wrapper — flex row on desktop, collapsible on mobile */
+.result-controls-extra {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Divider before the extra filters section on desktop */
+.result-controls .result-controls-extra::before {
+  content: "";
+  display: block;
+  width: 1px;
+  height: 1.25rem;
+  background: var(--line);
+  margin-right: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* Dividers between groups inside extra filters on desktop */
+.result-controls-extra .result-control-group + .result-control-group::before {
+  content: "";
+  display: block;
+  width: 1px;
+  height: 1.25rem;
+  background: var(--line);
+  margin-right: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* Toggle button — hidden on desktop */
+.result-extra-filters-toggle {
+  display: none;
+}
+
 .price-filter-control {
   display: flex;
   align-items: center;
@@ -1893,28 +1927,65 @@ h1 {
     max-height: 8.5rem;
   }
 
+  /* Card content: 2-column grid — name+fit row, then rating+price row */
   .result-head {
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: 8px;
+    row-gap: 6px;
+    align-items: start;
   }
 
-  .vivino-rating {
-    gap: 0.65rem;
+  /* Flatten the two inner wrappers so children participate directly in the grid */
+  .result-head > .result-copy,
+  .result-head > .result-summary {
+    display: contents;
   }
 
-  .result-summary {
-    order: -1;
-    width: 100%;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: center;
+  /* Row 1, col 1: wine name block */
+  .result-head .wine-name-block {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  /* Row 1, col 2: fit badge — scaled down to 0.75x */
+  .result-head .score-badge {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: start;
+    min-width: 3.4rem;
+    padding: 0.4rem 0.6rem 0.5rem;
+  }
+
+  .result-head .score-badge span {
+    font-size: 0.54rem;
+  }
+
+  .result-head .score-badge strong {
+    font-size: 1.05rem;
+  }
+
+  /* Row 2, col 1: vivino rating */
+  .result-head .vivino-rating {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  /* Row 2, col 2: price pill */
+  .result-head .price-tag {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
+    justify-self: end;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.6rem;
   }
 
   .result-section-header {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .score-badge {
-    justify-self: end;
   }
 
   .result-controls {
@@ -1951,6 +2022,49 @@ h1 {
 
   .sort-option {
     flex: 1;
+  }
+
+  /* Additional filters toggle button */
+  .result-extra-filters-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    width: 100%;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+
+  /* Extra filters panel — hidden by default, shown when open */
+  .result-controls-extra {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .result-controls-extra.is-open {
+    display: flex;
+  }
+
+  /* No leading divider on mobile */
+  .result-controls .result-controls-extra::before,
+  .result-controls-extra .result-control-group + .result-control-group::before {
+    display: none;
+  }
+
+  /* Inferred notice — hidden on mobile by default */
+  .result-extra-notices {
+    display: none;
+  }
+
+  .result-extra-notices.is-open {
+    display: block;
   }
 
   .price-filter-control {

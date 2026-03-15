@@ -1574,15 +1574,17 @@ function ResultCard(props: {
       <div className="result-card-content">
         <div className="result-head">
           <div className="result-copy">
-            {menuContext ? <p className="menu-context">{menuContext}</p> : null}
-            <h3 className="wine-title">{menuTitle}</h3>
-            {matchedTitle ? <p className="wine-subtitle">Matched to {matchedTitle}</p> : null}
-            {isInferred ? (
-              <p className="wine-uncertainty">
-                No reliable Vivino match was found, so this taste profile is inferred from the
-                extracted wine details.
-              </p>
-            ) : null}
+            <div className="wine-name-block">
+              {menuContext ? <p className="menu-context">{menuContext}</p> : null}
+              <h3 className="wine-title">{menuTitle}</h3>
+              {matchedTitle ? <p className="wine-subtitle">Matched to {matchedTitle}</p> : null}
+              {isInferred ? (
+                <p className="wine-uncertainty">
+                  No reliable Vivino match was found, so this taste profile is inferred from the
+                  extracted wine details.
+                </p>
+              ) : null}
+            </div>
             {showRating ? (
               <VivinoRatingBlock
                 rating={rating}
