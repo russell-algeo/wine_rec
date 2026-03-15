@@ -684,6 +684,7 @@ export function App() {
     setOnboardingStep(null);
     setUrlPreview(null);
     setPendingUrl(null);
+    setSourceUrl("");
     setSelectedFile(null);
     if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
     setFilePreviewUrl(null);
