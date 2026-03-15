@@ -2132,7 +2132,7 @@ h1 {
   }
 
   .result-card .wine-title {
-    font-size: 0.85rem;
+    font-size: 0.95rem;
   }
 
   .result-card .wine-subtitle {
@@ -2169,6 +2169,11 @@ h1 {
     font-size: 0.75rem;
   }
 
+  /* Taste scale endpoint labels ("Light", "Bold", etc.) */
+  .result-card .taste-scale-endpoint {
+    font-size: 0.68rem;
+  }
+
   /* Tasting notes toggle and dropdown content */
   .result-card .tasting-notes-toggle {
     font-size: 0.72rem;
@@ -2193,6 +2198,15 @@ h1 {
 
   .result-card .detail-price-benchmark {
     font-size: 0.75rem;
+  }
+
+  /* Tasting note cards — family name and cue keywords */
+  .result-card .tasting-note-card-family {
+    font-size: 0.85rem;
+  }
+
+  .result-card .tasting-note-card-keywords {
+    font-size: 0.72rem;
   }
 }
 
