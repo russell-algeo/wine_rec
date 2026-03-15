@@ -609,6 +609,16 @@ h1 {
   background: var(--accent-soft);
 }
 
+.action.action-danger {
+  background: #c0392b;
+  color: white;
+}
+
+.action.action-danger:hover {
+  background: #a93226;
+}
+
+
 .action.action-quiet {
   background: rgba(12, 105, 154, 0.08);
   color: var(--accent);
@@ -1840,7 +1850,7 @@ h1 {
   to { transform: rotate(360deg); }
 }
 
-.results-stop-row {
+.results-action-row {
   display: flex;
   justify-content: flex-end;
   margin-bottom: 12px;

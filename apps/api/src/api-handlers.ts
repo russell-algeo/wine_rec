@@ -35,23 +35,22 @@ const coordinatorWorkerJobPayloadSchema = z.object({
   sourceUrl: z.string().url().optional(),
 });
 
-const chunkWorkerJobPayloadSchema = z.object({
-  mode: z.literal("chunk"),
+const jobWorkerJobPayloadSchema = z.object({
+  mode: z.literal("worker"),
   jobId: z.string(),
-  chunkIndex: z.number().int().nonnegative(),
+  workerIndex: z.number().int().nonnegative(),
 });
 
 const workerJobPayloadSchema = z.union([
-  chunkWorkerJobPayloadSchema,
+  jobWorkerJobPayloadSchema,
   coordinatorWorkerJobPayloadSchema,
 ]);
 
 type CoordinatorWorkerJobPayload = z.infer<typeof coordinatorWorkerJobPayloadSchema>;
-type ChunkWorkerJobPayload = z.infer<typeof chunkWorkerJobPayloadSchema>;
+type JobWorkerJobPayload = z.infer<typeof jobWorkerJobPayloadSchema>;
 export type WorkerJobPayload = z.infer<typeof workerJobPayloadSchema>;
 
 const SERVERLESS_WORKER_TIME_BUDGET_MS = 50_000;
-const SERVERLESS_WORKER_CHUNK_SIZE = 4;
 const MAX_SERVERLESS_CONCURRENT_WORKERS = 10;
 const SERVERLESS_WORKER_CANDIDATE_CONCURRENCY = 1;
 const SERVERLESS_WORKER_INITIAL_JITTER_MAX_SECONDS = 3;
@@ -348,7 +347,15 @@ export async function getAnalysisRun(id: string): Promise<AnalysisRun | null> {
 }
 
 export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
-  const { getJob, listJobChunks, updateJob, updateJobChunk } = await loadJobStore();
+  const {
+    clearJobCandidateState,
+    getJob,
+    listJobCandidateWork,
+    listJobWorkers,
+    updateJob,
+    updateJobCandidateWork,
+    updateJobWorker,
+  } = await loadJobStore();
   const existing = await getJob(id);
 
   if (!existing) {
@@ -359,17 +366,30 @@ export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
     return analysisRunSchema.parse(existing);
   }
 
-  const chunks = existing.chunkCount > 0 ? await listJobChunks(id, existing.chunkCount) : [];
+  const workers = existing.workerCount > 0 ? await listJobWorkers(id, existing.workerCount) : [];
+  const candidateWork = existing.candidates.length > 0 ? await listJobCandidateWork(id, existing.candidates) : [];
 
   await deleteQueuedMessage(existing.queueMessageId);
-  await Promise.all(chunks.map((chunk) => deleteQueuedMessage(chunk.queueMessageId)));
+  await Promise.all(workers.map((worker) => deleteQueuedMessage(worker.queueMessageId)));
+  await clearJobCandidateState(id);
   await Promise.all(
-    chunks.map((chunk) =>
-      updateJobChunk(id, chunk.index, {
+    workers.map((worker) =>
+      updateJobWorker(id, worker.index, {
         status: "canceled",
         queueMessageId: null,
         errorMessage: STOPPED_ANALYSIS_MESSAGE,
       })),
+  );
+  await Promise.all(
+    candidateWork
+      .filter((record) => record.status !== "completed" && record.status !== "failed")
+      .map((record) =>
+        updateJobCandidateWork(id, record.candidateId, {
+          status: "canceled",
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          errorMessage: STOPPED_ANALYSIS_MESSAGE,
+        })),
   );
 
   await updateJob(id, {
@@ -405,31 +425,21 @@ function hasParsedJobState(job: {
   return job.extractedText !== null;
 }
 
-function splitCandidatesIntoChunks(
-  candidates: WineCandidate[],
-  chunkSize: number,
-): WineCandidate[][] {
-  if (candidates.length === 0) {
-    return [];
-  }
-
-  const chunks: WineCandidate[][] = [];
-  const resolvedChunkSize = Math.max(1, chunkSize);
-
-  for (let index = 0; index < candidates.length; index += resolvedChunkSize) {
-    chunks.push(candidates.slice(index, index + resolvedChunkSize));
-  }
-
-  return chunks;
+function getWorkerLeaseOwner(workerIndex: number): string {
+  return `worker-${workerIndex}`;
 }
 
-function getChunkFlowControl(jobId: string): {
+function getInitialWorkerCount(candidateCount: number): number {
+  return Math.min(Math.max(0, candidateCount), MAX_SERVERLESS_CONCURRENT_WORKERS);
+}
+
+function getWorkerFlowControl(jobId: string): {
   key: string;
   parallelism: number;
 } {
   const sanitizedJobId = jobId.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
-    key: `analysis.${sanitizedJobId}.chunk`,
+    key: `analysis.${sanitizedJobId}.worker`,
     parallelism: MAX_SERVERLESS_CONCURRENT_WORKERS,
   };
 }
@@ -444,18 +454,18 @@ function getRandomizedDelaySeconds(baseSeconds: number, jitterRangeSeconds: numb
   return resolvedBase + Math.floor(Math.random() * (resolvedRange + 1));
 }
 
-function getInitialChunkLaunchDelaySeconds(): number {
+function getInitialWorkerLaunchDelaySeconds(): number {
   return getRandomizedDelaySeconds(0, SERVERLESS_WORKER_INITIAL_JITTER_MAX_SECONDS);
 }
 
-function getChunkRequeueDelaySeconds(): number {
+function getWorkerRequeueDelaySeconds(): number {
   return getRandomizedDelaySeconds(
     SERVERLESS_WORKER_REQUEUE_DELAY_BASE_SECONDS,
     SERVERLESS_WORKER_REQUEUE_DELAY_JITTER_SECONDS,
   );
 }
 
-function getChunkPublishOptions(
+function getWorkerPublishOptions(
   jobId: string,
   delaySeconds = 0,
 ): {
@@ -473,28 +483,24 @@ function getChunkPublishOptions(
     failureCallback: getWorkerFailureUrl(),
     retryDelay: SERVERLESS_WORKER_RETRY_DELAY_EXPRESSION,
     ...(delaySeconds > 0 ? { delaySeconds } : {}),
-    flowControl: getChunkFlowControl(jobId),
+    flowControl: getWorkerFlowControl(jobId),
   };
 }
 
-async function queueChunkForQStashRetry(
-  payload: ChunkWorkerJobPayload,
+async function queueWorkerForQStashRetry(
+  payload: JobWorkerJobPayload,
   store: JobStore,
-  options: {
-    recommendations?: Recommendation[];
-  } = {},
 ): Promise<void> {
   await assertJobActive(payload.jobId, store);
-  const currentChunk = await store.getJobChunk(payload.jobId, payload.chunkIndex);
-  if (!currentChunk || currentChunk.status === "completed" || currentChunk.status === "canceled") {
+  const currentWorker = await store.getJobWorker(payload.jobId, payload.workerIndex);
+  if (!currentWorker || currentWorker.status === "completed" || currentWorker.status === "canceled") {
     return;
   }
 
-  await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
+  await store.updateJobWorker(payload.jobId, payload.workerIndex, {
     status: "queued",
-    queueMessageId: currentChunk.queueMessageId,
+    queueMessageId: currentWorker.queueMessageId,
     errorMessage: null,
-    ...(options.recommendations ? { recommendations: options.recommendations } : {}),
   });
   await store.updateJob(payload.jobId, {
     status: "processing",
@@ -503,37 +509,30 @@ async function queueChunkForQStashRetry(
   });
 }
 
-async function requeueChunkJob(
-  payload: ChunkWorkerJobPayload,
+async function requeueWorkerJob(
+  payload: JobWorkerJobPayload,
   store: JobStore,
-  options: {
-    delaySeconds?: number;
-    recommendations?: Recommendation[];
-  } = {},
+  delaySeconds = getWorkerRequeueDelaySeconds(),
 ): Promise<void> {
   await assertJobActive(payload.jobId, store);
-  const currentChunk = await store.getJobChunk(payload.jobId, payload.chunkIndex);
-  if (!currentChunk || currentChunk.status === "completed" || currentChunk.status === "canceled") {
+  const currentWorker = await store.getJobWorker(payload.jobId, payload.workerIndex);
+  if (!currentWorker || currentWorker.status === "completed" || currentWorker.status === "canceled") {
     return;
   }
 
   const { messageId } = await publishWorkerJob(
     {
-      mode: "chunk",
+      mode: "worker",
       jobId: payload.jobId,
-      chunkIndex: payload.chunkIndex,
+      workerIndex: payload.workerIndex,
     },
-    getChunkPublishOptions(
-      payload.jobId,
-      options.delaySeconds ?? getChunkRequeueDelaySeconds(),
-    ),
+    getWorkerPublishOptions(payload.jobId, delaySeconds),
   );
 
-  await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
+  await store.updateJobWorker(payload.jobId, payload.workerIndex, {
     status: "queued",
     queueMessageId: messageId,
     errorMessage: null,
-    ...(options.recommendations ? { recommendations: options.recommendations } : {}),
   });
   await store.updateJob(payload.jobId, {
     status: "processing",
@@ -542,25 +541,26 @@ async function requeueChunkJob(
   });
 }
 
-async function syncJobFromChunks(store: JobStore, jobId: string): Promise<void> {
+async function syncJobFromCandidateWork(store: JobStore, jobId: string): Promise<void> {
   const job = await store.getJob(jobId);
-  if (!job || job.status === "canceled" || job.chunkCount <= 0) {
+  if (!job || job.status === "canceled" || job.candidates.length === 0) {
     return;
   }
 
-  const chunks = await store.listJobChunks(jobId, job.chunkCount);
-  if (chunks.length === 0) {
+  const candidateWork = await store.listJobCandidateWork(jobId, job.candidates);
+  if (candidateWork.length === 0) {
     return;
   }
 
-  const failedChunk = chunks.find((chunk) => chunk.status === "failed");
-  const allCompleted = chunks.length === job.chunkCount && chunks.every((chunk) => chunk.status === "completed");
+  const failedCandidate = candidateWork.find((record) => record.status === "failed");
+  const allCompleted =
+    candidateWork.length === job.candidates.length &&
+    candidateWork.every((record) => record.status === "completed");
 
   await store.updateJob(jobId, {
-    status: failedChunk ? "failed" : allCompleted ? "completed" : "processing",
-    queueMessageId: null,
-    errorMessage: failedChunk?.errorMessage ?? null,
-    recommendations: job.recommendations,
+    status: failedCandidate ? "failed" : allCompleted ? "completed" : "processing",
+    queueMessageId: failedCandidate || allCompleted ? null : job.queueMessageId,
+    errorMessage: failedCandidate?.errorMessage ?? null,
   });
 }
 
@@ -585,7 +585,7 @@ async function extractAndPersistJobState(
     extractedText,
     candidates,
     recommendations: [],
-    chunkCount: 0,
+    workerCount: 0,
   });
 
   return { extractedText, candidates };
@@ -607,8 +607,8 @@ async function processCoordinatorJob(
     return;
   }
 
-  if (current.chunkCount > 0) {
-    await syncJobFromChunks(store, payload.jobId);
+  if (current.workerCount > 0) {
+    await syncJobFromCandidateWork(store, payload.jobId);
     return;
   }
 
@@ -631,35 +631,36 @@ async function processCoordinatorJob(
       extractedText,
       candidates,
       recommendations: [],
-      chunkCount: 0,
+      workerCount: 0,
     });
     return;
   }
 
-  const candidateChunks = splitCandidatesIntoChunks(candidates, SERVERLESS_WORKER_CHUNK_SIZE);
-  const chunkRecords = await store.createJobChunks(payload.jobId, candidateChunks);
-  const publishedChunks: Array<{ chunkIndex: number; messageId: string }> = [];
+  await store.createJobCandidateWork(payload.jobId, candidates);
+  const workerCount = getInitialWorkerCount(candidates.length);
+  const workerRecords = await store.createJobWorkers(payload.jobId, workerCount);
+  const publishedWorkers: Array<{ workerIndex: number; messageId: string }> = [];
 
   try {
-    for (const chunkRecord of chunkRecords) {
+    for (const workerRecord of workerRecords) {
       await assertJobActive(payload.jobId, store);
       const { messageId } = await publishWorkerJob(
         {
-          mode: "chunk",
+          mode: "worker",
           jobId: payload.jobId,
-          chunkIndex: chunkRecord.index,
+          workerIndex: workerRecord.index,
         },
-        getChunkPublishOptions(payload.jobId, getInitialChunkLaunchDelaySeconds()),
+        getWorkerPublishOptions(payload.jobId, getInitialWorkerLaunchDelaySeconds()),
       );
-      publishedChunks.push({ chunkIndex: chunkRecord.index, messageId });
-      await store.updateJobChunk(payload.jobId, chunkRecord.index, {
+      publishedWorkers.push({ workerIndex: workerRecord.index, messageId });
+      await store.updateJobWorker(payload.jobId, workerRecord.index, {
         status: "queued",
         queueMessageId: messageId,
         errorMessage: null,
       });
     }
   } catch (error) {
-    await Promise.all(publishedChunks.map((chunk) => deleteQueuedMessage(chunk.messageId)));
+    await Promise.all(publishedWorkers.map((worker) => deleteQueuedMessage(worker.messageId)));
     throw error;
   }
 
@@ -670,47 +671,38 @@ async function processCoordinatorJob(
     extractedText,
     candidates,
     recommendations: [],
-    chunkCount: chunkRecords.length,
+    workerCount,
   });
 }
 
-function getChunkCandidates(job: AnalysisRun, chunkCandidateIds: string[]): WineCandidate[] {
-  const candidatesById = new Map(job.candidates.map((candidate) => [candidate.id, candidate]));
-  return chunkCandidateIds
-    .map((candidateId) => candidatesById.get(candidateId))
-    .filter((candidate): candidate is WineCandidate => candidate !== undefined);
+function getJobCandidate(job: AnalysisRun, candidateId: string): WineCandidate | null {
+  return job.candidates.find((candidate) => candidate.id === candidateId) ?? null;
 }
 
-async function processChunkJob(payload: ChunkWorkerJobPayload, store: JobStore): Promise<void> {
+async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): Promise<void> {
   const job = await store.getJob(payload.jobId);
   if (!job || !hasParsedJobState(job)) {
     return;
   }
 
-  const chunk = await store.getJobChunk(payload.jobId, payload.chunkIndex);
-  if (!chunk || chunk.status === "completed" || chunk.status === "canceled") {
-    await syncJobFromChunks(store, payload.jobId);
+  const worker = await store.getJobWorker(payload.jobId, payload.workerIndex);
+  if (!worker || worker.status === "completed" || worker.status === "canceled") {
+    await syncJobFromCandidateWork(store, payload.jobId);
     return;
   }
 
-  const chunkCandidates = getChunkCandidates(job, chunk.candidateIds);
-  if (chunkCandidates.length === 0) {
-    await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
-      status: "completed",
-      queueMessageId: null,
-      errorMessage: null,
-      recommendations: [],
-    });
-    await syncJobFromChunks(store, payload.jobId);
-    return;
-  }
-
-  await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
+  await store.updateJobWorker(payload.jobId, payload.workerIndex, {
     status: "processing",
+    errorMessage: null,
+  });
+  await store.updateJob(payload.jobId, {
+    status: "processing",
+    queueMessageId: null,
     errorMessage: null,
   });
 
   const invocationStartedAt = Date.now();
+  const leaseOwner = getWorkerLeaseOwner(payload.workerIndex);
   const shouldStop = async (): Promise<boolean> => {
     try {
       await assertJobActive(payload.jobId, store);
@@ -723,39 +715,96 @@ async function processChunkJob(payload: ChunkWorkerJobPayload, store: JobStore):
     }
   };
 
-  const { recommendations, didCompleteAll } = await runCandidateAnalysis(
-    {
-      candidates: chunkCandidates,
-      existingRecommendations: chunk.recommendations,
-    },
-    {
-      shouldCancel: shouldStop,
-      shouldYield: () => Date.now() - invocationStartedAt >= SERVERLESS_WORKER_TIME_BUDGET_MS,
-      onCandidateProcessed: async ({ recommendations: latestRecommendations }) => {
-        await assertJobActive(payload.jobId, store);
-        await store.updateJobChunkRecommendations(payload.jobId, payload.chunkIndex, latestRecommendations);
-      },
-    },
-    {
-      candidateConcurrency: SERVERLESS_WORKER_CANDIDATE_CONCURRENCY,
-    },
-  );
+  while (Date.now() - invocationStartedAt < SERVERLESS_WORKER_TIME_BUDGET_MS) {
+    await assertJobActive(payload.jobId, store);
 
-  await assertJobActive(payload.jobId, store);
-  if (!didCompleteAll) {
-    await requeueChunkJob(payload, store, {
-      recommendations,
+    const claimedCandidate = await store.claimNextJobCandidate(payload.jobId, leaseOwner);
+    if (!claimedCandidate) {
+      break;
+    }
+
+    const candidate = getJobCandidate(job, claimedCandidate.candidateId);
+    if (!candidate) {
+      await store.failJobCandidate(
+        payload.jobId,
+        claimedCandidate.candidateId,
+        leaseOwner,
+        `Candidate ${claimedCandidate.candidateId} is missing from analysis state.`,
+      );
+      await syncJobFromCandidateWork(store, payload.jobId);
+      continue;
+    }
+
+    const { recommendations } = await runCandidateAnalysis(
+      {
+        candidates: [candidate],
+      },
+      {
+        shouldCancel: shouldStop,
+      },
+      {
+        candidateConcurrency: SERVERLESS_WORKER_CANDIDATE_CONCURRENCY,
+      },
+    );
+
+    await assertJobActive(payload.jobId, store);
+    const recommendation = recommendations[0];
+    if (!recommendation) {
+      throw new Error(`Candidate ${candidate.id} finished without a recommendation.`);
+    }
+
+    const completed = await store.completeJobCandidate(
+      payload.jobId,
+      candidate.id,
+      leaseOwner,
+      recommendation,
+    );
+    if (!completed) {
+      await syncJobFromCandidateWork(store, payload.jobId);
+      return;
+    }
+
+    await store.appendJobRecommendation(payload.jobId, recommendation);
+    await syncJobFromCandidateWork(store, payload.jobId);
+    const currentJob = await store.getJob(payload.jobId);
+    if (!currentJob || currentJob.status === "canceled" || currentJob.status === "failed") {
+      return;
+    }
+    if (currentJob.status === "completed") {
+      await store.updateJobWorker(payload.jobId, payload.workerIndex, {
+        status: "completed",
+        queueMessageId: null,
+        errorMessage: null,
+      });
+      return;
+    }
+  }
+
+  await syncJobFromCandidateWork(store, payload.jobId);
+  const currentJob = await store.getJob(payload.jobId);
+  if (!currentJob || currentJob.status === "canceled" || currentJob.status === "failed") {
+    return;
+  }
+  if (currentJob.status === "completed") {
+    await store.updateJobWorker(payload.jobId, payload.workerIndex, {
+      status: "completed",
+      queueMessageId: null,
+      errorMessage: null,
     });
     return;
   }
 
-  await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
+  if (await store.hasQueuedJobCandidates(payload.jobId)) {
+    await requeueWorkerJob(payload, store);
+    return;
+  }
+
+  await store.updateJobWorker(payload.jobId, payload.workerIndex, {
     status: "completed",
     queueMessageId: null,
     errorMessage: null,
-    recommendations,
   });
-  await syncJobFromChunks(store, payload.jobId);
+  await syncJobFromCandidateWork(store, payload.jobId);
 }
 
 export async function processWorkerJob(input: unknown): Promise<void> {
@@ -772,8 +821,8 @@ export async function processWorkerJob(input: unknown): Promise<void> {
   }
 
   try {
-    if (payload.mode === "chunk") {
-      await processChunkJob(payload, store);
+    if (payload.mode === "worker") {
+      await processJobWorker(payload, store);
     } else {
       await processCoordinatorJob(payload, store);
     }
@@ -782,23 +831,20 @@ export async function processWorkerJob(input: unknown): Promise<void> {
       return;
     }
 
-    if (payload.mode === "chunk") {
+    if (payload.mode === "worker") {
       if (error instanceof AnalysisCanceledError) {
-        // Job was canceled mid-analysis — return 200, no retry needed.
         return;
       }
       if (error instanceof AnalysisRetryableError) {
-        await queueChunkForQStashRetry(payload, store);
-      }
-      if (error instanceof AnalysisRetryableError) {
-        // Re-throw so the route handler returns 500, letting QStash own retry gating.
+        await store.updateJobCandidateWork(payload.jobId, error.candidateId, {
+          errorMessage: error.message,
+        });
+        await queueWorkerForQStashRetry(payload, store);
         throw error;
       }
-      // Re-throw so the route handler returns 500, triggering a QStash retry.
       throw error;
     }
 
-    // Coordinator: mark failed immediately (no retries).
     const message = error instanceof Error ? error.message : "Unknown worker error";
     const current = await store.getJob(payload.jobId);
     if (!current || current.status === "canceled") {
@@ -814,25 +860,65 @@ export async function processWorkerJob(input: unknown): Promise<void> {
 }
 
 export async function processWorkerFailure(sourceBody: string): Promise<void> {
-  let payload: ChunkWorkerJobPayload;
+  let payload: JobWorkerJobPayload;
   try {
     const decoded = JSON.parse(Buffer.from(sourceBody, "base64").toString("utf8"));
-    payload = chunkWorkerJobPayloadSchema.parse(decoded);
+    payload = jobWorkerJobPayloadSchema.parse(decoded);
   } catch {
-    // Not a chunk job or malformed payload — nothing to do.
     return;
   }
 
   const store = await loadJobStore();
-  const chunk = await store.getJobChunk(payload.jobId, payload.chunkIndex);
-  if (!chunk || chunk.status === "completed" || chunk.status === "canceled") {
+  const job = await store.getJob(payload.jobId);
+  if (!job || job.status === "canceled" || job.status === "completed") {
     return;
   }
 
-  await store.updateJobChunk(payload.jobId, payload.chunkIndex, {
-    status: "failed",
+  const worker = await store.getJobWorker(payload.jobId, payload.workerIndex);
+  if (!worker || worker.status === "completed" || worker.status === "canceled") {
+    return;
+  }
+
+  const leaseOwner = getWorkerLeaseOwner(payload.workerIndex);
+  const claimedCandidate = await store.findJobCandidateWorkByLeaseOwner(
+    payload.jobId,
+    leaseOwner,
+    job.candidates,
+  );
+
+  if (claimedCandidate) {
+    await store.failJobCandidate(
+      payload.jobId,
+      claimedCandidate.candidateId,
+      leaseOwner,
+      claimedCandidate.errorMessage ?? "Analysis failed after exhausting all retry attempts.",
+    );
+  }
+
+  await syncJobFromCandidateWork(store, payload.jobId);
+
+  const updatedJob = await store.getJob(payload.jobId);
+  if (!updatedJob || updatedJob.status === "canceled") {
+    return;
+  }
+
+  if (updatedJob.status === "failed") {
+    await store.updateJobWorker(payload.jobId, payload.workerIndex, {
+      status: "failed",
+      queueMessageId: null,
+      errorMessage: claimedCandidate?.errorMessage ?? "Analysis failed after exhausting all retry attempts.",
+    });
+    return;
+  }
+
+  if (await store.hasQueuedJobCandidates(payload.jobId)) {
+    await requeueWorkerJob(payload, store, 0);
+    return;
+  }
+
+  await store.updateJobWorker(payload.jobId, payload.workerIndex, {
+    status: "completed",
     queueMessageId: null,
-    errorMessage: "Analysis failed after exhausting all retry attempts.",
+    errorMessage: null,
   });
-  await syncJobFromChunks(store, payload.jobId);
 }

@@ -588,6 +588,10 @@ export function App() {
   function handleNewAnalysis() {
     setOnboardingStep(1);
     setStepTwoIsConfirmMode(false);
+    setError(null);
+  }
+
+  function clearAnalysisState() {
     setAnalysisState(null);
     setAnalysis(null);
     setUrlPreview(null);
@@ -609,6 +613,7 @@ export function App() {
   }
 
   async function launchAnalysis(next: CreateAnalysisResponse) {
+    clearAnalysisState();
     const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${next.analysisId}`);
     setAnalysisState({ analysisId: next.analysisId, status: nextAnalysis.status });
     setAnalysis(nextAnalysis);
@@ -707,6 +712,17 @@ export function App() {
 
   function scrollToIngest() {
     document.getElementById("ingest")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function scrollToResults() {
+    setTimeout(() => {
+      const results = document.getElementById("results");
+      const nav = document.querySelector("nav");
+      if (results) {
+        const navHeight = nav?.getBoundingClientRect().height ?? 0;
+        window.scrollTo({ top: results.getBoundingClientRect().top + window.scrollY - navHeight, behavior: "smooth" });
+      }
+    }, 50);
   }
 
   function updateModalPreference(dimension: TasteDimension, value: number) {
@@ -909,22 +925,29 @@ export function App() {
 
                 <div className="onboarding-footer">
                   {hasActiveAnalysis ? (
+                    <button
+                      className="action"
+                      onClick={() => { handleNewAnalysis(); scrollToIngest(); }}
+                      type="button"
+                    >
+                      New Analysis
+                    </button>
+                  ) : analysis ? (
                     <>
                       <button
-                        className="action action-secondary"
-                        disabled={cancelBusy}
-                        onClick={() => void handleCancelAnalysis()}
+                        className="action"
+                        onClick={() => { handleNewAnalysis(); scrollToIngest(); }}
                         style={{ marginRight: "auto" }}
                         type="button"
                       >
-                        {cancelBusy ? "Stopping…" : "Stop Analysis"}
+                        New Analysis
                       </button>
                       <button
                         className="action"
-                        onClick={handleNewAnalysis}
+                        onClick={scrollToResults}
                         type="button"
                       >
-                        New Analysis
+                        See Results →
                       </button>
                     </>
                   ) : (
@@ -970,18 +993,26 @@ export function App() {
           <div className="panel">
             {analysis && (
               <>
-                {hasActiveAnalysis && (
-                  <div className="results-stop-row">
+                <div className="results-action-row">
+                  {hasActiveAnalysis ? (
                     <button
-                      className="action action-secondary"
+                      className="action action-danger"
                       disabled={cancelBusy}
                       onClick={() => void handleCancelAnalysis()}
                       type="button"
                     >
-                      {cancelBusy ? "Stopping…" : "Stop analysis"}
+                      {cancelBusy ? "Stopping…" : "Stop Analysis"}
                     </button>
-                  </div>
-                )}
+                  ) : (
+                    <button
+                      className="action action-danger"
+                      onClick={() => { handleNewAnalysis(); scrollToIngest(); }}
+                      type="button"
+                    >
+                      New Analysis
+                    </button>
+                  )}
+                </div>
                 <div
                   className="result-taste-toggle"
                   onClick={() => setResultsTastePanelOpen((open) => !open)}
