@@ -336,6 +336,7 @@ export function App() {
   const [urlPreview, setUrlPreview] = useState<{ title: string | null; domain: string } | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
   const [onboardingStep, setOnboardingStep] = useState<1 | 2>(1);
+  const [stepTwoIsConfirmMode, setStepTwoIsConfirmMode] = useState(false);
   const [urlFetching, setUrlFetching] = useState(false);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
@@ -579,10 +580,23 @@ export function App() {
       } else if (pendingUrl) {
         await handleUrlAnalyze();
       }
-      setOnboardingStep(1);
     } catch {
       // handleUpload / handleUrlAnalyze manage their own error state
     }
+  }
+
+  function handleNewAnalysis() {
+    setOnboardingStep(1);
+    setStepTwoIsConfirmMode(false);
+    setAnalysisState(null);
+    setAnalysis(null);
+    setUrlPreview(null);
+    setPendingUrl(null);
+    setSelectedFile(null);
+    if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    setFilePreviewUrl(null);
+    setSourceUrl("");
+    setError(null);
   }
 
   function prepareAnalysis(prefsToUse?: UserTastePreference) {
@@ -858,10 +872,13 @@ export function App() {
                   <button
                     className="action"
                     disabled={!step1Ready}
-                    onClick={() => setOnboardingStep(2)}
+                    onClick={() => {
+                      setStepTwoIsConfirmMode(tasteDimensionOrder.every((d) => modalPreferences[d] !== null));
+                      setOnboardingStep(2);
+                    }}
                     type="button"
                   >
-                    Next →
+                    {urlFetching ? <span className="btn-spinner" aria-hidden="true" /> : "Next →"}
                   </button>
                 </div>
               </div>
@@ -870,9 +887,9 @@ export function App() {
             {/* Step 2 */}
             {onboardingStep === 2 && (
               <div className="onboarding-step-body">
-                <h2>{hasStoredPreferences ? "Confirm your preferences" : "How do you like your wine?"}</h2>
+                <h2>{stepTwoIsConfirmMode ? "Confirm your preferences" : "How do you like your wine?"}</h2>
                 <p className="section-copy">
-                  {hasStoredPreferences
+                  {stepTwoIsConfirmMode
                     ? "Adjust if you'd like, then analyze."
                     : "Drag each slider — results are ranked to match your taste."}
                 </p>
@@ -891,17 +908,45 @@ export function App() {
                 {error && <p className="error">{error}</p>}
 
                 <div className="onboarding-footer">
-                  <button className="onboarding-btn-cancel" onClick={() => setOnboardingStep(1)} style={{ marginRight: "auto" }} type="button">
-                    ← Back
-                  </button>
-                  <button
-                    className="action onboarding-btn-analyze"
-                    disabled={!step2Ready || busy}
-                    onClick={() => void handleIngestAnalyze()}
-                    type="button"
-                  >
-                    {busy ? "Starting…" : "Analyze →"}
-                  </button>
+                  {hasActiveAnalysis ? (
+                    <>
+                      <button
+                        className="action action-secondary"
+                        disabled={cancelBusy}
+                        onClick={() => void handleCancelAnalysis()}
+                        style={{ marginRight: "auto" }}
+                        type="button"
+                      >
+                        {cancelBusy ? "Stopping…" : "Stop Analysis"}
+                      </button>
+                      <button
+                        className="action"
+                        onClick={handleNewAnalysis}
+                        type="button"
+                      >
+                        New Analysis
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="onboarding-btn-cancel"
+                        onClick={() => setOnboardingStep(1)}
+                        style={{ marginRight: "auto" }}
+                        type="button"
+                      >
+                        ← Back
+                      </button>
+                      <button
+                        className="action onboarding-btn-analyze"
+                        disabled={!step2Ready || busy}
+                        onClick={() => void handleIngestAnalyze()}
+                        type="button"
+                      >
+                        {busy ? "Starting…" : "Analyze →"}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -911,34 +956,6 @@ export function App() {
 
         {/* ── Analysis progress / status ── */}
         {error ? <p className="error">{error}</p> : null}
-        {analysisState ? (
-          <div className="analysis-meta">
-            <p className="helper">
-              Analysis {analysisState.analysisId.slice(0, 8)} &middot; {analysisState.status}
-            </p>
-            {hasActiveAnalysis ? (
-              <div className="analysis-actions">
-                {pollingPaused ? (
-                  <button
-                    className="action action-quiet"
-                    onClick={resumePolling}
-                    type="button"
-                  >
-                    Resume polling
-                  </button>
-                ) : null}
-                <button
-                  className="action action-secondary"
-                  disabled={cancelBusy}
-                  onClick={() => void handleCancelAnalysis()}
-                  type="button"
-                >
-                  {cancelBusy ? "Stopping…" : "Stop analysis"}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
         {analysisNotice ? <p className="helper">{analysisNotice}</p> : null}
 
         {/* ── Image break: bottles on concrete ── */}
@@ -953,6 +970,18 @@ export function App() {
           <div className="panel">
             {analysis && (
               <>
+                {hasActiveAnalysis && (
+                  <div className="results-stop-row">
+                    <button
+                      className="action action-secondary"
+                      disabled={cancelBusy}
+                      onClick={() => void handleCancelAnalysis()}
+                      type="button"
+                    >
+                      {cancelBusy ? "Stopping…" : "Stop analysis"}
+                    </button>
+                  </div>
+                )}
                 <div
                   className="result-taste-toggle"
                   onClick={() => setResultsTastePanelOpen((open) => !open)}
