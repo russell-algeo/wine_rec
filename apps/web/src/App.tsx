@@ -333,9 +333,13 @@ export function App() {
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
   const [modalPreferences, setModalPreferences] = useState<Record<TasteDimension, number | null>>(
     () => {
-      if (hasStoredPreferencesFlag()) {
-        const stored = loadPreferences();
-        return { body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity };
+      try {
+        if (hasStoredPreferencesFlag()) {
+          const stored = loadPreferences();
+          return { body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity };
+        }
+      } catch {
+        // fall through to null state
       }
       return { body: null, tannin: null, sweetness: null, acidity: null };
     }
@@ -654,7 +658,7 @@ export function App() {
   }
 
   function openOnboardingModal() {
-    if (hasStoredPreferencesFlag()) {
+    if (hasStoredPreferences) {
       const stored = loadPreferences();
       setModalPreferences({ body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity });
     } else {
