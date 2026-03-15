@@ -1780,10 +1780,7 @@ h1 {
 /* ── Onboarding card ── */
 
 .onboarding-card {
-  background: var(--card);
-  border-radius: var(--radius-lg);
-  padding: 28px 28px 24px;
-  box-shadow: var(--shadow);
+  /* no card box — content sits directly on the page background */
 }
 
 .onboarding-dots {
