@@ -332,7 +332,7 @@ export function App() {
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [urlPreview, setUrlPreview] = useState<{ title: string | null; domain: string } | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
-  const [onboardingStep, setOnboardingStep] = useState<null | 1 | 2>(null);
+  const [onboardingStep, setOnboardingStep] = useState<1 | 2>(1);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
   const [modalPreferences, setModalPreferences] = useState<Record<TasteDimension, number | null>>(
@@ -575,7 +575,7 @@ export function App() {
       } else if (pendingUrl) {
         await handleUrlAnalyze();
       }
-      setOnboardingStep(null);
+      setOnboardingStep(1);
     } catch {
       // handleUpload / handleUrlAnalyze manage their own error state
     }
@@ -671,18 +671,13 @@ export function App() {
     setIsDragOver(false);
   }
 
-  function openOnboardingModal() {
+  function resetIngestFlow() {
     if (hasStoredPreferences) {
       const stored = loadPreferences();
       setModalPreferences({ body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity });
     } else {
       setModalPreferences({ body: null, tannin: null, sweetness: null, acidity: null });
     }
-    setOnboardingStep(1);
-  }
-
-  function closeOnboardingModal() {
-    setOnboardingStep(null);
     setUrlPreview(null);
     setPendingUrl(null);
     setSourceUrl("");
@@ -690,6 +685,10 @@ export function App() {
     if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
     setFilePreviewUrl(null);
     setError(null);
+  }
+
+  function scrollToIngest() {
+    document.getElementById("ingest")?.scrollIntoView({ behavior: "smooth" });
   }
 
   function updateModalPreference(dimension: TasteDimension, value: number) {
@@ -742,9 +741,176 @@ export function App() {
           <p className="lede">
             Find the best bottle on any wine list.
           </p>
-          <button className="hero-cta" onClick={openOnboardingModal} type="button">
+          <button className="hero-cta" onClick={scrollToIngest} type="button">
             Get Started
           </button>
+        </section>
+
+        {/* ── Ingest section ── */}
+        <section className="ingest-section" id="ingest">
+          <div className="onboarding-card">
+
+            {/* Step indicator */}
+            <div className="onboarding-dots">
+              <div className={`onboarding-dot ${onboardingStep === 1 ? "is-active" : "is-done"}`} />
+              <div className={`onboarding-dot ${onboardingStep === 2 ? "is-active" : "is-idle"}`} />
+            </div>
+
+            {/* Step 1 */}
+            {onboardingStep === 1 && (
+              <div className="onboarding-step-body">
+                <h2>What&rsquo;s on the list?</h2>
+                <p className="section-copy">Paste a link or snap a photo of any wine list.</p>
+
+                <div className="url-row">
+                  <input
+                    className="url-row-input"
+                    onChange={(e) => setSourceUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void handleUrlConfirm(); }}
+                    placeholder="Paste a wine list URL"
+                    type="url"
+                    value={sourceUrl}
+                  />
+                  <button
+                    className="action url-row-button"
+                    disabled={busy}
+                    onClick={() => void handleUrlConfirm()}
+                    type="button"
+                  >
+                    {busy ? "Loading…" : "Confirm"}
+                  </button>
+                </div>
+
+                {urlPreview && (
+                  <div className="url-preview-card">
+                    <img
+                      alt={`${urlPreview.domain} favicon`}
+                      className="url-preview-favicon"
+                      src={`https://www.google.com/s2/favicons?domain=${urlPreview.domain}&sz=32`}
+                    />
+                    <div className="url-preview-meta">
+                      <span className="url-preview-title">{urlPreview.title ?? urlPreview.domain}</span>
+                      <span className="url-preview-domain">{urlPreview.domain}</span>
+                    </div>
+                    <span className="url-preview-check" aria-label="URL confirmed">✓</span>
+                  </div>
+                )}
+
+                <div className="ingest-divider"><span>or</span></div>
+
+                <div
+                  className={`drop-zone${isDragOver ? " is-dragover" : ""}${selectedFile ? " has-file" : ""}`}
+                  onClick={handleDropZoneClick}
+                  onDragLeave={handleDragLeave}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    accept="image/*,application/pdf"
+                    className="drop-zone-input"
+                    onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+                    ref={fileInputRef}
+                    type="file"
+                  />
+                  {selectedFile ? (
+                    <div className="drop-zone-file-row">
+                      <div className="drop-zone-thumbnail-wrap">
+                        {filePreviewUrl && (
+                          <img
+                            alt="Selected file preview"
+                            className="drop-zone-thumbnail"
+                            src={filePreviewUrl}
+                          />
+                        )}
+                        <div className="drop-zone-image-badge">
+                          <span className="drop-zone-filesize">
+                            {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                          </span>
+                          <button
+                            className="drop-zone-clear"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleFileChange(null);
+                            }}
+                            type="button"
+                            aria-label="Remove selected file"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                      <p className="drop-zone-filename">{selectedFile.name}</p>
+                    </div>
+                  ) : (
+                    <div className="drop-zone-prompt">
+                      <span className="drop-zone-icon" aria-hidden="true">
+                        <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="32" height="32">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" x2="12" y1="3" y2="15" />
+                        </svg>
+                      </span>
+                      <p className="drop-zone-label">Drop a photo, screenshot, or PDF here</p>
+                      <p className="drop-zone-hint">or click to browse</p>
+                    </div>
+                  )}
+                </div>
+
+                {error && <p className="error">{error}</p>}
+
+                <div className="onboarding-footer">
+                  <button
+                    className="action"
+                    disabled={!step1Ready}
+                    onClick={() => setOnboardingStep(2)}
+                    type="button"
+                  >
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2 */}
+            {onboardingStep === 2 && (
+              <div className="onboarding-step-body">
+                <h2>{hasStoredPreferences ? "Confirm your preferences" : "How do you like your wine?"}</h2>
+                <p className="section-copy">
+                  {hasStoredPreferences
+                    ? "Adjust if you'd like, then analyze."
+                    : "Drag each slider — results are ranked to match your taste."}
+                </p>
+
+                <div className="taste-scale-stack">
+                  {tasteDimensionOrder.map((dimension) => (
+                    <TasteScale
+                      dimension={dimension}
+                      key={dimension}
+                      onChange={(value) => updateModalPreference(dimension, value)}
+                      value={modalPreferences[dimension]}
+                    />
+                  ))}
+                </div>
+
+                {error && <p className="error">{error}</p>}
+
+                <div className="onboarding-footer">
+                  <button className="onboarding-btn-cancel" onClick={() => setOnboardingStep(1)} type="button">
+                    ← Back
+                  </button>
+                  <button
+                    className="action onboarding-btn-analyze"
+                    disabled={!step2Ready || busy}
+                    onClick={() => void handleIngestAnalyze()}
+                    type="button"
+                  >
+                    {busy ? "Starting…" : "Analyze →"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
         </section>
 
         {/* ── Analysis progress / status ── */}
@@ -1038,185 +1204,6 @@ export function App() {
         </section>
       </main>
 
-      {/* ── Onboarding modal ── */}
-      {onboardingStep !== null && (
-        <div className="onboarding-overlay" onClick={closeOnboardingModal}>
-          <div className="onboarding-modal" onClick={(e) => e.stopPropagation()}>
-
-            {/* Header */}
-            <div className="onboarding-modal-header">
-              <div className="onboarding-modal-title">
-                {onboardingStep === 1
-                  ? "What's on the list?"
-                  : hasStoredPreferences
-                  ? "Confirm your preferences"
-                  : "How do you like your wine?"}
-              </div>
-              <div className="onboarding-dots">
-                <div className={`onboarding-dot ${onboardingStep === 1 ? "is-active" : "is-done"}`} />
-                <div className={`onboarding-dot ${onboardingStep === 2 ? "is-active" : "is-idle"}`} />
-              </div>
-            </div>
-
-            {/* Step 1 body */}
-            {onboardingStep === 1 && (
-              <div className="onboarding-modal-body">
-                <div className="url-row">
-                  <input
-                    className="url-row-input"
-                    onChange={(e) => setSourceUrl(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") void handleUrlConfirm(); }}
-                    placeholder="Paste a wine list URL"
-                    type="url"
-                    value={sourceUrl}
-                  />
-                  <button
-                    className="action url-row-button"
-                    disabled={busy}
-                    onClick={() => void handleUrlConfirm()}
-                    type="button"
-                  >
-                    {busy ? "Loading…" : "Confirm"}
-                  </button>
-                </div>
-
-                {urlPreview && (
-                  <div className="url-preview-card">
-                    <img
-                      alt={`${urlPreview.domain} favicon`}
-                      className="url-preview-favicon"
-                      src={`https://www.google.com/s2/favicons?domain=${urlPreview.domain}&sz=32`}
-                    />
-                    <div className="url-preview-meta">
-                      <span className="url-preview-title">{urlPreview.title ?? urlPreview.domain}</span>
-                      <span className="url-preview-domain">{urlPreview.domain}</span>
-                    </div>
-                    <span className="url-preview-check" aria-label="URL confirmed">✓</span>
-                  </div>
-                )}
-
-                <div className="ingest-divider"><span>or</span></div>
-
-                <div
-                  className={`drop-zone${isDragOver ? " is-dragover" : ""}${selectedFile ? " has-file" : ""}`}
-                  onClick={handleDropZoneClick}
-                  onDragLeave={handleDragLeave}
-                  onDragOver={handleDragOver}
-                  onDrop={handleDrop}
-                >
-                  <input
-                    accept="image/*,application/pdf"
-                    className="drop-zone-input"
-                    onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
-                    ref={fileInputRef}
-                    type="file"
-                  />
-                  {selectedFile ? (
-                    <div className="drop-zone-file-row">
-                      <div className="drop-zone-thumbnail-wrap">
-                        {filePreviewUrl && (
-                          <img
-                            alt="Selected file preview"
-                            className="drop-zone-thumbnail"
-                            src={filePreviewUrl}
-                          />
-                        )}
-                        <div className="drop-zone-image-badge">
-                          <span className="drop-zone-filesize">
-                            {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
-                          </span>
-                          <button
-                            className="drop-zone-clear"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleFileChange(null);
-                            }}
-                            type="button"
-                            aria-label="Remove selected file"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-                      <p className="drop-zone-filename">{selectedFile.name}</p>
-                    </div>
-                  ) : (
-                    <div className="drop-zone-prompt">
-                      <span className="drop-zone-icon" aria-hidden="true">
-                        <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="32" height="32">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="17 8 12 3 7 8" />
-                          <line x1="12" x2="12" y1="3" y2="15" />
-                        </svg>
-                      </span>
-                      <p className="drop-zone-label">Drop a photo, screenshot, or PDF here</p>
-                      <p className="drop-zone-hint">or click to browse</p>
-                    </div>
-                  )}
-                </div>
-
-                {error && <p className="error onboarding-error">{error}</p>}
-              </div>
-            )}
-
-            {/* Step 2 body */}
-            {onboardingStep === 2 && (
-              <div className="onboarding-modal-body">
-                <p className="onboarding-taste-sub">
-                  {hasStoredPreferences
-                    ? "Adjust if you'd like, then analyze."
-                    : "Drag each slider — results are ranked to match your taste."}
-                </p>
-                <div className="taste-scale-stack">
-                  {tasteDimensionOrder.map((dimension) => (
-                    <TasteScale
-                      dimension={dimension}
-                      key={dimension}
-                      onChange={(value) => updateModalPreference(dimension, value)}
-                      value={modalPreferences[dimension]}
-                    />
-                  ))}
-                </div>
-                {error && <p className="error onboarding-error">{error}</p>}
-              </div>
-            )}
-
-            {/* Footer */}
-            <div className="onboarding-modal-footer">
-              {onboardingStep === 1 ? (
-                <>
-                  <button className="onboarding-btn-cancel" onClick={closeOnboardingModal} type="button">
-                    Cancel
-                  </button>
-                  <button
-                    className="action"
-                    disabled={!step1Ready}
-                    onClick={() => setOnboardingStep(2)}
-                    type="button"
-                  >
-                    Next →
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button className="onboarding-btn-cancel" onClick={() => setOnboardingStep(1)} type="button">
-                    ← Back
-                  </button>
-                  <button
-                    className="action onboarding-btn-analyze"
-                    disabled={!step2Ready || busy}
-                    onClick={() => void handleIngestAnalyze()}
-                    type="button"
-                  >
-                    {busy ? "Starting…" : "Analyze →"}
-                  </button>
-                </>
-              )}
-            </div>
-
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -1747,49 +1747,21 @@ h1 {
   font-weight: 600;
 }
 
-/* ── Onboarding modal ── */
+/* ── Onboarding card ── */
 
-.onboarding-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  background: rgba(0, 0, 0, 0.42);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-}
-
-.onboarding-modal {
-  background: var(--bg);
+.onboarding-card {
+  background: var(--card);
   border-radius: var(--radius-lg);
-  width: min(440px, 100%);
-  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.28);
-  overflow: hidden;
-}
-
-.onboarding-modal-header {
-  background: #fff;
-  border-bottom: 1px solid var(--line);
-  padding: 18px 20px 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.onboarding-modal-title {
-  font-size: 1.05rem;
-  font-weight: 700;
-  line-height: 1.3;
+  padding: 28px 28px 24px;
+  box-shadow: var(--shadow);
 }
 
 .onboarding-dots {
   display: flex;
   gap: 5px;
   align-items: center;
-  flex-shrink: 0;
-  padding-top: 4px;
+  justify-content: flex-end;
+  margin-bottom: 16px;
 }
 
 .onboarding-dot {
@@ -1801,22 +1773,16 @@ h1 {
 .onboarding-dot.is-idle   { width: 7px;  background: #ddd; }
 .onboarding-dot.is-done   { width: 7px;  background: var(--accent); opacity: 0.4; }
 
-.onboarding-modal-body {
-  padding: 18px 20px 8px;
+.onboarding-step-body {
+  /* no extra padding needed since .onboarding-card handles it */
 }
 
-.onboarding-taste-sub {
-  font-size: 0.875rem;
-  color: var(--muted);
-  margin-bottom: 16px;
-  line-height: 1.45;
-}
-
-.onboarding-modal-footer {
-  padding: 14px 20px 18px;
+.onboarding-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .onboarding-btn-cancel {
@@ -1831,10 +1797,6 @@ h1 {
 
 .onboarding-btn-analyze { background: var(--accent-red); }
 .onboarding-btn-analyze:hover:not(:disabled) { background: var(--accent-red-soft); }
-
-.onboarding-error {
-  margin: 8px 0 4px;
-}
 
 /* ── Responsive ── */
 
