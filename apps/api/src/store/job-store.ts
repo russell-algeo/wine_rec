@@ -595,3 +595,7 @@ export async function hasQueuedJobCandidates(jobId: string): Promise<boolean> {
 export async function clearJobCandidateState(jobId: string): Promise<void> {
   await redis.del(getJobCandidateQueueKey(jobId), getJobCandidateLeaseKey(jobId), getJobRecommendationsKey(jobId));
 }
+
+export async function clearJobCandidateQueue(jobId: string): Promise<void> {
+  await redis.del(getJobCandidateQueueKey(jobId), getJobCandidateLeaseKey(jobId));
+}

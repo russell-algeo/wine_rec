@@ -74,6 +74,7 @@ const {
   failJobCandidateMock,
   hasQueuedJobCandidatesMock,
   clearJobCandidateStateMock,
+  clearJobCandidateQueueMock,
 } = vi.hoisted(() => {
   const state: {
     job: MockJob | null;
@@ -257,6 +258,7 @@ const {
   );
 
   const clearJobCandidateStateMock = vi.fn();
+  const clearJobCandidateQueueMock = vi.fn();
 
   return {
     publishJSONMock: vi.fn(),
@@ -287,6 +289,7 @@ const {
     failJobCandidateMock,
     hasQueuedJobCandidatesMock,
     clearJobCandidateStateMock,
+    clearJobCandidateQueueMock,
   };
 });
 
@@ -355,6 +358,7 @@ vi.mock("./store/job-store.js", () => ({
   failJobCandidate: failJobCandidateMock,
   hasQueuedJobCandidates: hasQueuedJobCandidatesMock,
   clearJobCandidateState: clearJobCandidateStateMock,
+  clearJobCandidateQueue: clearJobCandidateQueueMock,
 }));
 
 import { AnalysisRetryableError } from "./services/pipeline.js";

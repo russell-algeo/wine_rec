@@ -348,7 +348,7 @@ export async function getAnalysisRun(id: string): Promise<AnalysisRun | null> {
 
 export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
   const {
-    clearJobCandidateState,
+    clearJobCandidateQueue,
     getJob,
     listJobCandidateWork,
     listJobWorkers,
@@ -371,7 +371,7 @@ export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
 
   await deleteQueuedMessage(existing.queueMessageId);
   await Promise.all(workers.map((worker) => deleteQueuedMessage(worker.queueMessageId)));
-  await clearJobCandidateState(id);
+  await clearJobCandidateQueue(id);
   await Promise.all(
     workers.map((worker) =>
       updateJobWorker(id, worker.index, {
