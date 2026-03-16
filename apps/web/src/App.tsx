@@ -288,7 +288,11 @@ function sortRecommendations(
   sortOrder: ResultSortOrder,
 ): AnalysisRun["recommendations"] {
   if (sortOrder === "recommended") {
-    return recommendations;
+    return [...recommendations].sort((a, b) =>
+      b.fitScore !== a.fitScore
+        ? b.fitScore - a.fitScore
+        : b.matchConfidence - a.matchConfidence,
+    );
   }
 
   const discoveredOrder = new Map(
