@@ -127,6 +127,12 @@ input {
   margin: 1rem 0 0;
   color: var(--muted);
   font-size: 0.88rem;
+  transition: color 0.2s ease;
+}
+
+.taste-panel-hint.is-rerank-flash {
+  color: var(--accent);
+  animation: rerank-flash-in 0.2s ease;
 }
 
 /* ── Hero ── */
@@ -498,35 +504,10 @@ input {
   flex-shrink: 0;
 }
 
-/* ── Ingest taste panel ── */
-
-.ingest-taste-panel {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 1.25rem 1.5rem;
-  margin-top: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.ingest-taste-heading {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--ink);
-}
-
-.ingest-taste-sub {
-  margin: 0;
-  font-size: 0.85rem;
+.url-fetching-hint {
+  font-size: 0.78rem;
   color: var(--muted);
-}
-
-.ingest-taste-analyze {
-  margin-top: 0.5rem;
-  width: 100%;
+  margin: 4px 0 0;
 }
 
 .ingest-divider {
@@ -634,6 +615,16 @@ h1 {
   background: var(--accent-soft);
 }
 
+.action.action-danger {
+  background: #c0392b;
+  color: white;
+}
+
+.action.action-danger:hover {
+  background: #a93226;
+}
+
+
 .action.action-quiet {
   background: rgba(12, 105, 154, 0.08);
   color: var(--accent);
@@ -652,6 +643,20 @@ h1 {
 
 .helper {
   color: var(--muted);
+}
+
+.analysis-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.analysis-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 /* ── Taste profile block ── */
@@ -825,8 +830,33 @@ h1 {
   box-shadow: 0 0 0 3px rgba(12, 105, 154, 0.18);
 }
 
+/* Empty/unset taste scale — greyed out version of the normal track */
 .taste-scale.is-empty .taste-scale-track {
-  opacity: 0.55;
+  background: var(--taste-track-muted);
+}
+
+.taste-scale.is-empty .taste-scale-input::-webkit-slider-thumb {
+  background: var(--taste-indicator-muted);
+  box-shadow: 0 1px 4px var(--taste-shadow-muted);
+  border-color: var(--taste-indicator-muted);
+}
+
+.taste-scale.is-empty .taste-scale-input::-moz-range-thumb {
+  background: var(--taste-indicator-muted);
+  box-shadow: 0 1px 4px var(--taste-shadow-muted);
+  border-color: var(--taste-indicator-muted);
+}
+
+.taste-scale.is-empty .taste-scale-input::-moz-range-progress {
+  background: transparent;
+}
+
+.taste-scale.is-empty .taste-scale-input::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.taste-scale.is-empty .taste-scale-track::before {
+  display: none;
 }
 
 .taste-scale.is-uncertain {
@@ -1030,6 +1060,17 @@ h1 {
   margin: 0.75rem 0 0;
   font-size: 0.78rem;
   color: var(--muted);
+  transition: color 0.2s ease;
+}
+
+.result-taste-panel-hint.is-rerank-flash {
+  color: var(--accent);
+  animation: rerank-flash-in 0.2s ease;
+}
+
+@keyframes rerank-flash-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .result-controls {
@@ -1064,6 +1105,40 @@ h1 {
 
 .result-control-group-budget {
   align-items: center;
+}
+
+/* Extra filters wrapper — flex row on desktop, collapsible on mobile */
+.result-controls-extra {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Divider before the extra filters section on desktop */
+.result-controls .result-controls-extra::before {
+  content: "";
+  display: block;
+  width: 1px;
+  height: 1.25rem;
+  background: var(--line);
+  margin-right: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* Dividers between groups inside extra filters on desktop */
+.result-controls-extra .result-control-group + .result-control-group::before {
+  content: "";
+  display: block;
+  width: 1px;
+  height: 1.25rem;
+  background: var(--line);
+  margin-right: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* Toggle button — hidden on desktop */
+.result-extra-filters-toggle {
+  display: none;
 }
 
 .price-filter-control {
@@ -1271,8 +1346,17 @@ h1 {
 
 .result-card.has-image {
   grid-template-columns: minmax(6.8rem, 7.6rem) minmax(0, 1fr);
+  grid-template-areas:
+    "media content"
+    "media taste"
+    "media notes";
   align-items: stretch;
 }
+
+.result-card.has-image > .result-card-media   { grid-area: media; }
+.result-card.has-image > .result-card-content { grid-area: content; }
+.result-card.has-image > .taste-profile-block { grid-area: taste; }
+.result-card.has-image > .tasting-notes-collapsible { grid-area: notes; }
 
 .result-card.is-inferred {
   border-color: rgba(107, 107, 107, 0.15);
@@ -1763,6 +1847,75 @@ h1 {
   font-weight: 600;
 }
 
+/* ── Onboarding card ── */
+
+.onboarding-card {
+  /* no card box — content sits directly on the page background */
+}
+
+.onboarding-dots {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.onboarding-dot {
+  height: 7px;
+  border-radius: 4px;
+  transition: width 0.2s, background 0.2s, opacity 0.2s;
+}
+.onboarding-dot.is-active { width: 20px; background: var(--accent); }
+.onboarding-dot.is-idle   { width: 7px;  background: #ddd; }
+.onboarding-dot.is-done   { width: 7px;  background: var(--accent); opacity: 0.4; }
+
+.onboarding-step-body {
+  /* no extra padding needed since .onboarding-card handles it */
+}
+
+.onboarding-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.onboarding-btn-cancel {
+  background: none;
+  border: none;
+  font-size: 0.875rem;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.onboarding-btn-cancel:hover { color: var(--ink); }
+
+.onboarding-btn-analyze { background: var(--accent-red); }
+.onboarding-btn-analyze:hover:not(:disabled) { background: var(--accent-red-soft); }
+
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  animation: btn-spin 0.65s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
+
+.results-action-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 860px) {
@@ -1775,39 +1928,100 @@ h1 {
   }
 
   .result-card.has-image {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(5rem, 5.5rem) minmax(0, 1fr);
+    grid-template-areas:
+      "media content"
+      "taste taste"
+      "notes notes";
   }
 
   .result-card-media {
-    min-height: 9.5rem;
+    min-height: unset;
   }
 
   .result-card-image {
-    max-width: 4.9rem;
-    max-height: 10rem;
+    max-width: 3.8rem;
+    max-height: 8.5rem;
   }
 
-  .result-head {
+  /* Stretch content area to full image height so space-evenly can work */
+  .result-card .result-card-content {
+    display: flex;
     flex-direction: column;
   }
 
-  .vivino-rating {
-    gap: 0.65rem;
+  /* Card content: 2-column grid — name+fit row, then rating+price row */
+  /* flex:1 fills the content area; align-content:space-evenly distributes
+     equal whitespace above row 1, between rows, and below row 2 */
+  .result-head {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: 8px;
+    align-content: space-evenly;
+    align-items: start;
   }
 
-  .result-summary {
-    width: 100%;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: center;
+  /* Flatten the two inner wrappers so children participate directly in the grid */
+  .result-head > .result-copy,
+  .result-head > .result-summary {
+    display: contents;
+  }
+
+  /* Row 1, col 1: wine name block */
+  .result-head .wine-name-block {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  /* Row 2, full width: matched-wine subtitle / uncertainty note */
+  .result-head .wine-subtitle,
+  .result-head .wine-uncertainty {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+    align-self: start;
+    margin-top: 0.2rem;
+  }
+
+  /* Row 1, col 2: fit badge — scaled down to 0.75x */
+  .result-head .score-badge {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: start;
+    min-width: 3.4rem;
+    padding: 0.4rem 0.6rem 0.5rem;
+  }
+
+  .result-head .score-badge span {
+    font-size: 0.54rem;
+  }
+
+  .result-head .score-badge strong {
+    font-size: 1.05rem;
+  }
+
+  /* Row 3, col 1: vivino rating */
+  .result-head .vivino-rating {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  /* Row 3, col 2: price pill */
+  .result-head .price-tag {
+    grid-column: 2;
+    grid-row: 3;
+    align-self: start;
+    justify-self: end;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.6rem;
   }
 
   .result-section-header {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .score-badge {
-    justify-self: end;
   }
 
   .result-controls {
@@ -1844,6 +2058,59 @@ h1 {
 
   .sort-option {
     flex: 1;
+  }
+
+  /* Additional filters toggle button */
+  .result-extra-filters-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.35rem;
+    width: auto;
+    padding: 0.4rem 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+
+  /* Extra filters panel — hidden by default, shown when open */
+  .result-controls-extra {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .result-controls-extra.is-open {
+    display: flex;
+  }
+
+  /* No leading divider on mobile */
+  .result-controls .result-controls-extra::before,
+  .result-controls-extra .result-control-group + .result-control-group::before {
+    display: none;
+  }
+
+  /* Inferred notice — hidden on mobile by default */
+  .result-extra-notices {
+    display: none;
+  }
+
+  .result-extra-notices.is-open {
+    display: block;
+  }
+
+  .result-filter-notice {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+  }
+
+  .result-card .taste-profile-heading {
+    margin-bottom: 0.2rem;
   }
 
   .price-filter-control {
@@ -1896,6 +2163,122 @@ h1 {
 
   .image-break-text {
     font-size: clamp(1.75rem, 5vw, 3rem);
+  }
+
+  /* ── Results action row buttons ── */
+  .results-action-row .action {
+    font-size: 0.78rem;
+    padding: 0.5rem 0.75rem;
+    white-space: nowrap;
+  }
+
+  /* ── Wine card — compact text across the board ── */
+  .result-card {
+    padding: 0.65rem;
+  }
+
+  .result-card .wine-title {
+    font-size: 0.95rem;
+  }
+
+  .result-card .wine-subtitle {
+    font-size: 0.75rem;
+  }
+
+  .result-card .menu-context {
+    font-size: 0.67rem;
+  }
+
+  .result-card .vivino-rating {
+    margin-top: 0;
+    gap: 0.4rem;
+  }
+
+  .result-card .vivino-rating-value {
+    font-size: 1.35rem;
+  }
+
+  .result-card .star-rating-base,
+  .result-card .star-rating-fill {
+    font-size: 0.9rem;
+  }
+
+  .result-card .vivino-rating-count {
+    font-size: 0.7rem;
+  }
+
+  /* Taste profile block — compact */
+  .result-card .taste-profile-block {
+    padding: 0.5rem 0.65rem;
+    margin-top: 0.4rem;
+  }
+
+  .result-card .taste-profile-title {
+    font-size: 0.78rem;
+    margin-bottom: 0.45rem;
+  }
+
+  .result-card .taste-profile-footnote {
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  /* Smaller endpoint labels free up space for the bar */
+  .result-card .taste-scale-endpoint {
+    font-size: 0.68rem;
+  }
+
+  /* Narrow label columns so the bar expands to fill the freed width */
+  .result-card .taste-scale-row {
+    grid-template-columns: minmax(2.4rem, max-content) minmax(0, 1fr) minmax(2.4rem, max-content);
+    gap: 0.35rem;
+  }
+
+  /* Shorter track and pill */
+  .result-card .taste-scale {
+    --taste-track-height: 0.5rem;
+    --taste-indicator-width: 1.8rem;
+    --taste-indicator-height: 0.5rem;
+  }
+
+  /* Tighter gap between scale rows */
+  .result-card .taste-scale-stack {
+    gap: 0.3rem;
+  }
+
+  /* Tasting notes toggle and dropdown content */
+  .result-card .tasting-notes-toggle {
+    font-size: 0.72rem;
+  }
+
+  .result-card .tasting-notes-dropdown {
+    font-size: 0.82rem;
+  }
+
+  .result-card .tasting-notes-text,
+  .result-card .tasting-notes-fallback {
+    font-size: 0.82rem;
+  }
+
+  .result-card .detail-section-label {
+    font-size: 0.62rem;
+  }
+
+  .result-card .detail-price-restaurant {
+    font-size: 0.82rem;
+  }
+
+  .result-card .detail-price-benchmark {
+    font-size: 0.75rem;
+  }
+
+  /* Tasting note cards — family name and cue keywords */
+  .result-card .tasting-note-card-family {
+    font-size: 0.85rem;
+  }
+
+  .result-card .tasting-note-card-keywords {
+    font-size: 0.72rem;
   }
 }
 

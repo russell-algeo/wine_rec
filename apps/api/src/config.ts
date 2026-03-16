@@ -14,6 +14,11 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseString(value: string | undefined, fallback: string): string {
+  const normalized = value?.trim();
+  return normalized ? normalized : fallback;
+}
+
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
   return Math.max(1, Math.floor(parseNumber(value, fallback)));
 }
@@ -46,9 +51,10 @@ export const appConfig = {
     .map((provider) => provider.trim())
     .filter(Boolean),
   enableVivinoDirect: parseBoolean(process.env.ENABLE_VIVINO_DIRECT, true),
-  vivinoDirectUserAgent:
-    process.env.VIVINO_DIRECT_USER_AGENT ??
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+  vivinoDirectUserAgent: parseString(
+    process.env.VIVINO_DIRECT_USER_AGENT,
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+  ),
   vivinoDirectDelayMs: parseNumber(process.env.VIVINO_DIRECT_DELAY_MS, 500),
   /** Maximum retries on HTTP 429 before giving up. */
   vivinoDirectMaxRetries: parseNumber(process.env.VIVINO_DIRECT_MAX_RETRIES, 3),
@@ -59,5 +65,5 @@ export const appConfig = {
   /** Run Playwright browser headless (default true). Set false for debugging. */
   vivinoDirectHeadless: parseBoolean(process.env.VIVINO_DIRECT_HEADLESS, true),
   /** Optional path to Chrome/Chromium executable. Playwright bundled Chromium is used if unset. */
-  vivinoDirectChromeExecutable: process.env.VIVINO_DIRECT_CHROME_EXECUTABLE ?? "",
+  vivinoDirectChromeExecutable: parseString(process.env.VIVINO_DIRECT_CHROME_EXECUTABLE, ""),
 };

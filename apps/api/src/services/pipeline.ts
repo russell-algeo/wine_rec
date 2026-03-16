@@ -1,14 +1,18 @@
 import type { Recommendation, SourceType, WineCandidate } from "@wine-rec/contracts";
-import { rankMatch, scoreRecommendation } from "@wine-rec/core";
+import type { UserTastePreference } from "@wine-rec/contracts";
+import { defaultPreference, rankMatch, scoreRecommendation } from "@wine-rec/core";
 
 import { appConfig } from "../config.js";
-import { createWineProfileProviders } from "../providers/wine-profiles.js";
+import {
+  createWineProfileProviders,
+  RetryableWineProfileLookupError,
+} from "../providers/wine-profiles.js";
 import { parseWineCandidates } from "./parser.js";
-import { getPreferences } from "./repository.js";
 import { extractSourceText } from "./source-extractor.js";
 
 type AnalysisPipelineHooks = {
   shouldCancel?: () => Promise<boolean> | boolean;
+  shouldYield?: () => Promise<boolean> | boolean;
   onCandidatesParsed?: (payload: {
     extractedText: string;
     candidates: WineCandidate[];
@@ -33,6 +37,16 @@ export class AnalysisCanceledError extends Error {
   }
 }
 
+export class AnalysisRetryableError extends Error {
+  constructor(
+    readonly candidateId: string,
+    readonly cause: unknown,
+  ) {
+    super(`Analysis retry required while processing candidate ${candidateId}.`);
+    this.name = "AnalysisRetryableError";
+  }
+}
+
 async function throwIfCanceled(
   shouldCancel: AnalysisPipelineHooks["shouldCancel"],
 ): Promise<void> {
@@ -43,7 +57,7 @@ async function throwIfCanceled(
 
 async function buildCandidateRecommendation(
   candidate: WineCandidate,
-  preference: Awaited<ReturnType<typeof getPreferences>>,
+  preference: UserTastePreference,
   providers: ReturnType<typeof createWineProfileProviders>,
 ): Promise<Recommendation> {
   let best:
@@ -57,7 +71,16 @@ async function buildCandidateRecommendation(
 
   for (const provider of providers) {
     if (!provider.isEnabled) continue;
-    const result = await provider.lookup(candidate);
+    let result: Awaited<ReturnType<typeof provider.lookup>>;
+    try {
+      result = await provider.lookup(candidate);
+    } catch (error) {
+      if (error instanceof RetryableWineProfileLookupError) {
+        throw new AnalysisRetryableError(candidate.id, error);
+      }
+      throw error;
+    }
+
     if (!result) continue;
 
     const status = rankMatch(result.matchScore);
@@ -85,12 +108,137 @@ async function buildCandidateRecommendation(
   };
 }
 
+function sortRecommendations(recommendations: Recommendation[]): void {
+  recommendations.sort((left, right) => {
+    if (right.fitScore !== left.fitScore) {
+      return right.fitScore - left.fitScore;
+    }
+    return right.matchConfidence - left.matchConfidence;
+  });
+}
+
+export async function runCandidateAnalysis(input: {
+  candidates: WineCandidate[];
+  existingRecommendations?: Recommendation[];
+}, hooks: Pick<AnalysisPipelineHooks, "shouldCancel" | "shouldYield" | "onCandidateProcessed"> = {}, options: AnalysisPipelineOptions = {}): Promise<{
+  recommendations: Recommendation[];
+  didCompleteAll: boolean;
+}> {
+  const preference = defaultPreference();
+  const providers = createWineProfileProviders();
+  const existingRecommendations = input.existingRecommendations ?? [];
+  const recommendationsByCandidateId = new Map(
+    existingRecommendations.map((recommendation) => [recommendation.candidateId, recommendation]),
+  );
+
+  const shouldSerialize = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const configuredConcurrency = shouldSerialize
+    ? options.candidateConcurrency ?? 1
+    : options.candidateConcurrency ?? appConfig.analysisCandidateConcurrency;
+  const desiredConcurrency = Math.min(
+    Math.max(1, configuredConcurrency),
+    Math.max(1, input.candidates.length),
+  );
+
+  let nextCandidateIndex = 0;
+  let didYield = false;
+  let fatalError: unknown = null;
+  let progressChain = Promise.resolve();
+
+  async function processCandidateQueue(): Promise<void> {
+    while (true) {
+      if (fatalError || didYield) {
+        return;
+      }
+
+      if (await hooks.shouldCancel?.()) {
+        fatalError ??= new AnalysisCanceledError();
+        return;
+      }
+
+      const currentIndex = nextCandidateIndex;
+      nextCandidateIndex += 1;
+
+      if (currentIndex >= input.candidates.length) {
+        return;
+      }
+
+      const candidate = input.candidates[currentIndex]!;
+      if (recommendationsByCandidateId.has(candidate.id)) {
+        continue;
+      }
+
+      if (await hooks.shouldYield?.()) {
+        didYield = true;
+        return;
+      }
+
+      let recommendation: Recommendation;
+      try {
+        recommendation = await buildCandidateRecommendation(candidate, preference, providers);
+      } catch (error) {
+        fatalError ??= error;
+        return;
+      }
+
+      if (fatalError || didYield) {
+        return;
+      }
+
+      if (await hooks.shouldCancel?.()) {
+        fatalError ??= new AnalysisCanceledError();
+        return;
+      }
+
+      recommendationsByCandidateId.set(candidate.id, recommendation);
+      const snapshot = input.candidates
+        .map((value) => recommendationsByCandidateId.get(value.id))
+        .filter((value): value is Recommendation => value !== undefined);
+      const completed = snapshot.length;
+
+      progressChain = progressChain.then(async () => {
+        if (await hooks.shouldCancel?.()) {
+          fatalError ??= new AnalysisCanceledError();
+          return;
+        }
+
+        await hooks.onCandidateProcessed?.({
+          candidate,
+          recommendation,
+          completed,
+          total: input.candidates.length,
+          recommendations: [...snapshot],
+        });
+      });
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: desiredConcurrency }, () => processCandidateQueue()),
+  );
+  await progressChain;
+
+  if (fatalError) {
+    throw fatalError;
+  }
+
+  const recommendations = input.candidates
+    .map((candidate) => recommendationsByCandidateId.get(candidate.id))
+    .filter((value): value is Recommendation => value !== undefined);
+
+  return {
+    recommendations,
+    didCompleteAll: recommendations.length === input.candidates.length,
+  };
+}
+
 export async function runAnalysisPipeline(input: {
   sourceType: SourceType;
   filename: string;
   mimeType: string;
   storagePath: string;
   sourceUrl?: string;
+  fileBuffer?: Buffer;
 }, hooks: AnalysisPipelineHooks = {}, options: AnalysisPipelineOptions = {}): Promise<{
   extractedText: string;
   candidates: WineCandidate[];
@@ -106,99 +254,12 @@ export async function runAnalysisPipeline(input: {
     candidates,
   });
   await throwIfCanceled(hooks.shouldCancel);
-  const preference = await getPreferences();
-  const providers = createWineProfileProviders();
-  const candidateConcurrency = Math.min(
-    Math.max(1, options.candidateConcurrency ?? appConfig.analysisCandidateConcurrency),
-    Math.max(1, candidates.length),
+  const { recommendations } = await runCandidateAnalysis(
+    { candidates },
+    hooks,
+    options,
   );
-  const recommendationsByIndex = new Array<Recommendation | undefined>(candidates.length);
-  let nextCandidateIndex = 0;
-  let completed = 0;
-  let progressChain = Promise.resolve();
-  let fatalError: unknown = null;
-
-  async function processCandidateQueue(): Promise<void> {
-    while (true) {
-      if (fatalError) {
-        return;
-      }
-
-      if (await hooks.shouldCancel?.()) {
-        fatalError ??= new AnalysisCanceledError();
-        return;
-      }
-
-      const currentIndex = nextCandidateIndex;
-      nextCandidateIndex += 1;
-
-      if (currentIndex >= candidates.length) {
-        return;
-      }
-
-      const candidate = candidates[currentIndex]!;
-      let recommendation: Recommendation;
-
-      try {
-        recommendation = await buildCandidateRecommendation(candidate, preference, providers);
-      } catch (error) {
-        fatalError ??= error;
-        return;
-      }
-
-      if (fatalError) {
-        return;
-      }
-
-      if (await hooks.shouldCancel?.()) {
-        fatalError ??= new AnalysisCanceledError();
-        return;
-      }
-
-      recommendationsByIndex[currentIndex] = recommendation;
-      completed += 1;
-
-      const snapshot = recommendationsByIndex.filter(
-        (value): value is Recommendation => value !== undefined,
-      );
-      const completedCount = completed;
-
-      progressChain = progressChain.then(async () => {
-        if (await hooks.shouldCancel?.()) {
-          fatalError ??= new AnalysisCanceledError();
-          return;
-        }
-
-        await hooks.onCandidateProcessed?.({
-          candidate,
-          recommendation,
-          completed: completedCount,
-          total: candidates.length,
-          recommendations: [...snapshot],
-        });
-      });
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: candidateConcurrency }, () => processCandidateQueue()),
-  );
-  await progressChain;
-
-  if (fatalError) {
-    throw fatalError;
-  }
-
-  const recommendations = recommendationsByIndex.filter(
-    (value): value is Recommendation => value !== undefined,
-  );
-
-  recommendations.sort((left, right) => {
-    if (right.fitScore !== left.fitScore) {
-      return right.fitScore - left.fitScore;
-    }
-    return right.matchConfidence - left.matchConfidence;
-  });
+  sortRecommendations(recommendations);
 
   return {
     extractedText,

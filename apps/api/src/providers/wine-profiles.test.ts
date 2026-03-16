@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WineCandidate } from "@wine-rec/contracts";
 
 import {
+  RetryableVivinoBrowserError,
   VivinoBrowser,
   pickPreferredVivinoImageUrl,
   pickVivinoAggregateRating,
@@ -12,6 +13,7 @@ import {
   extractVivinoImageUrlFromHtml,
   extractTastingNoteGroups,
   normalizeVivinoTasteReviewCount,
+  RetryableWineProfileLookupError,
 } from "./wine-profiles.js";
 
 function vivinoStructureToScale(value: number | null | undefined): number | undefined {
@@ -396,6 +398,24 @@ describe("wine profile providers", () => {
     );
     expect(scrapeSpy).not.toHaveBeenCalled();
   });
+
+  it("treats retryable browser-search failures as inconclusive instead of no-results", async () => {
+    const provider = getVivinoProvider();
+    const browser = VivinoBrowser.getInstance();
+    vi
+      .spyOn(browser, "search")
+      .mockRejectedValue(
+        new RetryableVivinoBrowserError(
+          "search \"Stefano Occhetti Langhe Nebbiolo\"",
+          "Chromium disconnected",
+        ),
+      );
+
+    await expect(provider.lookup(buildVivinoCandidate())).rejects.toMatchObject({
+      name: "RetryableWineProfileLookupError",
+      provider: "vivino-direct",
+    } satisfies Partial<RetryableWineProfileLookupError>);
+  });
 });
 
 describe("vivinoStructureToScale", () => {
@@ -476,11 +496,21 @@ describe("pickPreferredVivinoImageUrl", () => {
     ).toBe("https://images.vivino.com/thumbs/AZ_BlLu_Tm6Q7b4O5lqqTw_375x500.jpg");
   });
 
+  it("treats Vivino's blocked-search fallback image as a placeholder", () => {
+    expect(
+      pickPreferredVivinoImageUrl(
+        "https://www.vivino.com/images/bottleShot/fallback_1.png",
+        "//images.vivino.com/thumbs/eWMCv0yOQBm-P5O7ZIAiMQ_375x500.jpg",
+      ),
+    ).toBe("https://images.vivino.com/thumbs/eWMCv0yOQBm-P5O7ZIAiMQ_375x500.jpg");
+  });
+
   it("returns null when every candidate is invalid or a placeholder", () => {
     expect(
       pickPreferredVivinoImageUrl(
         "",
         "https://web-common.vivino.com/assets/bottleShot/fallback_2.png",
+        "https://www.vivino.com/images/bottleShot/fallback_3.png",
         undefined,
       ),
     ).toBeNull();

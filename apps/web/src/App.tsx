@@ -4,7 +4,6 @@ import type { CSSProperties } from "react";
 import type {
   AnalysisRun,
   CreateAnalysisResponse,
-  ProviderHealth,
   TasteVector,
   UserTastePreference,
   WineRatingSource,
@@ -12,7 +11,9 @@ import type {
 
 const apiBaseUrl =
   import.meta.env.VITE_API_BASE_URL ??
-  `${window.location.protocol}//${window.location.hostname}:3001`;
+  (import.meta.env.PROD
+    ? ""
+    : `${window.location.protocol}//${window.location.hostname}:3001`);
 
 const defaultPreferences: UserTastePreference = {
   body: 3,
@@ -26,6 +27,35 @@ const defaultPreferences: UserTastePreference = {
     sweetness: 0.4,
   },
 };
+
+function loadPreferences(): UserTastePreference {
+  try {
+    const stored = window.localStorage.getItem("wine-rec-preferences");
+    return stored ? JSON.parse(stored) as UserTastePreference : defaultPreferences;
+  } catch {
+    return defaultPreferences;
+  }
+}
+
+function writePreferencesJson(preferences: UserTastePreference): void {
+  window.localStorage.setItem("wine-rec-preferences", JSON.stringify(preferences));
+}
+
+function storePreferences(preferences: UserTastePreference): void {
+  window.localStorage.setItem("wine-rec-preferences", JSON.stringify(preferences));
+  window.localStorage.setItem("wine-rec-has-preferences", "true");
+}
+
+function hasStoredPreferencesFlag(): boolean {
+  try {
+    return (
+      window.localStorage.getItem("wine-rec-has-preferences") === "true" ||
+      window.localStorage.getItem("wine-rec-preferences") !== null
+    );
+  } catch {
+    return false;
+  }
+}
 
 function preferencesEqual(left: UserTastePreference, right: UserTastePreference): boolean {
   return (
@@ -102,6 +132,8 @@ type TasteDimension = "body" | "tannin" | "sweetness" | "acidity";
 const tasteDimensionOrder: TasteDimension[] = ["body", "tannin", "sweetness", "acidity"];
 const allResultSectionsId = "__all_sections__";
 const terminalAnalysisStatuses = new Set<AnalysisRun["status"]>(["canceled", "completed", "failed"]);
+const analysisPollingIntervalMs = 2500;
+const analysisPollingStaleAfterMs = 75_000;
 const ratingFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
@@ -256,7 +288,11 @@ function sortRecommendations(
   sortOrder: ResultSortOrder,
 ): AnalysisRun["recommendations"] {
   if (sortOrder === "recommended") {
-    return recommendations;
+    return [...recommendations].sort((a, b) =>
+      b.fitScore !== a.fitScore
+        ? b.fitScore - a.fitScore
+        : b.matchConfidence - a.matchConfidence,
+    );
   }
 
   const discoveredOrder = new Map(
@@ -282,28 +318,48 @@ function sortRecommendations(
 }
 
 export function App() {
-  const [preferences, setPreferences] = useState<UserTastePreference>(defaultPreferences);
-  const [loadedPreferences, setLoadedPreferences] = useState<UserTastePreference>(defaultPreferences);
+  const [preferences, setPreferences] = useState<UserTastePreference>(() => loadPreferences());
+  const [loadedPreferences, setLoadedPreferences] = useState<UserTastePreference>(() => loadPreferences());
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [analysisState, setAnalysisState] = useState<AnalysisState | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisRun | null>(null);
+  const [analysisNotice, setAnalysisNotice] = useState<string | null>(null);
   const [resultSortOrder, setResultSortOrder] = useState<ResultSortOrder>("recommended");
   const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter>("exclude-inferred");
   const [selectedResultSectionId, setSelectedResultSectionId] = useState(allResultSectionsId);
   const [maxPriceFilter, setMaxPriceFilter] = useState<number | null>(null);
   const [includePriceUnavailable, setIncludePriceUnavailable] = useState(true);
-  const [providerHealth, setProviderHealth] = useState<ProviderHealth[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [stoppingAnalysis, setStoppingAnalysis] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [pollingPaused, setPollingPaused] = useState(false);
   const [tastePanelOpen, setTastePanelOpen] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [urlPreview, setUrlPreview] = useState<{ title: string | null; domain: string } | null>(null);
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
-  const [ingestTastePanelOpen, setIngestTastePanelOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState<1 | 2>(1);
+  const [stepTwoIsConfirmMode, setStepTwoIsConfirmMode] = useState(false);
+  const [inNewAnalysisFlow, setInNewAnalysisFlow] = useState(false);
+  const [urlFetching, setUrlFetching] = useState(false);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
+  const [showRerankFlash, setShowRerankFlash] = useState(false);
+  const [additionalFiltersOpen, setAdditionalFiltersOpen] = useState(false);
+  const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
+  const [modalPreferences, setModalPreferences] = useState<Record<TasteDimension, number | null>>(
+    () => {
+      try {
+        if (hasStoredPreferencesFlag()) {
+          const stored = loadPreferences();
+          return { body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity };
+        }
+      } catch {
+        // fall through to null state
+      }
+      return { body: null, tannin: null, sweetness: null, acidity: null };
+    }
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isLiveReranking = Boolean(analysis && !preferencesEqual(preferences, loadedPreferences));
   const baseRecommendations = isLiveReranking && analysis
@@ -349,9 +405,12 @@ export function App() {
       ? resultSections
       : resultSections.filter((section) => section.id === selectedResultSectionId);
   const analysisProgress = getAnalysisProgress(analysis);
-  const isFirstTimeUser = preferencesEqual(loadedPreferences, defaultPreferences);
+  const hasActiveAnalysis = Boolean(
+    analysisState && !terminalAnalysisStatuses.has(analysisState.status),
+  );
 
   function updatePreference(dimension: TasteDimension, value: number) {
+    setHasStoredPreferences(true);
     setPreferences((current) => {
       if (dimension === "body") {
         return { ...current, body: value };
@@ -370,45 +429,62 @@ export function App() {
   }
 
   useEffect(() => {
-    void Promise.all([
-      getJson<{ preferences: UserTastePreference }>("/api/preferences").then((response) =>
-        {
-          setPreferences(response.preferences);
-          setLoadedPreferences(response.preferences);
-        },
-      ),
-      getJson<ProviderHealth[]>("/api/health/providers").then(
-        setProviderHealth,
-      ),
-    ]).catch((cause) => {
-      setError(cause instanceof Error ? cause.message : "Failed to load API state");
-    });
-  }, []);
-
-  useEffect(() => {
     return () => {
       if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
     };
   }, [filePreviewUrl]);
 
   useEffect(() => {
-    if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
+    writePreferencesJson(preferences);
+    if (!analysis) {
+      setLoadedPreferences(preferences);
+    }
+  }, [analysis, preferences]);
+
+  useEffect(() => {
+    if (!isLiveReranking) return;
+    setShowRerankFlash(true);
+    const timer = setTimeout(() => setShowRerankFlash(false), 1500);
+    return () => clearTimeout(timer);
+  }, [isLiveReranking, preferences]);
+
+  useEffect(() => {
+    if (!analysisState || terminalAnalysisStatuses.has(analysisState.status) || pollingPaused) {
       return;
     }
 
-    const handle = window.setInterval(() => {
+    const handle = window.setTimeout(() => {
       void getJson<AnalysisRun>(`/api/analyses/${analysisState.analysisId}`)
         .then((response) => {
           setAnalysis(response);
           setAnalysisState({ analysisId: response.id, status: response.status });
+
+          if (terminalAnalysisStatuses.has(response.status)) {
+            setPollingPaused(false);
+            setAnalysisNotice(null);
+            return;
+          }
+
+          const updatedAtMs = Date.parse(response.updatedAt);
+          if (Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs >= analysisPollingStaleAfterMs) {
+            setPollingPaused(true);
+            setAnalysisNotice(
+              "Analysis looks stalled. Polling paused to conserve usage. Resume polling or stop this run.",
+            );
+            return;
+          }
+
+          setAnalysisNotice(null);
         })
         .catch((cause) => {
+          setPollingPaused(true);
+          setAnalysisNotice("Live updates paused after a refresh error. Resume polling or stop this run.");
           setError(cause instanceof Error ? cause.message : "Failed to refresh analysis");
         });
-    }, 1000);
+    }, analysisPollingIntervalMs);
 
-    return () => window.clearInterval(handle);
-  }, [analysisState]);
+    return () => window.clearTimeout(handle);
+  }, [analysisState, pollingPaused]);
 
   useEffect(() => {
     if (
@@ -424,17 +500,35 @@ export function App() {
     setIncludePriceUnavailable(true);
   }, [analysis?.id]);
 
-  async function savePreferences(next: UserTastePreference) {
-    setPreferences(next);
-    await getJson<{ preferences: UserTastePreference }>("/api/preferences", {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(next),
-    });
-    setLoadedPreferences(next);
-  }
+  useEffect(() => {
+    const normalized = normalizeUrlInput(sourceUrl);
+    if (!normalized) {
+      setUrlPreview(null);
+      setPendingUrl(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setUrlFetching(true);
+      try {
+        const preview = await getJson<{ title: string | null; domain: string }>(
+          `/api/preview?url=${encodeURIComponent(normalized)}`
+        );
+        setUrlPreview(preview);
+        setPendingUrl(normalized);
+      } catch {
+        try {
+          const domain = new URL(normalized).hostname;
+          setUrlPreview({ title: null, domain });
+          setPendingUrl(normalized);
+        } catch {
+          // Not yet a valid URL — leave preview unchanged
+        }
+      } finally {
+        setUrlFetching(false);
+      }
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [sourceUrl]);
 
   async function handleUpload() {
     if (!selectedFile) {
@@ -446,8 +540,6 @@ export function App() {
     setError(null);
 
     try {
-      await prepareAnalysis();
-
       const formData = new FormData();
       formData.set("file", selectedFile);
 
@@ -457,41 +549,8 @@ export function App() {
       });
 
       await launchAnalysis(upload);
-      setIngestTastePanelOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Upload failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleUrlConfirm() {
-    const normalizedUrl = normalizeUrlInput(sourceUrl);
-    if (!normalizedUrl) {
-      setError("Paste a menu or wine-list URL first.");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-
-    try {
-      const preview = await getJson<{ title: string | null; domain: string }>(
-        `/api/preview?url=${encodeURIComponent(normalizedUrl)}`
-      );
-      setUrlPreview(preview);
-      setPendingUrl(normalizedUrl);
-      setSelectedFile(null);
-      setFilePreviewUrl(null);
-      setIngestTastePanelOpen(true);
-    } catch {
-      // Preview fetch failed — fall back to domain only
-      const domain = new URL(normalizedUrl).hostname;
-      setUrlPreview({ title: null, domain });
-      setPendingUrl(normalizedUrl);
-      setSelectedFile(null);
-      setFilePreviewUrl(null);
-      setIngestTastePanelOpen(true);
     } finally {
       setBusy(false);
     }
@@ -504,7 +563,6 @@ export function App() {
     setError(null);
 
     try {
-      await prepareAnalysis();
       const created = await getJson<CreateAnalysisResponse>("/api/urls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -512,7 +570,6 @@ export function App() {
       });
       setSourceUrl(pendingUrl);
       await launchAnalysis(created);
-      setIngestTastePanelOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to start analysis");
     } finally {
@@ -521,25 +578,70 @@ export function App() {
   }
 
   async function handleIngestAnalyze() {
-    if (selectedFile) {
-      await handleUpload();
-    } else if (pendingUrl) {
-      await handleUrlAnalyze();
+    const allSet = tasteDimensionOrder.every((d) => modalPreferences[d] !== null);
+    if (!allSet) return;
+    const confirmedPrefs: UserTastePreference = {
+      ...loadPreferences(),
+      body: modalPreferences.body!,
+      tannin: modalPreferences.tannin!,
+      sweetness: modalPreferences.sweetness!,
+      acidity: modalPreferences.acidity!,
+    };
+    setPreferences(confirmedPrefs);
+    prepareAnalysis(confirmedPrefs);
+    try {
+      if (selectedFile) {
+        await handleUpload();
+      } else if (pendingUrl) {
+        await handleUrlAnalyze();
+      }
+    } catch {
+      // handleUpload / handleUrlAnalyze manage their own error state
     }
+    setInNewAnalysisFlow(false);
   }
 
-  async function prepareAnalysis() {
-    if (!preferencesEqual(preferences, loadedPreferences)) {
-      await savePreferences(preferences);
-    }
+  function handleNewAnalysis() {
+    setOnboardingStep(1);
+    setStepTwoIsConfirmMode(false);
+    setError(null);
+    setInNewAnalysisFlow(true);
+    setSourceUrl("");
+    setUrlPreview(null);
+    setPendingUrl(null);
+    setSelectedFile(null);
+    if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    setFilePreviewUrl(null);
+  }
+
+  function clearAnalysisState() {
+    setAnalysisState(null);
+    setAnalysis(null);
+    setUrlPreview(null);
+    setPendingUrl(null);
+    setSelectedFile(null);
+    if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    setFilePreviewUrl(null);
+    setSourceUrl("");
+    setError(null);
+  }
+
+  function prepareAnalysis(prefsToUse?: UserTastePreference) {
+    const prefs = prefsToUse ?? preferences;
+    storePreferences(prefs);
+    setHasStoredPreferences(true);
+    setLoadedPreferences(prefs);
+    setAnalysisNotice(null);
+    setPollingPaused(false);
   }
 
   async function launchAnalysis(next: CreateAnalysisResponse) {
-    setStoppingAnalysis(false);
-    await getJson(`/api/analyses/${next.analysisId}/process`, { method: "POST" });
+    clearAnalysisState();
     const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${next.analysisId}`);
     setAnalysisState({ analysisId: next.analysisId, status: nextAnalysis.status });
     setAnalysis(nextAnalysis);
+    setAnalysisNotice(null);
+    setPollingPaused(false);
     setTimeout(() => {
       const results = document.getElementById("results");
       const nav = document.querySelector("nav");
@@ -550,31 +652,33 @@ export function App() {
     }, 50);
   }
 
+  function resumePolling() {
+    setError(null);
+    setAnalysisNotice(null);
+    setPollingPaused(false);
+  }
+
   async function handleCancelAnalysis() {
-    if (!analysisState || terminalAnalysisStatuses.has(analysisState.status)) {
+    if (!analysisState) {
       return;
     }
 
-    setStoppingAnalysis(true);
+    setCancelBusy(true);
     setError(null);
+    setAnalysisNotice(null);
 
     try {
-      await getJson<CreateAnalysisResponse>(`/api/analyses/${analysisState.analysisId}/cancel`, {
+      const canceled = await getJson<AnalysisRun>(`/api/analyses/${analysisState.analysisId}/cancel`, {
         method: "POST",
       });
-
-      const nextAnalysis = await getJson<AnalysisRun>(`/api/analyses/${analysisState.analysisId}`);
-      setAnalysisState({ analysisId: nextAnalysis.id, status: nextAnalysis.status });
-      setAnalysis(nextAnalysis);
+      setAnalysis(canceled);
+      setAnalysisState({ analysisId: canceled.id, status: canceled.status });
+      setPollingPaused(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to stop analysis");
     } finally {
-      setStoppingAnalysis(false);
+      setCancelBusy(false);
     }
-  }
-
-  function scrollToIngest() {
-    document.getElementById("ingest")?.scrollIntoView({ behavior: "smooth" });
   }
 
   function handleDropZoneClick() {
@@ -590,10 +694,8 @@ export function App() {
     setPendingUrl(null);
     if (file) {
       setFilePreviewUrl(URL.createObjectURL(file));
-      setIngestTastePanelOpen(true);
     } else {
       setFilePreviewUrl(null);
-      setIngestTastePanelOpen(false);
     }
   }
 
@@ -614,6 +716,44 @@ export function App() {
   function handleDragLeave() {
     setIsDragOver(false);
   }
+
+  function resetIngestFlow() {
+    if (hasStoredPreferences) {
+      const stored = loadPreferences();
+      setModalPreferences({ body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity });
+    } else {
+      setModalPreferences({ body: null, tannin: null, sweetness: null, acidity: null });
+    }
+    setUrlPreview(null);
+    setPendingUrl(null);
+    setSourceUrl("");
+    setSelectedFile(null);
+    if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    setFilePreviewUrl(null);
+    setError(null);
+  }
+
+  function scrollToIngest() {
+    document.getElementById("ingest")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function scrollToResults() {
+    setTimeout(() => {
+      const results = document.getElementById("results");
+      const nav = document.querySelector("nav");
+      if (results) {
+        const navHeight = nav?.getBoundingClientRect().height ?? 0;
+        window.scrollTo({ top: results.getBoundingClientRect().top + window.scrollY - navHeight, behavior: "smooth" });
+      }
+    }, 50);
+  }
+
+  function updateModalPreference(dimension: TasteDimension, value: number) {
+    setModalPreferences((prev) => ({ ...prev, [dimension]: value }));
+  }
+
+  const step1Ready = Boolean(urlPreview || selectedFile);
+  const step2Ready = tasteDimensionOrder.every((d) => modalPreferences[d] !== null);
 
   return (
     <div className="page-shell">
@@ -644,8 +784,8 @@ export function App() {
                 />
               ))}
             </div>
-            <p className="taste-panel-hint">
-              Preferences apply automatically on your next analysis.
+            <p className={`taste-panel-hint${showRerankFlash ? " is-rerank-flash" : ""}`}>
+              {showRerankFlash ? "✓ Updated" : "Adjust your preferences to automatically re-rank wines."}
             </p>
           </div>
         </div>
@@ -665,151 +805,231 @@ export function App() {
 
         {/* ── Ingest section ── */}
         <section className="ingest-section" id="ingest">
-          <h2>What&rsquo;s on the list?</h2>
-          <p className="section-copy">Paste a link or snap a photo of any wine list.</p>
+          <div className="onboarding-card">
 
-          <div className="url-row">
-            <input
-              className="url-row-input"
-              onChange={(event) => setSourceUrl(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void handleUrlConfirm();
-                }
-              }}
-              placeholder="Paste a wine list URL"
-              type="url"
-              value={sourceUrl}
-            />
-            <button
-              className="action url-row-button"
-              disabled={busy}
-              onClick={handleUrlConfirm}
-              type="button"
-            >
-              {busy ? "Loading…" : "Next →"}
-            </button>
-          </div>
-
-          {urlPreview && (
-            <div className="url-preview-card">
-              <img
-                alt={`${urlPreview.domain} favicon`}
-                className="url-preview-favicon"
-                src={`https://www.google.com/s2/favicons?domain=${urlPreview.domain}&sz=32`}
-              />
-              <div className="url-preview-meta">
-                <span className="url-preview-title">
-                  {urlPreview.title ?? urlPreview.domain}
-                </span>
-                <span className="url-preview-domain">{urlPreview.domain}</span>
-              </div>
-              <span className="url-preview-check" aria-label="URL confirmed">✓</span>
+            {/* Step indicator */}
+            <div className="onboarding-dots">
+              <div className={`onboarding-dot ${onboardingStep === 1 ? "is-active" : "is-done"}`} />
+              <div className={`onboarding-dot ${onboardingStep === 2 ? "is-active" : "is-idle"}`} />
             </div>
-          )}
 
-          <div className="ingest-divider">
-            <span>or</span>
-          </div>
+            {/* Step 1 */}
+            {onboardingStep === 1 && (
+              <div className="onboarding-step-body">
+                <h2>What&rsquo;s on the list?</h2>
+                <p className="section-copy">Paste a link or snap a photo of any wine list.</p>
 
-          <div
-            className={`drop-zone${isDragOver ? " is-dragover" : ""}${selectedFile ? " has-file" : ""}`}
-            onClick={handleDropZoneClick}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-          >
-            <input
-              accept="image/*,application/pdf"
-              className="drop-zone-input"
-              onChange={(event) => handleFileChange(event.target.files?.[0] ?? null)}
-              ref={fileInputRef}
-              type="file"
-            />
-            {selectedFile ? (
-              <div className="drop-zone-file-row">
-                <div className="drop-zone-thumbnail-wrap">
-                  {filePreviewUrl && (
-                    <img
-                      alt="Selected file preview"
-                      className="drop-zone-thumbnail"
-                      src={filePreviewUrl}
-                    />
-                  )}
-                  <div className="drop-zone-image-badge">
-                    <span className="drop-zone-filesize">
-                      {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
-                    </span>
-                    <button
-                      className="drop-zone-clear"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleFileChange(null);
-                      }}
-                      type="button"
-                      aria-label="Remove selected file"
-                    >
-                      ✕
-                    </button>
-                  </div>
+                <div className="url-row">
+                  <input
+                    className="url-row-input"
+                    onChange={(e) => setSourceUrl(e.target.value)}
+                    placeholder="Paste a wine list URL"
+                    type="url"
+                    value={sourceUrl}
+                  />
                 </div>
-                <p className="drop-zone-filename">{selectedFile.name}</p>
-              </div>
-            ) : (
-              <div className="drop-zone-prompt">
-                <span className="drop-zone-icon" aria-hidden="true">
-                  <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="32" height="32">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="17 8 12 3 7 8" />
-                    <line x1="12" x2="12" y1="3" y2="15" />
-                  </svg>
-                </span>
-                <p className="drop-zone-label">
-                  Drop a photo, screenshot, or PDF here
-                </p>
-                <p className="drop-zone-hint">or click to browse</p>
+                {urlFetching && <p className="url-fetching-hint">Checking link…</p>}
+
+                {urlPreview && (
+                  <div className="url-preview-card">
+                    <img
+                      alt={`${urlPreview.domain} favicon`}
+                      className="url-preview-favicon"
+                      src={`https://www.google.com/s2/favicons?domain=${urlPreview.domain}&sz=32`}
+                    />
+                    <div className="url-preview-meta">
+                      <span className="url-preview-title">{urlPreview.title ?? urlPreview.domain}</span>
+                      <span className="url-preview-domain">{urlPreview.domain}</span>
+                    </div>
+                    <span className="url-preview-check" aria-label="URL confirmed">✓</span>
+                  </div>
+                )}
+
+                <div className="ingest-divider"><span>or</span></div>
+
+                <div
+                  className={`drop-zone${isDragOver ? " is-dragover" : ""}${selectedFile ? " has-file" : ""}`}
+                  onClick={handleDropZoneClick}
+                  onDragLeave={handleDragLeave}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    accept="image/*,application/pdf"
+                    className="drop-zone-input"
+                    onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+                    ref={fileInputRef}
+                    type="file"
+                  />
+                  {selectedFile ? (
+                    <div className="drop-zone-file-row">
+                      <div className="drop-zone-thumbnail-wrap">
+                        {filePreviewUrl && (
+                          <img
+                            alt="Selected file preview"
+                            className="drop-zone-thumbnail"
+                            src={filePreviewUrl}
+                          />
+                        )}
+                        <div className="drop-zone-image-badge">
+                          <span className="drop-zone-filesize">
+                            {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                          </span>
+                          <button
+                            className="drop-zone-clear"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleFileChange(null);
+                            }}
+                            type="button"
+                            aria-label="Remove selected file"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                      <p className="drop-zone-filename">{selectedFile.name}</p>
+                    </div>
+                  ) : (
+                    <div className="drop-zone-prompt">
+                      <span className="drop-zone-icon" aria-hidden="true">
+                        <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="32" height="32">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" x2="12" y1="3" y2="15" />
+                        </svg>
+                      </span>
+                      <p className="drop-zone-label">Drop a photo, screenshot, or PDF here</p>
+                      <p className="drop-zone-hint">or click to browse</p>
+                    </div>
+                  )}
+                </div>
+
+                {error && <p className="error">{error}</p>}
+
+                <div className="onboarding-footer">
+                  <button
+                    className="action"
+                    disabled={!step1Ready}
+                    onClick={() => {
+                      if (hasStoredPreferences) {
+                        setModalPreferences((current) =>
+                          tasteDimensionOrder.reduce(
+                            (acc, d) => ({ ...acc, [d]: current[d] ?? preferences[d] }),
+                            current
+                          )
+                        );
+                      }
+                      setStepTwoIsConfirmMode(hasStoredPreferences || tasteDimensionOrder.every((d) => modalPreferences[d] !== null));
+                      setOnboardingStep(2);
+                    }}
+                    type="button"
+                  >
+                    {urlFetching ? <span className="btn-spinner" aria-hidden="true" /> : "Next →"}
+                  </button>
+                </div>
               </div>
             )}
-          </div>
 
-          {ingestTastePanelOpen && (
-            <div className="ingest-taste-panel">
-              <p className="ingest-taste-heading">
-                {isFirstTimeUser ? "How do you like your wine?" : "Your preferences are saved."}
-              </p>
-              <p className="ingest-taste-sub">
-                {isFirstTimeUser
-                  ? "Set your preferences — results are sorted to match."
-                  : "Adjust if you'd like, then analyze."}
-              </p>
-              <div className="taste-scale-stack">
-                {tasteDimensionOrder.map((dimension) => (
-                  <TasteScale
-                    dimension={dimension}
-                    key={dimension}
-                    onChange={(value) => updatePreference(dimension, value)}
-                    value={preferences[dimension]}
-                  />
-                ))}
+            {/* Step 2 */}
+            {onboardingStep === 2 && (
+              <div className="onboarding-step-body">
+                <h2>{stepTwoIsConfirmMode ? "Confirm your preferences" : "How do you like your wine?"}</h2>
+                <p className="section-copy">
+                  {stepTwoIsConfirmMode
+                    ? "Adjust if you'd like, then analyze."
+                    : "Drag each slider — results are ranked to match your taste."}
+                </p>
+
+                <div className="taste-scale-stack">
+                  {tasteDimensionOrder.map((dimension) => (
+                    <TasteScale
+                      dimension={dimension}
+                      key={dimension}
+                      onChange={(value) => updateModalPreference(dimension, value)}
+                      value={modalPreferences[dimension]}
+                    />
+                  ))}
+                </div>
+
+                {error && <p className="error">{error}</p>}
+
+                <div className="onboarding-footer">
+                  {hasActiveAnalysis ? (
+                    <button
+                      className="action"
+                      onClick={() => { handleNewAnalysis(); scrollToIngest(); }}
+                      type="button"
+                    >
+                      New Analysis
+                    </button>
+                  ) : inNewAnalysisFlow ? (
+                    <>
+                      <button
+                        className="onboarding-btn-cancel"
+                        onClick={() => setOnboardingStep(1)}
+                        style={{ marginRight: "auto" }}
+                        type="button"
+                      >
+                        ← Back
+                      </button>
+                      <button
+                        className="action onboarding-btn-analyze"
+                        disabled={!step2Ready || busy}
+                        onClick={() => void handleIngestAnalyze()}
+                        type="button"
+                      >
+                        {busy ? "Starting…" : "Analyze →"}
+                      </button>
+                    </>
+                  ) : analysis ? (
+                    <>
+                      <button
+                        className="action"
+                        onClick={() => { handleNewAnalysis(); scrollToIngest(); }}
+                        style={{ marginRight: "auto" }}
+                        type="button"
+                      >
+                        New Analysis
+                      </button>
+                      <button
+                        className="action"
+                        onClick={scrollToResults}
+                        type="button"
+                      >
+                        See Results →
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="onboarding-btn-cancel"
+                        onClick={() => setOnboardingStep(1)}
+                        style={{ marginRight: "auto" }}
+                        type="button"
+                      >
+                        ← Back
+                      </button>
+                      <button
+                        className="action onboarding-btn-analyze"
+                        disabled={!step2Ready || busy}
+                        onClick={() => void handleIngestAnalyze()}
+                        type="button"
+                      >
+                        {busy ? "Starting…" : "Analyze →"}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-              <button
-                className="action ingest-taste-analyze"
-                disabled={busy}
-                onClick={() => void handleIngestAnalyze()}
-                type="button"
-              >
-                {busy ? "Starting…" : "Analyze →"}
-              </button>
-            </div>
-          )}
+            )}
 
-          {error ? <p className="error">{error}</p> : null}
-          {analysisState ? (
-            <p className="helper">
-              Analysis {analysisState.analysisId.slice(0, 8)} &middot; {analysisState.status}
-            </p>
-          ) : null}
+          </div>
         </section>
+
+        {/* ── Analysis progress / status ── */}
+        {error ? <p className="error">{error}</p> : null}
+        {analysisNotice ? <p className="helper">{analysisNotice}</p> : null}
 
         {/* ── Image break: bottles on concrete ── */}
         <section className="image-break image-break-bottles">
@@ -823,27 +1043,32 @@ export function App() {
           <div className="panel">
             {analysis && (
               <>
-                <div
-                  className="result-taste-toggle"
-                  onClick={() => setResultsTastePanelOpen((open) => !open)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setResultsTastePanelOpen((open) => !open);
-                    }
-                  }}
-                >
-                  <span className="result-taste-toggle-label">
-                    My Taste Preferences
-                    {isLiveReranking && (
-                      <span className="result-taste-live-badge" aria-label="Results re-ranked">Updated</span>
-                    )}
-                  </span>
-                  <span className="result-taste-toggle-caret" aria-hidden="true">
-                    {resultsTastePanelOpen ? "▾" : "▸"}
-                  </span>
+                <div className="results-action-row">
+                  <button
+                    className="action"
+                    onClick={() => setResultsTastePanelOpen((open) => !open)}
+                    type="button"
+                  >
+                    Adjust Preferences
+                  </button>
+                  {hasActiveAnalysis ? (
+                    <button
+                      className="action action-danger"
+                      disabled={cancelBusy}
+                      onClick={() => void handleCancelAnalysis()}
+                      type="button"
+                    >
+                      {cancelBusy ? "Stopping…" : "Stop Analysis"}
+                    </button>
+                  ) : (
+                    <button
+                      className="action action-danger"
+                      onClick={() => { handleNewAnalysis(); scrollToIngest(); }}
+                      type="button"
+                    >
+                      New Analysis
+                    </button>
+                  )}
                 </div>
                 {resultsTastePanelOpen && (
                   <div className="result-taste-panel">
@@ -857,10 +1082,8 @@ export function App() {
                         />
                       ))}
                     </div>
-                    <p className="result-taste-panel-hint">
-                      {isLiveReranking
-                        ? "Results are re-ranked to match your updated preferences."
-                        : "Adjust sliders to instantly re-rank results without re-running analysis."}
+                    <p className={`result-taste-panel-hint${showRerankFlash ? " is-rerank-flash" : ""}`}>
+                      {showRerankFlash ? "✓ Rankings updated" : "Adjust your preferences to automatically re-rank wines."}
                     </p>
                   </div>
                 )}
@@ -878,78 +1101,104 @@ export function App() {
                         onClick={() => setResultSortOrder("recommended")}
                         type="button"
                       >
-                        Most recommended
+                        Best fit
                       </button>
                       <button
                         className={`sort-option${resultSortOrder === "discovered" ? " is-active" : ""}`}
                         onClick={() => setResultSortOrder("discovered")}
                         type="button"
                       >
-                        Image order
+                        Menu order
                       </button>
                     </div>
                   </div>
-                  {inferredRecommendationCount ? (
-                    <div className="result-control-group">
-                      <span>Taste data</span>
-                      <div aria-label="Filter inferred taste profiles" className="sort-toggle" role="group">
-                        <button
-                          className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
-                          onClick={() => setResultProfileFilter("all")}
-                          type="button"
-                        >
-                          All profiles
-                        </button>
-                        <button
-                          className={`sort-option${resultProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
-                          onClick={() => setResultProfileFilter("exclude-inferred")}
-                          type="button"
-                        >
-                          Hide inferred
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  {priceFilterBounds && effectiveMaxPrice != null ? (
-                    <div className="result-control-group result-control-group-budget">
-                      <span>Budget</span>
-                      <div className="price-filter-control">
-                        <div className="price-filter-head">
-                          <strong>
-                            {effectiveMaxPrice < priceFilterBounds.max
-                              ? `${formatPriceValue(effectiveMaxPrice)} and under`
-                              : "Any price"}
-                          </strong>
-                          <span>
-                            {formatPriceValue(priceFilterBounds.min)} to {formatPriceValue(priceFilterBounds.max)}
-                          </span>
-                        </div>
-                        <input
-                          aria-label="Maximum wine price"
-                          className="price-filter-slider"
-                          max={priceFilterBounds.max}
-                          min={priceFilterBounds.min}
-                          onChange={(event) => setMaxPriceFilter(Number(event.target.value))}
-                          step={1}
-                          type="range"
-                          value={effectiveMaxPrice}
-                        />
-                        <label className="price-filter-toggle">
+                  <button
+                    className="result-extra-filters-toggle"
+                    onClick={() => setAdditionalFiltersOpen((o) => !o)}
+                    type="button"
+                  >
+                    Filters
+                    <svg aria-hidden="true" fill="none" height="10" viewBox="0 0 10 10" width="10">
+                      <path d={additionalFiltersOpen ? "M1 7L5 3L9 7" : "M1 3L5 7L9 3"} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                    </svg>
+                  </button>
+                  <div className={`result-controls-extra${additionalFiltersOpen ? " is-open" : ""}`}>
+                    {priceFilterBounds && effectiveMaxPrice != null ? (
+                      <div className="result-control-group result-control-group-budget">
+                        <span>Budget</span>
+                        <div className="price-filter-control">
+                          <div className="price-filter-head">
+                            <strong>
+                              {effectiveMaxPrice < priceFilterBounds.max
+                                ? `${formatPriceValue(effectiveMaxPrice)} and under`
+                                : "Any price"}
+                            </strong>
+                            <span>
+                              {formatPriceValue(priceFilterBounds.min)} to {formatPriceValue(priceFilterBounds.max)}
+                            </span>
+                          </div>
                           <input
-                            checked={includePriceUnavailable}
-                            onChange={(event) => setIncludePriceUnavailable(event.target.checked)}
-                            type="checkbox"
+                            aria-label="Maximum wine price"
+                            className="price-filter-slider"
+                            max={priceFilterBounds.max}
+                            min={priceFilterBounds.min}
+                            onChange={(event) => setMaxPriceFilter(Number(event.target.value))}
+                            step={1}
+                            type="range"
+                            value={effectiveMaxPrice}
                           />
-                          <span>
-                            Include wines without price
-                            {priceFilterBounds.missingCount > 0
-                              ? ` (${priceFilterBounds.missingCount})`
-                              : ""}
-                          </span>
-                        </label>
+                          <label className="price-filter-toggle">
+                            <input
+                              checked={includePriceUnavailable}
+                              onChange={(event) => setIncludePriceUnavailable(event.target.checked)}
+                              type="checkbox"
+                            />
+                            <span>
+                              Include wines without price
+                              {priceFilterBounds.missingCount > 0
+                                ? ` (${priceFilterBounds.missingCount})`
+                                : ""}
+                            </span>
+                          </label>
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                    {inferredRecommendationCount ? (
+                      <div className="result-control-group">
+                        <span>Taste data</span>
+                        <div aria-label="Filter inferred taste profiles" className="sort-toggle" role="group">
+                          <button
+                            className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
+                            onClick={() => setResultProfileFilter("all")}
+                            type="button"
+                          >
+                            All profiles
+                          </button>
+                          <button
+                            className={`sort-option${resultProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
+                            onClick={() => setResultProfileFilter("exclude-inferred")}
+                            type="button"
+                          >
+                            Hide inferred
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {analysis && inferredRecommendationCount ? (
+                      <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
+                        <p className="result-filter-notice-title">
+                          {resultProfileFilter === "exclude-inferred"
+                            ? `${inferredRecommendationCount} inferred ${inferredRecommendationCount === 1 ? "profile" : "profiles"} hidden`
+                            : `${inferredRecommendationCount} ${inferredRecommendationCount === 1 ? "wine uses" : "wines use"} estimated taste data`}
+                        </p>
+                        <p className="helper">
+                          {resultProfileFilter === "exclude-inferred"
+                            ? "These wines are excluded because Vivino did not return a reliable match."
+                            : "When we cannot confirm a Vivino match, we infer the taste profile from the extracted wine details and show it with muted bars."}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -957,9 +1206,6 @@ export function App() {
             {!analysis ? <p className="helper">No analysis yet.</p> : null}
             {analysisProgress && analysisProgress.status !== "completed" ? (
               <AnalysisProgressPanel
-                canCancel={analysisState ? !terminalAnalysisStatuses.has(analysisState.status) : false}
-                isCancelling={stoppingAnalysis}
-                onCancel={handleCancelAnalysis}
                 progress={analysisProgress}
               />
             ) : null}
@@ -977,20 +1223,6 @@ export function App() {
                 <p className="helper">
                   {hiddenByPriceCount} wine{hiddenByPriceCount === 1 ? "" : "s"} hidden by the current budget
                   settings.
-                </p>
-              </div>
-            ) : null}
-            {analysis && inferredRecommendationCount ? (
-              <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
-                <p className="result-filter-notice-title">
-                  {resultProfileFilter === "exclude-inferred"
-                    ? `${inferredRecommendationCount} inferred ${inferredRecommendationCount === 1 ? "profile" : "profiles"} hidden`
-                    : `${inferredRecommendationCount} ${inferredRecommendationCount === 1 ? "wine uses" : "wines use"} estimated taste data`}
-                </p>
-                <p className="helper">
-                  {resultProfileFilter === "exclude-inferred"
-                    ? "These wines are excluded because Vivino did not return a reliable match."
-                    : "When we cannot confirm a Vivino match, we infer the taste profile from the extracted wine details and show it with muted bars."}
                 </p>
               </div>
             ) : null}
@@ -1072,6 +1304,7 @@ export function App() {
           </h2>
         </section>
       </main>
+
     </div>
   );
 }
@@ -1367,8 +1600,10 @@ function ResultCard(props: {
       <div className="result-card-content">
         <div className="result-head">
           <div className="result-copy">
-            {menuContext ? <p className="menu-context">{menuContext}</p> : null}
-            <h3 className="wine-title">{menuTitle}</h3>
+            <div className="wine-name-block">
+              {menuContext ? <p className="menu-context">{menuContext}</p> : null}
+              <h3 className="wine-title">{menuTitle}</h3>
+            </div>
             {matchedTitle ? <p className="wine-subtitle">Matched to {matchedTitle}</p> : null}
             {isInferred ? (
               <p className="wine-uncertainty">
@@ -1394,73 +1629,73 @@ function ResultCard(props: {
             </div>
           </div>
         </div>
-        <div className={`taste-profile-block taste-profile-block-compact${isInferred ? " is-inferred" : ""}`}>
-          <div className="taste-profile-heading">
-            <div className="taste-profile-copy">
-              <p className="taste-profile-title">What does this wine taste like?</p>
-            </div>
-            {isInferred ? <p className="taste-profile-note">Estimated profile</p> : null}
+      </div>
+      <div className={`taste-profile-block taste-profile-block-compact${isInferred ? " is-inferred" : ""}`}>
+        <div className="taste-profile-heading">
+          <div className="taste-profile-copy">
+            <p className="taste-profile-title">What does this wine taste like?</p>
           </div>
-          <div className="taste-scale-stack">
-            {tasteDimensionOrder.map((dimension) => (
-              <TasteScale
-                dimension={dimension}
-                key={dimension}
-                tone={isInferred ? "uncertain" : "default"}
-                value={recommendation.profile?.taste[dimension] ?? null}
-              />
-            ))}
-          </div>
-          {showTasteReviewCount ? (
-            <p className="taste-profile-footnote">
-              {formatTasteReviewCountLabel(tasteReviewCount)}
-            </p>
-          ) : null}
+          {isInferred ? <p className="taste-profile-note">Estimated profile</p> : null}
         </div>
-        <div className="tasting-notes-collapsible">
-          <button
-            className="tasting-notes-toggle"
-            onClick={() => setShowTastingNotes((v) => !v)}
-            type="button"
-          >
-            <span>Tasting notes &amp; details</span>
-            <span className={`tasting-notes-toggle-icon${showTastingNotes ? " is-open" : ""}`}>▾</span>
-          </button>
-          {showTastingNotes ? (
-            <div className="tasting-notes-dropdown" ref={dropdownRef}>
-              {hasTastingNoteContent || showNoTastingNotesIndicator ? (
-                <div className="detail-tasting-notes-section">
-                  <p className="detail-section-label">Tasting notes</p>
-                  {showNoTastingNotesIndicator ? (
-                    <p className="tasting-notes-empty">No tasting notes reported.</p>
-                  ) : tastingNoteGroups.length > 0 ? (
-                    <TastingNoteGroupSection groups={tastingNoteGroups} />
-                  ) : tastingNotesText ? (
-                    <p className="tasting-notes-fallback">
-                      {tastingNotesText}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {candidate?.price || priceBenchmark ? (
-                <div className={`detail-price-section${hasTastingNoteContent || showNoTastingNotesIndicator ? " has-separator" : ""}`}>
-                  <p className="detail-section-label">Price</p>
-                  <p className="detail-price-restaurant">
-                    {candidate?.price ?? "Not listed"} on the menu
+        <div className="taste-scale-stack">
+          {tasteDimensionOrder.map((dimension) => (
+            <TasteScale
+              dimension={dimension}
+              key={dimension}
+              tone={isInferred ? "uncertain" : "default"}
+              value={recommendation.profile?.taste[dimension] ?? null}
+            />
+          ))}
+        </div>
+        {showTasteReviewCount ? (
+          <p className="taste-profile-footnote">
+            {formatTasteReviewCountLabel(tasteReviewCount)}
+          </p>
+        ) : null}
+      </div>
+      <div className="tasting-notes-collapsible">
+        <button
+          className="tasting-notes-toggle"
+          onClick={() => setShowTastingNotes((v) => !v)}
+          type="button"
+        >
+          <span>Tasting notes &amp; details</span>
+          <span className={`tasting-notes-toggle-icon${showTastingNotes ? " is-open" : ""}`}>▾</span>
+        </button>
+        {showTastingNotes ? (
+          <div className="tasting-notes-dropdown" ref={dropdownRef}>
+            {hasTastingNoteContent || showNoTastingNotesIndicator ? (
+              <div className="detail-tasting-notes-section">
+                <p className="detail-section-label">Tasting notes</p>
+                {showNoTastingNotesIndicator ? (
+                  <p className="tasting-notes-empty">No tasting notes reported.</p>
+                ) : tastingNoteGroups.length > 0 ? (
+                  <TastingNoteGroupSection groups={tastingNoteGroups} />
+                ) : tastingNotesText ? (
+                  <p className="tasting-notes-fallback">
+                    {tastingNotesText}
                   </p>
-                  {priceBenchmark ? (
-                    <p className={`detail-price-benchmark is-${priceBenchmark.tier}`}>
-                      ~{formatPriceValue(priceBenchmark.retailPrice)} avg retail &middot; {priceBenchmark.multiplier.toFixed(1)}× markup
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {!candidate?.price && !priceBenchmark && !hasTastingNoteContent && !showNoTastingNotesIndicator ? (
-                <p className="tasting-notes-empty">No additional details available.</p>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+                ) : null}
+              </div>
+            ) : null}
+            {candidate?.price || priceBenchmark ? (
+              <div className={`detail-price-section${hasTastingNoteContent || showNoTastingNotesIndicator ? " has-separator" : ""}`}>
+                <p className="detail-section-label">Price</p>
+                <p className="detail-price-restaurant">
+                  {candidate?.price ?? "Not listed"} on the menu
+                </p>
+                {priceBenchmark ? (
+                  <p className={`detail-price-benchmark is-${priceBenchmark.tier}`}>
+                    ~{formatPriceValue(priceBenchmark.retailPrice)} avg retail &middot; {priceBenchmark.multiplier.toFixed(1)}× markup
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {!candidate?.price && !priceBenchmark && !hasTastingNoteContent && !showNoTastingNotesIndicator ? (
+              <p className="tasting-notes-empty">No additional details available.</p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </article>
   );

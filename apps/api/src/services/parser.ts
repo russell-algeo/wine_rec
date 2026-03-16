@@ -54,7 +54,7 @@ const nonWineHints = [
 const menuTabMarkerPattern = /^@@TAB:\s*(.+)$/;
 const menuSectionMarkerPattern = /^@@SECTION:\s*(.+)$/;
 const inlinePricePattern =
-  /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?(?:\s+[A-Za-z])?)\s*$/;
+  /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?(?:\s+[A-Za-z0-9]+)?)\s*$/;
 const ocrCorrections: Array<[RegExp, string]> = [
   [/\bRhone\b/g, "Rhône"],
   [/\bSchaztel\b/g, "Schäztel"],
@@ -346,7 +346,7 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
     if (isSectionHeader(line)) {
       flushBlock();
       currentColor = normalizeSectionHeader(line);
-      currentMenuSection = line;
+      currentMenuSection = line.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
       return;
     }
 

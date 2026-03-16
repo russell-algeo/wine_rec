@@ -14,9 +14,23 @@ const {
   parseWineCandidatesMock: vi.fn(),
 }));
 
-vi.mock("../providers/wine-profiles.js", () => ({
-  createWineProfileProviders: createWineProfileProvidersMock,
-}));
+vi.mock("../providers/wine-profiles.js", () => {
+  class RetryableWineProfileLookupError extends Error {
+    constructor(
+      readonly provider: string,
+      readonly candidateQuery: string,
+      readonly cause: unknown,
+    ) {
+      super(`Retryable ${provider} lookup failure for ${candidateQuery}`);
+      this.name = "RetryableWineProfileLookupError";
+    }
+  }
+
+  return {
+    createWineProfileProviders: createWineProfileProvidersMock,
+    RetryableWineProfileLookupError,
+  };
+});
 
 vi.mock("./source-extractor.js", () => ({
   extractSourceText: extractSourceTextMock,
@@ -30,7 +44,8 @@ vi.mock("./repository.js", () => ({
   getPreferences: getPreferencesMock,
 }));
 
-import { AnalysisCanceledError, runAnalysisPipeline } from "./pipeline.js";
+import { RetryableWineProfileLookupError } from "../providers/wine-profiles.js";
+import { AnalysisCanceledError, AnalysisRetryableError, runAnalysisPipeline } from "./pipeline.js";
 
 const defaultPreferences: UserTastePreference = {
   body: 3,
@@ -405,5 +420,59 @@ describe("analysis pipeline progress hooks", () => {
 
     expect(processedCandidateIds).toEqual([]);
     expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces retryable provider failures so chunk workers can requeue", async () => {
+    const candidates: WineCandidate[] = [
+      {
+        id: "candidate-1",
+        rawText: "Wine 1",
+        price: "$21.00",
+        menuTab: null,
+        menuSection: null,
+        lineNumber: 0,
+        producer: "Producer 1",
+        label: "Label 1",
+        vintage: 2022,
+        color: "red",
+        varietal: null,
+        region: null,
+        notes: null,
+        extractionConfidence: 0.9,
+      },
+    ];
+
+    extractSourceTextMock.mockResolvedValue("RAW OCR TEXT");
+    parseWineCandidatesMock.mockReturnValue(candidates);
+
+    createWineProfileProvidersMock.mockReturnValue([
+      {
+        name: "vivino-direct",
+        isEnabled: true,
+        detail: "test",
+        lookup: vi.fn(async () => {
+          throw new RetryableWineProfileLookupError(
+            "vivino-direct",
+            "Producer 1 Label 1 2022",
+            new Error("Chromium disconnected"),
+          );
+        }),
+      },
+    ]);
+
+    await expect(
+      runAnalysisPipeline(
+        {
+          sourceType: "upload-image",
+          filename: "menu.png",
+          mimeType: "image/png",
+          storagePath: "/tmp/menu.png",
+        },
+        {},
+        {
+          candidateConcurrency: 1,
+        },
+      ),
+    ).rejects.toBeInstanceOf(AnalysisRetryableError);
   });
 });

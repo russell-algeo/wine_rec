@@ -2,23 +2,10 @@ import Foundation
 import UniformTypeIdentifiers
 
 struct APIClient {
-    var baseURL = URL(string: "http://localhost:3001")!
+    private let baseURL: URL
 
-    func fetchPreferences() async throws -> UserTastePreference {
-        try await requestJSON(
-            path: "/api/preferences",
-            as: PreferencesResponse.self
-        ).preferences
-    }
-
-    func savePreferences(_ preferences: UserTastePreference) async throws {
-        _ = try await requestJSON(
-            path: "/api/preferences",
-            method: "PUT",
-            body: try JSONEncoder().encode(preferences),
-            contentType: "application/json",
-            as: PreferencesResponse.self
-        )
+    init(baseURL: URL = APIClient.resolveBaseURL()) {
+        self.baseURL = baseURL
     }
 
     func fetchProviderHealth() async throws -> [ProviderHealth] {
@@ -61,22 +48,6 @@ struct APIClient {
         )
     }
 
-    func queueAnalysis(id: String) async throws -> CreateAnalysisResponse {
-        try await requestJSON(
-            path: "/api/analyses/\(id)/process",
-            method: "POST",
-            as: CreateAnalysisResponse.self
-        )
-    }
-
-    func cancelAnalysis(id: String) async throws -> CreateAnalysisResponse {
-        try await requestJSON(
-            path: "/api/analyses/\(id)/cancel",
-            method: "POST",
-            as: CreateAnalysisResponse.self
-        )
-    }
-
     func fetchAnalysis(id: String) async throws -> AnalysisRun {
         try await requestJSON(path: "/api/analyses/\(id)", as: AnalysisRun.self)
     }
@@ -111,10 +82,20 @@ struct APIClient {
         }
 
         guard (200..<300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8)?
+            let message = decodeErrorMessage(from: data) ??
+                String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw APIClientError.requestFailed(statusCode: http.statusCode, message: message)
         }
+    }
+
+    private func decodeErrorMessage(from data: Data) -> String? {
+        guard !data.isEmpty else {
+            return nil
+        }
+
+        let envelope = try? JSONDecoder().decode(APIErrorEnvelope.self, from: data)
+        return envelope?.message?.nilIfEmpty ?? envelope?.error?.nilIfEmpty
     }
 
     private func inferMimeType(for fileURL: URL) -> String {
@@ -124,6 +105,24 @@ struct APIClient {
 
         return UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType ?? "image/jpeg"
     }
+
+    private static func resolveBaseURL() -> URL {
+        if
+            let override = ProcessInfo.processInfo.environment["WINE_REC_API_BASE_URL"],
+            let url = URL(string: override),
+            url.scheme?.isEmpty == false,
+            url.host?.isEmpty == false
+        {
+            return url
+        }
+
+        return URL(string: "https://wine-rec.vercel.app")!
+    }
+}
+
+private struct APIErrorEnvelope: Decodable {
+    let message: String?
+    let error: String?
 }
 
 enum APIClientError: LocalizedError {
@@ -141,5 +140,12 @@ enum APIClientError: LocalizedError {
 
             return "Request failed with \(statusCode)."
         }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

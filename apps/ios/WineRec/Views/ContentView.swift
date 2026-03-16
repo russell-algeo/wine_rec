@@ -11,6 +11,7 @@ private enum AppArtwork {
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showingImporter = false
@@ -24,6 +25,10 @@ struct ContentView: View {
 
     private var heroHeight: CGFloat {
         min(max(UIScreen.main.bounds.height * 0.56, 430), 580)
+    }
+
+    private var shouldStackPrimaryControls: Bool {
+        horizontalSizeClass == .compact && UIScreen.main.bounds.width < 430
     }
 
     private func confirmPendingURL() {
@@ -121,8 +126,8 @@ struct ContentView: View {
     private var topBar: some View {
         HStack(spacing: 14) {
             Text("Wine Rec")
-                .font(.system(size: 18, weight: .black, design: .serif))
-                .tracking(-0.3)
+                .font(AppTypography.display(size: 22))
+                .tracking(-0.65)
                 .foregroundStyle(AppPalette.ink)
 
             Spacer()
@@ -132,26 +137,26 @@ struct ContentView: View {
                     showingTastePanel.toggle()
                 }
             }
-            .buttonStyle(OutlineActionButtonStyle())
+            .buttonStyle(NavToggleButtonStyle())
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .background(AppPalette.background.opacity(0.92), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AppPalette.line, lineWidth: 1)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(AppPalette.background.opacity(0.88))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AppPalette.line)
+                .frame(height: 1)
                 .allowsHitTesting(false)
-        )
-        .shadow(color: .black.opacity(0.05), radius: 14, y: 6)
-        .padding(.horizontal, 20)
-        .padding(.top, 10)
+        }
     }
 
     private var tasteDrawer: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 18) {
                 Text("How should your wine taste?")
-                    .font(.system(size: 22, weight: .black, design: .serif))
+                    .font(AppTypography.display(size: 22))
+                    .tracking(-0.44)
                     .foregroundStyle(AppPalette.ink)
 
                 VStack(spacing: 16) {
@@ -170,59 +175,65 @@ struct ContentView: View {
     }
 
     private func heroSection(proxy: ScrollViewProxy) -> some View {
-        ZStack {
-            Image(AppArtwork.hero)
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay {
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(0.08),
-                            Color.black.opacity(0.16),
-                            Color.black.opacity(0.62)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
-                .overlay(alignment: .top) {
-                    LinearGradient(
-                        colors: [Color.black.opacity(0.18), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 140)
-                }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: heroHeight)
-        .overlay(alignment: .bottomLeading) {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("WINE\nREC")
-                    .font(.system(size: 46, weight: .black, design: .serif))
-                    .foregroundStyle(.white)
-                    .tracking(-1.3)
-                    .lineSpacing(-8)
-                    .multilineTextAlignment(.leading)
+        GeometryReader { geometry in
+            let horizontalInset: CGFloat = 16
+            let copyWidth = max(geometry.size.width - (horizontalInset * 2), 0)
+            let titleSize: CGFloat = geometry.size.width < 360 ? 44 : 48
 
-                Text("Find the best bottle on any wine list.")
-                    .font(.system(size: 19, weight: .semibold, design: .default))
-                    .foregroundStyle(Color.white.opacity(0.88))
-                    .frame(maxWidth: 240, alignment: .leading)
-
-                Button("Get Started") {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
-                        proxy.scrollTo("ingest", anchor: .top)
+            ZStack(alignment: .bottomLeading) {
+                Image(AppArtwork.hero)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .overlay {
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(0.08),
+                                Color.black.opacity(0.16),
+                                Color.black.opacity(0.62)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                     }
+
+                LinearGradient(
+                    colors: [Color.black.opacity(0.18), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 140)
+                .frame(maxHeight: .infinity, alignment: .top)
+
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("WINE REC")
+                        .font(AppTypography.display(size: titleSize))
+                        .foregroundStyle(.white)
+                        .tracking(-1.44)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.74)
+                        .multilineTextAlignment(.leading)
+
+                    Text("Find the best bottle on any wine list.")
+                        .font(AppTypography.body(size: 19))
+                        .foregroundStyle(Color.white.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button("Get Started") {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
+                            proxy.scrollTo("ingest", anchor: .top)
+                        }
+                    }
+                    .buttonStyle(PrimaryActionButtonStyle())
                 }
-                .buttonStyle(PrimaryActionButtonStyle())
+                .frame(width: copyWidth, alignment: .leading)
+                .padding(.leading, horizontalInset)
+                .padding(.bottom, 30)
             }
-            .frame(maxWidth: 240, alignment: .leading)
-            .padding(.leading, 24)
-            .padding(.bottom, 30)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottomLeading)
+            .clipped()
         }
-        .clipped()
+        .frame(height: heroHeight)
     }
 
     private var ingestSection: some View {
@@ -230,7 +241,8 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("What's on the list?")
-                        .font(.system(size: 28, weight: .black, design: .serif))
+                        .font(AppTypography.display(size: 28))
+                        .tracking(-0.56)
                         .foregroundStyle(AppPalette.ink)
                     Text("Paste a link or bring in a photo, screenshot, or PDF of any wine list.")
                         .font(.body)
@@ -286,7 +298,8 @@ struct ContentView: View {
                 if model.hasPendingSource {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(model.isFirstTimeUser ? "How do you like your wine?" : "Your preferences are saved.")
-                            .font(.system(size: 20, weight: .heavy, design: .serif))
+                            .font(AppTypography.display(size: 20, weight: .heavy))
+                            .tracking(-0.4)
                             .foregroundStyle(AppPalette.ink)
 
                         Text(model.isFirstTimeUser
@@ -339,15 +352,17 @@ struct ContentView: View {
     }
 
     private var urlInputControls: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                urlTextField
-                nextButton(fullWidth: false)
-            }
-
-            VStack(spacing: 10) {
-                urlTextField
-                nextButton(fullWidth: true)
+        Group {
+            if shouldStackPrimaryControls {
+                VStack(spacing: 10) {
+                    urlTextField
+                    nextButton(fullWidth: true)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    urlTextField
+                    nextButton(fullWidth: false)
+                }
             }
         }
     }
@@ -377,15 +392,17 @@ struct ContentView: View {
     }
 
     private var sourceSelectionControls: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                photoPickerButton
-                filePickerButton
-            }
-
-            VStack(spacing: 12) {
-                photoPickerButton
-                filePickerButton
+        Group {
+            if shouldStackPrimaryControls {
+                VStack(spacing: 12) {
+                    photoPickerButton
+                    filePickerButton
+                }
+            } else {
+                HStack(spacing: 12) {
+                    photoPickerButton
+                    filePickerButton
+                }
             }
         }
     }
@@ -498,7 +515,8 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Results")
-                        .font(.system(size: 30, weight: .black, design: .serif))
+                        .font(AppTypography.display(size: 30))
+                        .tracking(-0.6)
                         .foregroundStyle(AppPalette.ink)
 
                     if let analysis, !analysis.recommendations.isEmpty {
@@ -512,14 +530,8 @@ struct ContentView: View {
 
                 if let analysisProgress, analysisProgress.status != .completed {
                     AnalysisProgressCard(
-                        progress: analysisProgress,
-                        canCancel: !(model.analysisState?.status.isTerminal ?? true),
-                        isStopping: model.isStoppingAnalysis
-                    ) {
-                        Task {
-                            await model.cancelCurrentAnalysis()
-                        }
-                    }
+                        progress: analysisProgress
+                    )
                 }
 
                 if isPriceFilterActive, let _ = priceBounds {
@@ -579,7 +591,8 @@ struct ContentView: View {
                                         .textCase(.uppercase)
                                         .foregroundStyle(AppPalette.muted)
                                     Text(section.label)
-                                        .font(.system(size: 22, weight: .heavy, design: .serif))
+                                        .font(AppTypography.display(size: 22, weight: .heavy))
+                                        .tracking(-0.44)
                                         .foregroundStyle(AppPalette.ink)
                                 }
 
@@ -857,7 +870,8 @@ private struct ResultCard: View {
                     }
 
                     Text(menuTitle)
-                        .font(.system(size: 22, weight: .heavy, design: .serif))
+                        .font(AppTypography.display(size: 22, weight: .heavy))
+                        .tracking(-0.44)
                         .foregroundStyle(AppPalette.ink)
 
                     if let matchedTitle {
@@ -1176,9 +1190,6 @@ private struct VivinoRatingBlock: View {
 
 private struct AnalysisProgressCard: View {
     let progress: AnalysisProgressState
-    let canCancel: Bool
-    let isStopping: Bool
-    let onCancel: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1210,12 +1221,6 @@ private struct AnalysisProgressCard: View {
             } else {
                 ProgressView()
                     .tint(progress.tint)
-            }
-
-            if canCancel {
-                Button(isStopping ? "Stopping..." : "Stop Analysis", action: onCancel)
-                    .buttonStyle(OutlineActionButtonStyle())
-                    .disabled(isStopping)
             }
         }
         .padding(18)
@@ -1369,14 +1374,14 @@ private struct SurfaceCard<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(22)
-        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(20)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(AppPalette.line, lineWidth: 1)
                 .allowsHitTesting(false)
         )
-        .shadow(color: .black.opacity(0.06), radius: 18, y: 8)
+        .shadow(color: .black.opacity(0.05), radius: 12, y: 6)
     }
 }
 
@@ -1422,8 +1427,8 @@ private struct StoryImageBreakCard: View {
             )
 
             Text(title)
-                .font(.system(size: 34, weight: .black, design: .serif))
-                .tracking(-1.2)
+                .font(AppTypography.display(size: 34))
+                .tracking(-1.02)
                 .multilineTextAlignment(isLeading ? .leading : .trailing)
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, alignment: isLeading ? .leading : .trailing)
@@ -1463,32 +1468,8 @@ private struct SourceChooserCard<Content: View>: View {
 
 private struct AppBackground: View {
     var body: some View {
-        ZStack {
-            AppPalette.background
-                .ignoresSafeArea()
-
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0.34),
-                    AppPalette.accentBlue.opacity(0.03),
-                    AppPalette.background
-                ],
-                startPoint: .top,
-                endPoint: .center
-            )
+        AppPalette.background
             .ignoresSafeArea()
-
-            LinearGradient(
-                colors: [
-                    .clear,
-                    .clear,
-                    AppPalette.accentRed.opacity(0.04)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-        }
     }
 }
 
@@ -1557,13 +1538,14 @@ private struct PrimaryActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 15, weight: .bold, design: .default))
+            .font(AppTypography.body(size: 18, weight: .heavy))
+            .tracking(0.18)
             .foregroundStyle(.white)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 13)
+            .padding(.horizontal, 36)
+            .padding(.vertical, 16)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(configuration.isPressed ? AppPalette.accentRed.opacity(0.84) : AppPalette.accentRed)
             )
             .shadow(color: AppPalette.accentRed.opacity(0.18), radius: configuration.isPressed ? 6 : 10, y: 4)
@@ -1576,13 +1558,13 @@ private struct CompactPrimaryActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 14, weight: .bold, design: .default))
+            .font(AppTypography.body(size: 14, weight: .bold))
             .foregroundStyle(.white)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(configuration.isPressed ? AppPalette.accentRed.opacity(0.84) : AppPalette.accentRed)
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
@@ -1592,13 +1574,29 @@ private struct CompactPrimaryActionButtonStyle: ButtonStyle {
 private struct OutlineActionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 14, weight: .bold, design: .default))
+            .font(AppTypography.body(size: 14, weight: .bold))
             .foregroundStyle(AppPalette.accentBlue)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(AppPalette.line, lineWidth: 1)
+            )
+            .opacity(configuration.isPressed ? 0.84 : 1)
+    }
+}
+
+private struct NavToggleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(AppTypography.body(size: 14, weight: .bold))
+            .foregroundStyle(AppPalette.accentBlue)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(AppPalette.line, lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.84 : 1)
@@ -1781,6 +1779,16 @@ private struct TastingNoteVisual {
     let accent: Color
     let surface: Color
     let symbol: String
+}
+
+private enum AppTypography {
+    static func display(size: CGFloat, weight: Font.Weight = .black) -> Font {
+        .system(size: size, weight: weight, design: .default)
+    }
+
+    static func body(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .default)
+    }
 }
 
 private enum AppPalette {

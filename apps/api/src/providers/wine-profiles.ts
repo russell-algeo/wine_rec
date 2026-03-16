@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { appConfig } from "../config.js";
 import {
   pickPreferredVivinoImageUrl,
+  RetryableVivinoBrowserError,
   VivinoBrowser,
   type SearchHit,
   type VivinoRatingSource,
@@ -21,6 +22,17 @@ export interface WineProfileProvider {
   isEnabled: boolean;
   detail: string;
   lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null>;
+}
+
+export class RetryableWineProfileLookupError extends Error {
+  constructor(
+    readonly provider: string,
+    readonly candidateQuery: string,
+    readonly cause: unknown,
+  ) {
+    super(`Retryable ${provider} lookup failure for ${candidateQuery}`);
+    this.name = "RetryableWineProfileLookupError";
+  }
 }
 
 type RawExternalProfile = {
@@ -325,7 +337,7 @@ export function extractTastingNoteGroups(
   if (!flavor?.length) return undefined;
 
   const groups = flavor
-    .map((group) => {
+    .map((group): TastingNoteGroup | null => {
       const keywords: string[] = [];
       const keywordImageUrls: Array<string | null> = [];
       const keywordIndexes = new Map<string, number>();
@@ -374,7 +386,7 @@ export function extractTastingNoteGroups(
         imageUrl,
       } satisfies TastingNoteGroup;
     })
-    .filter((group): group is TastingNoteGroup => Boolean(group))
+    .filter((group): group is TastingNoteGroup => group !== null)
     .sort((left, right) => {
       const scoreDelta = (right.score ?? 0) - (left.score ?? 0);
       if (scoreDelta !== 0) return scoreDelta;
@@ -578,7 +590,14 @@ class VivinoDirectProvider implements WineProfileProvider {
   }
 
   private async searchByName(query: string): Promise<SearchHit[]> {
-    return VivinoBrowser.getInstance().search(query);
+    try {
+      return await VivinoBrowser.getInstance().search(query);
+    } catch (error) {
+      if (error instanceof RetryableVivinoBrowserError) {
+        throw new RetryableWineProfileLookupError(this.name, query, error);
+      }
+      throw error;
+    }
   }
 
   private async fetchWineMeta(bestHit: SearchHit): Promise<{

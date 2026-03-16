@@ -39,6 +39,7 @@ export async function extractSourceText(input: {
   mimeType: string;
   storagePath: string;
   sourceUrl?: string;
+  fileBuffer?: Buffer;
 }): Promise<string> {
   if (input.sourceUrl || input.sourceType === "url-html" || input.sourceType === "url-pdf") {
     if (!input.sourceUrl) {
@@ -49,7 +50,14 @@ export async function extractSourceText(input: {
   }
 
   const ocrProvider = createOcrProvider();
-  return ocrProvider.extractText(input);
+  return ocrProvider.extractText(
+    input.fileBuffer
+      ? {
+          ...input,
+          buffer: input.fileBuffer,
+        }
+      : input,
+  );
 }
 
 export async function extractTextFromUrl(sourceUrl: string): Promise<string> {
