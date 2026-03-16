@@ -1969,6 +1969,16 @@ h1 {
     min-width: 0;
   }
 
+  /* Row 2, full width: matched-wine subtitle / uncertainty note */
+  .result-head .wine-subtitle,
+  .result-head .wine-uncertainty {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+    align-self: start;
+    margin-top: 0.2rem;
+  }
+
   /* Row 1, col 2: fit badge — scaled down to 0.75x */
   .result-head .score-badge {
     grid-column: 2;
@@ -1987,16 +1997,16 @@ h1 {
     font-size: 1.05rem;
   }
 
-  /* Row 2, col 1: vivino rating */
+  /* Row 3, col 1: vivino rating */
   .result-head .vivino-rating {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 3;
   }
 
-  /* Row 2, col 2: price pill */
+  /* Row 3, col 2: price pill */
   .result-head .price-tag {
     grid-column: 2;
-    grid-row: 2;
+    grid-row: 3;
     align-self: start;
     justify-self: end;
     font-size: 0.8rem;
