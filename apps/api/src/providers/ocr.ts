@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
+import type { Worker as TesseractWorker } from "tesseract.js";
 
 import { appConfig } from "../config.js";
 import { buildLayoutAwareTextFromTsv } from "./tesseract-layout.js";
@@ -175,7 +176,58 @@ class TesseractOcrProvider implements OcrProvider {
   }
 }
 
+// Module-level singleton — persists across warm invocations in the same container.
+// Initialization costs ~1–3 s (WASM load + language model); paid at most once per container.
+let _tesseractJsWorker: TesseractWorker | null = null;
+
+async function getTesseractJsWorker(): Promise<TesseractWorker> {
+  if (_tesseractJsWorker) return _tesseractJsWorker;
+
+  const { createWorker } = await import("tesseract.js");
+  const base = process.cwd(); // '/var/task' on Vercel — never use __dirname here
+
+  _tesseractJsWorker = await createWorker("eng", 1, {
+    corePath: path.join(base, "node_modules/tesseract.js-core"),
+    workerPath: path.join(base, "node_modules/tesseract.js/src/worker-script/node/index.js"),
+    langPath: path.join(base, "tessdata"),
+    gzip: false,
+    cacheMethod: "none",
+    workerBlobURL: false,
+  });
+
+  return _tesseractJsWorker;
+}
+
+class TesseractJsOcrProvider implements OcrProvider {
+  name = "tesseract-js";
+  isEnabled = true;
+  detail = "Uses Tesseract.js (WASM) for image uploads. No external API dependency.";
+
+  async extractText(input: {
+    buffer?: Buffer;
+    storagePath: string;
+    filename: string;
+    mimeType: string;
+  }): Promise<string> {
+    if (input.filename.toLowerCase().endsWith(".txt")) {
+      return readTextInput(input);
+    }
+
+    if (input.mimeType === "application/pdf") {
+      throw new Error("Tesseract.js OCR currently supports image uploads, not PDFs");
+    }
+
+    const bytes = await readInputBuffer(input);
+    const worker = await getTesseractJsWorker();
+    const { data } = await worker.recognize(bytes, {}, { tsv: true });
+    return buildLayoutAwareTextFromTsv(data.tsv ?? "").trim();
+  }
+}
+
 export function createOcrProvider(): OcrProvider {
+  if (appConfig.ocrProvider === "tesseract-js") {
+    return new TesseractJsOcrProvider();
+  }
   if (appConfig.ocrProvider === "tesseract") {
     return new TesseractOcrProvider();
   }
