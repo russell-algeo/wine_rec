@@ -16,6 +16,7 @@ task_plan.md
 progress.md
 findings.md
 .superpowers/
+.worktrees/
 docs/
 .claude/
 *.swp
