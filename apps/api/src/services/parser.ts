@@ -54,7 +54,7 @@ const nonWineHints = [
 const menuTabMarkerPattern = /^@@TAB:\s*(.+)$/;
 const menuSectionMarkerPattern = /^@@SECTION:\s*(.+)$/;
 const inlinePricePattern =
-  /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?(?:\s+[A-Za-z])?)\s*$/;
+  /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?(?:\s+[A-Za-z0-9]+)?)\s*$/;
 const ocrCorrections: Array<[RegExp, string]> = [
   [/\bRhone\b/g, "Rhône"],
   [/\bSchaztel\b/g, "Schäztel"],
