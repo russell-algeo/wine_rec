@@ -1054,6 +1054,17 @@ h1 {
   margin: 0.75rem 0 0;
   font-size: 0.78rem;
   color: var(--muted);
+  transition: color 0.2s ease;
+}
+
+.result-taste-panel-hint.is-rerank-flash {
+  color: var(--accent);
+  animation: rerank-flash-in 0.2s ease;
+}
+
+@keyframes rerank-flash-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .result-controls {
@@ -2040,9 +2051,9 @@ h1 {
     justify-content: flex-start;
     gap: 0.35rem;
     width: auto;
-    padding: 0.4rem 0.75rem;
-    border: 1px solid var(--line);
-    border-radius: 999px;
+    padding: 0.4rem 0;
+    border: none;
+    border-radius: 0;
     background: transparent;
     color: var(--muted);
     font-size: 0.875rem;
@@ -2074,6 +2085,16 @@ h1 {
 
   .result-extra-notices.is-open {
     display: block;
+  }
+
+  .result-filter-notice {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+  }
+
+  .result-card .taste-profile-heading {
+    margin-bottom: 0.2rem;
   }
 
   .price-filter-control {

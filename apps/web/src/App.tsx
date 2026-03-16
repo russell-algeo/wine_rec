@@ -340,6 +340,7 @@ export function App() {
   const [inNewAnalysisFlow, setInNewAnalysisFlow] = useState(false);
   const [urlFetching, setUrlFetching] = useState(false);
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
+  const [showRerankFlash, setShowRerankFlash] = useState(false);
   const [additionalFiltersOpen, setAdditionalFiltersOpen] = useState(false);
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
   const [modalPreferences, setModalPreferences] = useState<Record<TasteDimension, number | null>>(
@@ -405,6 +406,7 @@ export function App() {
   );
 
   function updatePreference(dimension: TasteDimension, value: number) {
+    setHasStoredPreferences(true);
     setPreferences((current) => {
       if (dimension === "body") {
         return { ...current, body: value };
@@ -434,6 +436,13 @@ export function App() {
       setLoadedPreferences(preferences);
     }
   }, [analysis, preferences]);
+
+  useEffect(() => {
+    if (!isLiveReranking) return;
+    setShowRerankFlash(true);
+    const timer = setTimeout(() => setShowRerankFlash(false), 1500);
+    return () => clearTimeout(timer);
+  }, [isLiveReranking, preferences]);
 
   useEffect(() => {
     if (!analysisState || terminalAnalysisStatuses.has(analysisState.status) || pollingPaused) {
@@ -899,7 +908,15 @@ export function App() {
                     className="action"
                     disabled={!step1Ready}
                     onClick={() => {
-                      setStepTwoIsConfirmMode(tasteDimensionOrder.every((d) => modalPreferences[d] !== null));
+                      if (hasStoredPreferences) {
+                        setModalPreferences((current) =>
+                          tasteDimensionOrder.reduce(
+                            (acc, d) => ({ ...acc, [d]: current[d] ?? preferences[d] }),
+                            current
+                          )
+                        );
+                      }
+                      setStepTwoIsConfirmMode(hasStoredPreferences || tasteDimensionOrder.every((d) => modalPreferences[d] !== null));
                       setOnboardingStep(2);
                     }}
                     type="button"
@@ -1029,9 +1046,6 @@ export function App() {
                     type="button"
                   >
                     Adjust Preferences
-                    {isLiveReranking && (
-                      <span className="result-taste-live-badge" aria-label="Results re-ranked">Updated</span>
-                    )}
                   </button>
                   {hasActiveAnalysis ? (
                     <button
@@ -1064,8 +1078,8 @@ export function App() {
                         />
                       ))}
                     </div>
-                    <p className="result-taste-panel-hint">
-                      {"Adjust your preferences to automatically re-rank wines."}
+                    <p className={`result-taste-panel-hint${showRerankFlash ? " is-rerank-flash" : ""}`}>
+                      {showRerankFlash ? "✓ Rankings updated" : "Adjust your preferences to automatically re-rank wines."}
                     </p>
                   </div>
                 )}
@@ -1105,27 +1119,6 @@ export function App() {
                     </svg>
                   </button>
                   <div className={`result-controls-extra${additionalFiltersOpen ? " is-open" : ""}`}>
-                    {inferredRecommendationCount ? (
-                      <div className="result-control-group">
-                        <span>Taste data</span>
-                        <div aria-label="Filter inferred taste profiles" className="sort-toggle" role="group">
-                          <button
-                            className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
-                            onClick={() => setResultProfileFilter("all")}
-                            type="button"
-                          >
-                            All profiles
-                          </button>
-                          <button
-                            className={`sort-option${resultProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
-                            onClick={() => setResultProfileFilter("exclude-inferred")}
-                            type="button"
-                          >
-                            Hide inferred
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
                     {priceFilterBounds && effectiveMaxPrice != null ? (
                       <div className="result-control-group result-control-group-budget">
                         <span>Budget</span>
@@ -1166,6 +1159,41 @@ export function App() {
                         </div>
                       </div>
                     ) : null}
+                    {inferredRecommendationCount ? (
+                      <div className="result-control-group">
+                        <span>Taste data</span>
+                        <div aria-label="Filter inferred taste profiles" className="sort-toggle" role="group">
+                          <button
+                            className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
+                            onClick={() => setResultProfileFilter("all")}
+                            type="button"
+                          >
+                            All profiles
+                          </button>
+                          <button
+                            className={`sort-option${resultProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
+                            onClick={() => setResultProfileFilter("exclude-inferred")}
+                            type="button"
+                          >
+                            Hide inferred
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {analysis && inferredRecommendationCount ? (
+                      <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
+                        <p className="result-filter-notice-title">
+                          {resultProfileFilter === "exclude-inferred"
+                            ? `${inferredRecommendationCount} inferred ${inferredRecommendationCount === 1 ? "profile" : "profiles"} hidden`
+                            : `${inferredRecommendationCount} ${inferredRecommendationCount === 1 ? "wine uses" : "wines use"} estimated taste data`}
+                        </p>
+                        <p className="helper">
+                          {resultProfileFilter === "exclude-inferred"
+                            ? "These wines are excluded because Vivino did not return a reliable match."
+                            : "When we cannot confirm a Vivino match, we infer the taste profile from the extracted wine details and show it with muted bars."}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -1194,22 +1222,6 @@ export function App() {
                 </p>
               </div>
             ) : null}
-            <div className={`result-extra-notices${additionalFiltersOpen ? " is-open" : ""}`}>
-              {analysis && inferredRecommendationCount ? (
-                <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
-                  <p className="result-filter-notice-title">
-                    {resultProfileFilter === "exclude-inferred"
-                      ? `${inferredRecommendationCount} inferred ${inferredRecommendationCount === 1 ? "profile" : "profiles"} hidden`
-                      : `${inferredRecommendationCount} ${inferredRecommendationCount === 1 ? "wine uses" : "wines use"} estimated taste data`}
-                  </p>
-                  <p className="helper">
-                    {resultProfileFilter === "exclude-inferred"
-                      ? "These wines are excluded because Vivino did not return a reliable match."
-                      : "When we cannot confirm a Vivino match, we infer the taste profile from the extracted wine details and show it with muted bars."}
-                  </p>
-                </div>
-              ) : null}
-            </div>
             {hasStructuredResults ? (
               <div className="result-section-browser">
                 <div className="result-section-browser-copy">
