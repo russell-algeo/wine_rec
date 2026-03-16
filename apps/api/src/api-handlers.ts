@@ -1,4 +1,5 @@
 import { Client as QStashClient } from "@upstash/qstash";
+import { put, del } from "@vercel/blob";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
@@ -31,7 +32,8 @@ const coordinatorWorkerJobPayloadSchema = z.object({
   sourceType: sourceTypeSchema,
   sourceFilename: z.string(),
   mimeType: z.string().optional(),
-  fileBase64: z.string().optional(),
+  fileBlobUrl: z.string().url().optional(),
+  fileBase64: z.string().optional(), // kept for backward compat with in-flight messages
   sourceUrl: z.string().url().optional(),
 });
 
@@ -276,6 +278,19 @@ export async function createUploadAnalysis(input: {
     sourceFilename: input.filename,
   });
 
+  let fileBlobUrl: string | undefined;
+  try {
+    const blob = await put(`uploads/${id}`, input.buffer, {
+      access: "public",
+      contentType: mimeType,
+    });
+    fileBlobUrl = blob.url;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to store upload";
+    await updateJob(id, { status: "failed", queueMessageId: null, errorMessage: message });
+    throw error;
+  }
+
   try {
     const { messageId } = await publishWorkerJob({
       mode: "coordinator",
@@ -283,10 +298,11 @@ export async function createUploadAnalysis(input: {
       sourceType,
       sourceFilename: input.filename,
       mimeType,
-      fileBase64: input.buffer.toString("base64"),
+      fileBlobUrl,
     });
     await updateJob(id, { queueMessageId: messageId });
   } catch (error) {
+    await del(fileBlobUrl).catch(() => undefined);
     const message = error instanceof Error ? error.message : "Failed to enqueue analysis";
     await updateJob(id, {
       status: "failed",
@@ -568,15 +584,26 @@ async function extractAndPersistJobState(
   payload: CoordinatorWorkerJobPayload,
   store: JobStore,
 ): Promise<{ extractedText: string; candidates: WineCandidate[] }> {
+  let fileBuffer: Buffer | undefined;
+
+  if (payload.fileBlobUrl) {
+    const response = await fetch(payload.fileBlobUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch upload from blob storage: ${response.status}`);
+    }
+    fileBuffer = Buffer.from(await response.arrayBuffer());
+    del(payload.fileBlobUrl).catch(() => undefined);
+  } else if (payload.fileBase64) {
+    fileBuffer = Buffer.from(payload.fileBase64, "base64");
+  }
+
   const extractedText = await extractSourceText({
     sourceType: payload.sourceType,
     filename: payload.sourceFilename,
     mimeType: payload.mimeType ?? "text/uri-list",
     storagePath: "",
     ...(payload.sourceUrl ? { sourceUrl: payload.sourceUrl } : {}),
-    ...(payload.fileBase64
-      ? { fileBuffer: Buffer.from(payload.fileBase64, "base64") }
-      : {}),
+    ...(fileBuffer ? { fileBuffer } : {}),
   });
   await assertJobActive(payload.jobId, store);
 

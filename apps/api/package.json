@@ -20,6 +20,7 @@
     "@sparticuz/chromium-min": "^143.0.4",
     "@upstash/qstash": "^2.9.0",
     "@upstash/redis": "^1.37.0",
+    "@vercel/blob": "^2.3.1",
     "@wine-rec/contracts": "0.1.0",
     "@wine-rec/core": "0.1.0",
     "dotenv": "^16.4.7",
