@@ -784,8 +784,8 @@ export function App() {
                 />
               ))}
             </div>
-            <p className="taste-panel-hint">
-              Adjust your preferences to automatically re-rank wines.
+            <p className={`taste-panel-hint${showRerankFlash ? " is-rerank-flash" : ""}`}>
+              {showRerankFlash ? "✓ Updated" : "Adjust your preferences to automatically re-rank wines."}
             </p>
           </div>
         </div>

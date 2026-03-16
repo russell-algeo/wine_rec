@@ -127,6 +127,12 @@ input {
   margin: 1rem 0 0;
   color: var(--muted);
   font-size: 0.88rem;
+  transition: color 0.2s ease;
+}
+
+.taste-panel-hint.is-rerank-flash {
+  color: var(--accent);
+  animation: rerank-flash-in 0.2s ease;
 }
 
 /* ── Hero ── */
