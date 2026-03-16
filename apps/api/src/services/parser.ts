@@ -346,7 +346,7 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
     if (isSectionHeader(line)) {
       flushBlock();
       currentColor = normalizeSectionHeader(line);
-      currentMenuSection = line;
+      currentMenuSection = line.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
       return;
     }
 
