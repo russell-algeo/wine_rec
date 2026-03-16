@@ -24,3 +24,4 @@ xcuserdata/
 .vercel
 .playwright-mcp/
 .env*.local
+.env.vercel
