@@ -568,6 +568,20 @@ h1 {
   color: var(--muted);
 }
 
+/* Pane 3 wrapper: results + shelf fill exactly one screen below the nav.
+   Shelf gets flex:1 so it takes only the space left over after results. */
+.pane-results {
+  min-height: calc(100vh - var(--nav-height));
+  min-height: calc(100dvh - var(--nav-height));
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-results .image-break-shelf {
+  flex: 1;
+  min-height: 0;
+}
+
 .stack {
   display: grid;
   gap: 1.25rem;
@@ -2344,5 +2358,16 @@ h1 {
   .drop-zone {
     min-height: 8rem;
     padding: 1.5rem 1rem;
+  }
+
+  /* Hero: extend behind Safari toolbar (100lvh) plus home indicator area.
+     padding-bottom uses (100lvh - 100svh) to dynamically measure the toolbar
+     height so the "Get Started" button always sits above the toolbar. */
+  .hero-card {
+    min-height: 100vh;
+    min-height: calc(100lvh + 90px);
+    /* Push content up so it clears the Safari toolbar + home indicator.
+       (100lvh - 100svh) = toolbar height; +50px = comfortable breathing room. */
+    padding-bottom: calc(3rem + (100lvh - 100svh) + 50px);
   }
 }

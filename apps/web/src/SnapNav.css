@@ -4,7 +4,7 @@
   position: fixed;
   left: 14px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translateY(-50%) translateX(-6px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -14,8 +14,17 @@
      SnapNav lives on the left edge and doesn't need to be on top of overlays. */
   z-index: 98;
   padding: 6px 4px;
-  /* Increase hover hit area without affecting layout */
   cursor: default;
+  /* Hidden by default — revealed by JS on scroll or mouse proximity */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.snap-nav--visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
 }
 
 /* Arrows — hidden by default, revealed on hover */
@@ -44,18 +53,19 @@
 /* Pills — vertical stack. Inactive = small circle; active = tall capsule.
    Same proportions as the step indicator in the ingest section, rotated 90°. */
 .snap-nav__pip {
-  width: 2px;
-  border-radius: 10px;
-  transition: height 0.22s ease, background 0.22s ease;
+  padding: 0;
+  width: 7px;
+  border-radius: 4px;
+  transition: height 0.2s ease, background 0.2s ease;
   border: none;
 }
 
 .snap-nav__pip--inactive {
-  height: 8px;
+  height: 7px;
 }
 
 .snap-nav__pip--active {
-  height: 26px;
+  height: 20px;
 }
 
 /* Light panes (ingest = pane 1, results = pane 2) */

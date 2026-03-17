@@ -3,13 +3,13 @@
 export type PaneChangeCallback = (pane: number) => void;
 
 /** Pixel delta required to trigger a snap between panes 0 and 1. */
-const SNAP_THRESHOLD = 35;
+const SNAP_THRESHOLD = 20;
 
 /**
  * Pixel delta required to escape the results pane (pane 2) by
  * scrolling up while at its top boundary.
  */
-const RESULTS_ESCAPE_THRESHOLD = 60;
+const RESULTS_ESCAPE_THRESHOLD = 40;
 
 /**
  * How long (ms) to ignore new scroll events after a snap fires.
@@ -33,7 +33,13 @@ export class SnapController {
 
   init(): void {
     this.destroy(); // self-healing: safe to call multiple times
+    // Prevent iOS Safari from restoring a previous scroll position on page load.
+    // Without this, Safari can restore e.g. scrollY=50 which causes the ingest
+    // section to peek below the hero — the snap controller always manages position.
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
     this.computeSnapPositions();
+    // Immediately lock to the current pane (guards against browser scroll restoration).
+    window.scrollTo({ top: this.snapPositions[this.currentPane] ?? 0, behavior: 'instant' as ScrollBehavior });
 
     window.addEventListener('wheel', this.handleWheel, { passive: false });
     window.addEventListener('touchstart', this.handleTouchStart, { passive: true });

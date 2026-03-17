@@ -439,6 +439,7 @@ export function App() {
     return () => controller.destroy();
   }, []);
 
+
   useEffect(() => {
     return () => {
       if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
@@ -1044,6 +1045,8 @@ export function App() {
           </h2>
         </section>
 
+        {/* ── Pane 3: results + shelf fill exactly one viewport below the nav ── */}
+        <div className="pane-results">
         {/* ── Results ── */}
         <section id="results" className="stack">
           <div className="panel">
@@ -1309,6 +1312,7 @@ export function App() {
             Curated by data.<br />Chosen by taste.
           </h2>
         </section>
+        </div>
       </main>
 
     </div>
