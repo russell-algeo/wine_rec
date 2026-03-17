@@ -709,6 +709,7 @@ export function App() {
   }
 
   function handleFileChange(file: File | null) {
+    cancelEagerAnalysis();
     if (filePreviewUrl) {
       URL.revokeObjectURL(filePreviewUrl);
     }
@@ -717,6 +718,18 @@ export function App() {
     setPendingUrl(null);
     if (file) {
       setFilePreviewUrl(URL.createObjectURL(file));
+      const formData = new FormData();
+      formData.set("file", file);
+      const promise = getJson<CreateAnalysisResponse>("/api/uploads", {
+        method: "POST",
+        body: formData,
+      });
+      eagerUploadRef.current = promise;
+      void promise.then((result) => {
+        if (eagerUploadRef.current === promise) {
+          eagerAnalysisIdRef.current = result.analysisId;
+        }
+      }).catch(() => {});
     } else {
       setFilePreviewUrl(null);
     }
