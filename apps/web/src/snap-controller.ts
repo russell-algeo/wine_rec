@@ -9,7 +9,7 @@ const SNAP_THRESHOLD = 20;
  * Pixel delta required to escape the results pane (pane 2) by
  * scrolling up while at its top boundary.
  */
-const RESULTS_ESCAPE_THRESHOLD = 40;
+const RESULTS_ESCAPE_THRESHOLD = 80;
 
 /**
  * How long (ms) to ignore new scroll events after a snap fires.
@@ -24,6 +24,10 @@ export class SnapController {
   private accumulated = 0;
   private cooldown = false;
   private touchStartY = 0;
+  /** Finger Y recorded the moment it first contacts the results top boundary.
+   *  Escape distance is measured from here, not from touchStartY, so that
+   *  momentum from scrolling up through results doesn't carry the user past. */
+  private wallEntryY: number | null = null;
   private onPaneChange: PaneChangeCallback;
   private resizeObserver: ResizeObserver | null = null;
 
@@ -44,14 +48,27 @@ export class SnapController {
     window.addEventListener('wheel', this.handleWheel, { passive: false });
     window.addEventListener('touchstart', this.handleTouchStart, { passive: true });
     window.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+    // Catches iOS momentum scroll carrying past the results top boundary after finger lift.
+    window.addEventListener('scroll', this.handleScroll, { passive: true });
 
     // Recompute snap positions whenever ingest or results section resizes.
-    // Re-snap to current pane so viewport stays locked.
     this.resizeObserver = new ResizeObserver(() => {
+      // Record how far the user has scrolled past the current pane top before
+      // recalculating, so we can restore their position afterward. This prevents
+      // new wine cards being appended from jumping the viewport back to the pane top.
+      const prevPaneTop = this.snapPositions[this.currentPane] ?? 0;
+      const scrolledBeyondPane = window.scrollY - prevPaneTop;
+
       this.computeSnapPositions();
-      // Immediately re-lock viewport to current pane (handles content expansion).
-      const pos = this.snapPositions[this.currentPane] ?? 0;
-      window.scrollTo({ top: pos, behavior: 'instant' as ScrollBehavior }); // 'instant' may not be in older TS lib.dom
+
+      const newPaneTop = this.snapPositions[this.currentPane] ?? 0;
+      if (scrolledBeyondPane > 5) {
+        // User has scrolled into the pane content — preserve their relative offset.
+        window.scrollTo({ top: newPaneTop + scrolledBeyondPane, behavior: 'instant' as ScrollBehavior });
+      } else {
+        // At or near the pane top — re-lock to the (possibly shifted) pane position.
+        window.scrollTo({ top: newPaneTop, behavior: 'instant' as ScrollBehavior });
+      }
     });
 
     const ingest = document.getElementById('ingest');
@@ -65,6 +82,7 @@ export class SnapController {
     window.removeEventListener('wheel', this.handleWheel);
     window.removeEventListener('touchstart', this.handleTouchStart);
     window.removeEventListener('touchmove', this.handleTouchMove);
+    window.removeEventListener('scroll', this.handleScroll);
     this.resizeObserver?.disconnect();
   }
 
@@ -99,6 +117,26 @@ export class SnapController {
     ];
   }
 
+  // Catches momentum scroll (after finger lift) carrying past the results top boundary.
+  // Touch events stop firing once the finger is lifted, so this scroll listener is the
+  // only hook we have on iOS momentum.
+  // Strategy: first call scrollTo at the *current* position with 'instant' — this has no
+  // visible effect but kills iOS inertia. Then in the next frame, smoothly animate to the
+  // boundary so the landing feels the same as the intentional auto-snap.
+  private handleScroll = (): void => {
+    if (this.cooldown) return;
+    if (this.currentPane === 2 && window.scrollY < this.snapPositions[2] - 2) {
+      this.cooldown = true;
+      // Interrupt inertia without a visible jump.
+      window.scrollTo({ top: window.scrollY, behavior: 'instant' as ScrollBehavior });
+      // Smoothly land on the boundary in the next frame (after the instant call commits).
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: this.snapPositions[2], behavior: 'smooth' });
+      });
+      setTimeout(() => { this.cooldown = false; }, SNAP_COOLDOWN_MS);
+    }
+  };
+
   private handleWheel = (e: WheelEvent): void => {
     // In results pane, only intercept at top boundary scrolling up.
     if (this.currentPane === 2 && !(this.isAtResultsTop() && e.deltaY < 0)) {
@@ -110,31 +148,44 @@ export class SnapController {
 
   private handleTouchStart = (e: TouchEvent): void => {
     this.touchStartY = e.touches[0]?.clientY ?? this.touchStartY;
-    // Reset accumulation at the start of each gesture so stale deltas from a
-    // previous swipe never influence the next one.
+    // Reset accumulation and wall-entry at the start of each gesture.
     this.accumulated = 0;
+    this.wallEntryY = null;
   };
 
   private handleTouchMove = (e: TouchEvent): void => {
     const touch = e.touches[0];
     if (!touch) return;
-    // Use total distance from touchstart (not incremental per-frame).
-    // This means a 35px swipe always feels like a 35px swipe regardless of
-    // how fast the finger moves or how many frames fired.
-    const delta = this.touchStartY - touch.clientY;
+    const fingerY = touch.clientY;
+    // Total delta from where this touch began (negative = finger moved down = scrolling up).
+    const totalDelta = this.touchStartY - fingerY;
 
-    // In pane 2 (results): only suppress native scroll when the user is at the
-    // top boundary AND swiping up (delta < 0 = finger moving down = scrolling up).
-    // All other touches in pane 2 must NOT call preventDefault so native scroll
-    // operates normally over the wine list. Calling preventDefault here when not
-    // needed would block iOS momentum scrolling in results.
-    if (this.currentPane === 2 && !(this.isAtResultsTop() && delta < 0)) {
-      return; // do NOT call preventDefault — let native scroll handle it
+    if (this.currentPane === 2) {
+      if (!(this.isAtResultsTop() && totalDelta < 0)) {
+        // Not at the top boundary, or not pulling upward — let native scroll handle.
+        // Also clear wall entry so a fresh contact point is recorded next time.
+        this.wallEntryY = null;
+        return; // do NOT preventDefault — keeps iOS momentum scrolling intact
+      }
+
+      // User has reached the top boundary and is pulling upward against it (the "wall").
+      // Record the exact finger position the first time we detect this, so escape
+      // distance is measured only from the wall contact point — not from wherever
+      // the touch originally started deeper in the list.
+      if (this.wallEntryY === null) {
+        this.wallEntryY = fingerY;
+      }
+
+      e.preventDefault();
+      // accumulated is negative and grows more negative the further past the wall.
+      this.accumulated = this.wallEntryY - fingerY;
+      this.checkSnap();
+      return;
     }
+
     e.preventDefault();
-    // Set accumulated directly to total swipe distance (not additive) so the
-    // threshold check is always against the real swipe distance.
-    this.accumulated = delta;
+    // For panes 0 & 1: measure against the original touch start as before.
+    this.accumulated = totalDelta;
     this.checkSnap();
   };
 
