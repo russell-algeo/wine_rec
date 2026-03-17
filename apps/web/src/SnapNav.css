@@ -41,15 +41,17 @@
   pointer-events: none;
 }
 
-/* Pills */
+/* Pills — vertical stack. Inactive = small circle; active = tall capsule.
+   Same proportions as the step indicator in the ingest section, rotated 90°. */
 .snap-nav__pip {
-  width: 4px;
+  width: 8px;
   border-radius: 10px;
   transition: height 0.22s ease, background 0.22s ease;
+  border: none;
 }
 
 .snap-nav__pip--inactive {
-  height: 4px;
+  height: 8px;
 }
 
 .snap-nav__pip--active {

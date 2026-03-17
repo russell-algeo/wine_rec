@@ -3,13 +3,13 @@
 export type PaneChangeCallback = (pane: number) => void;
 
 /** Pixel delta required to trigger a snap between panes 0 and 1. */
-const SNAP_THRESHOLD = 50;
+const SNAP_THRESHOLD = 35;
 
 /**
  * Pixel delta required to escape the results pane (pane 2) by
  * scrolling up while at its top boundary.
  */
-const RESULTS_ESCAPE_THRESHOLD = 80;
+const RESULTS_ESCAPE_THRESHOLD = 60;
 
 /**
  * How long (ms) to ignore new scroll events after a snap fires.
@@ -97,13 +97,18 @@ export class SnapController {
 
   private handleTouchStart = (e: TouchEvent): void => {
     this.touchStartY = e.touches[0]?.clientY ?? this.touchStartY;
+    // Reset accumulation at the start of each gesture so stale deltas from a
+    // previous swipe never influence the next one.
+    this.accumulated = 0;
   };
 
   private handleTouchMove = (e: TouchEvent): void => {
     const touch = e.touches[0];
     if (!touch) return;
+    // Use total distance from touchstart (not incremental per-frame).
+    // This means a 35px swipe always feels like a 35px swipe regardless of
+    // how fast the finger moves or how many frames fired.
     const delta = this.touchStartY - touch.clientY;
-    this.touchStartY = touch.clientY;
 
     // In pane 2 (results): only suppress native scroll when the user is at the
     // top boundary AND swiping up (delta < 0 = finger moving down = scrolling up).
@@ -114,28 +119,38 @@ export class SnapController {
       return; // do NOT call preventDefault — let native scroll handle it
     }
     e.preventDefault();
-    this.trySnap(delta);
+    // Set accumulated directly to total swipe distance (not additive) so the
+    // threshold check is always against the real swipe distance.
+    this.accumulated = delta;
+    this.checkSnap();
   };
 
+  // Called by wheel handler — additively accumulates delta then checks threshold.
   private trySnap(delta: number): void {
     if (this.cooldown) return;
 
-    // In results pane: only care about upward scrolling at the top boundary.
     if (this.currentPane === 2) {
       if (delta < 0 && this.isAtResultsTop()) {
         this.accumulated += delta;
-        if (this.accumulated < -RESULTS_ESCAPE_THRESHOLD) {
-          this.snapTo(1);
-        }
+        if (this.accumulated < -RESULTS_ESCAPE_THRESHOLD) this.snapTo(1);
       } else {
-        // Let native scroll handle everything else in results.
         this.accumulated = 0;
       }
       return;
     }
 
-    // Panes 0 and 1: accumulate and snap.
     this.accumulated += delta;
+    this.checkSnap();
+  }
+
+  // Called by touch handler (accumulated already set) and by trySnap.
+  // Fires a snap if accumulated has crossed the threshold.
+  private checkSnap(): void {
+    if (this.cooldown) return;
+    if (this.currentPane === 2) {
+      if (this.accumulated < -RESULTS_ESCAPE_THRESHOLD) this.snapTo(1);
+      return;
+    }
     if (this.accumulated > SNAP_THRESHOLD && this.currentPane < 2) {
       this.snapTo((this.currentPane + 1) as 0 | 1 | 2);
     } else if (this.accumulated < -SNAP_THRESHOLD && this.currentPane > 0) {
