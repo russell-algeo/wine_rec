@@ -7,3 +7,4 @@
 - Only write plans to a `.md` file if:
   - The user explicitly asks for it, or
   - The task is complex enough that a persistent written plan is genuinely necessary for safe execution.
+- Do NOT commit plans or design docs to git unless the user explicitly asks.
