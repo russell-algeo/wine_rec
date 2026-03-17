@@ -348,6 +348,7 @@ export function App() {
   const [resultsTastePanelOpen, setResultsTastePanelOpen] = useState(false);
   const [showRerankFlash, setShowRerankFlash] = useState(false);
   const [additionalFiltersOpen, setAdditionalFiltersOpen] = useState(false);
+  const [sectionBrowserOpen, setSectionBrowserOpen] = useState(false);
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
   const [currentPane, setCurrentPane] = useState(0);
   const snapControllerRef = useRef<SnapController | null>(null);
@@ -1236,13 +1237,19 @@ export function App() {
               </div>
             ) : null}
             {hasStructuredResults ? (
-              <div className="result-section-browser">
-                <div className="result-section-browser-copy">
+              <div className={`result-section-browser${sectionBrowserOpen ? " is-open" : ""}`}>
+                <button
+                  className="result-section-browser-toggle"
+                  onClick={() => setSectionBrowserOpen((v) => !v)}
+                  type="button"
+                >
                   <p className="result-section-browser-title">Browse by menu section</p>
+                  <span className={`result-section-browser-chevron${sectionBrowserOpen ? " is-open" : ""}`}>▾</span>
+                </button>
+                <div className="result-section-browser-body">
                   <p className="helper">
                     Jump between the source tabs and sections without losing the current ranking.
                   </p>
-                </div>
                 <div
                   aria-label="Filter results by source menu section"
                   className="result-section-browser-controls"
@@ -1267,6 +1274,7 @@ export function App() {
                       <strong>{section.recommendations.length}</strong>
                     </button>
                   ))}
+                </div>
                 </div>
               </div>
             ) : null}

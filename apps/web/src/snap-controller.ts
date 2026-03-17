@@ -183,6 +183,11 @@ export class SnapController {
       return;
     }
 
+    // Don't intercept touches on range inputs — let the browser deliver them
+    // to the slider natively. Without this, e.preventDefault() below would
+    // swallow the drag and the slider thumb would never move.
+    if ((e.target as Element).tagName === 'INPUT') return;
+
     e.preventDefault();
     // For panes 0 & 1: measure against the original touch start as before.
     this.accumulated = totalDelta;
