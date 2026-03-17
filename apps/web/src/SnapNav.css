@@ -27,27 +27,17 @@
   transform: translateY(-50%) translateX(0);
 }
 
-/* Arrows — hidden by default, revealed on hover */
-.snap-nav__arrow {
-  font-size: 0.6rem;
-  line-height: 1;
-  opacity: 0;
-  transition: opacity 0.18s ease;
-  background: none;
-  border: none;
-  padding: 2px;
-  cursor: pointer;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.snap-nav:hover .snap-nav__arrow {
-  opacity: 1;
-}
-
-.snap-nav__arrow--disabled {
-  opacity: 0 !important;
-  pointer-events: none;
+/* Desktop: always visible, horizontally centered between browser edge and "Wine Rec" text.
+   Nav left padding = clamp(1rem, 4vw, 2.5rem); pill widget width = 15px (4px pad + 7px + 4px pad).
+   left = (nav_padding - widget_width) / 2  →  equal gap on both sides. */
+@media (min-width: 481px) {
+  .snap-nav {
+    left: calc((clamp(1rem, 4vw, 2.5rem) - 15px) / 2);
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(-50%) translateX(0);
+    transition: none;
+  }
 }
 
 /* Pills — vertical stack. Inactive = small circle; active = tall capsule.
@@ -81,22 +71,24 @@
   background: #0c699a;
 }
 
-/* Dark pane (hero = pane 0) */
-.snap-nav--dark .snap-nav__arrow {
-  color: rgba(255, 255, 255, 0.55);
-}
-
-.snap-nav--dark .snap-nav__pip--inactive {
-  background: rgba(255, 255, 255, 0.22);
-}
-
-.snap-nav--dark .snap-nav__pip--active {
-  background: rgba(255, 255, 255, 0.88);
-}
-
-/* On mobile, nudge slightly tighter to edge */
+/* Mobile: inline inside the header flex row, always visible, no arrows */
 @media (max-width: 480px) {
   .snap-nav {
-    left: 8px;
+    position: static;
+    transform: none;
+    opacity: 1;
+    pointer-events: auto;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0;
+    /* Pull left so gap-left ≈ gap-right (8px each side).
+       Nav padding is ~16px; subtracting 8px leaves 8px of breathing room. */
+    margin-left: -8px;
+    margin-right: 8px;
+    transition: none;
+  }
+
+  .snap-nav--visible {
+    transform: none;
   }
 }

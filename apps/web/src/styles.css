@@ -79,6 +79,11 @@ input {
   border-bottom: 1px solid var(--line);
 }
 
+.site-nav-left {
+  display: flex;
+  align-items: center;
+}
+
 .site-nav-brand {
   font-family: var(--font-display);
   font-size: 1.35rem;
@@ -2429,5 +2434,56 @@ h1 {
     /* Push content up so it clears the Safari toolbar + home indicator.
        (100lvh - 100svh) = toolbar height; +50px = comfortable breathing room. */
     padding-bottom: calc(3rem + (100lvh - 100svh) + 50px);
+  }
+}
+
+/* ── Desktop-only results layout tightening ── */
+@media (min-width: 481px) {
+  /* Convert inferred-profiles notice into a hover tooltip.
+     Keeps the disclaimer accessible without occupying vertical space. */
+  .result-controls-extra {
+    position: relative;
+  }
+
+  .result-controls-extra .result-filter-notice,
+  .result-controls-extra .result-filter-notice.is-filtered {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 20;
+    min-width: 260px;
+    max-width: 320px;
+    margin: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    padding: 0.6rem 0.85rem;
+  }
+
+  .result-controls-extra:hover .result-filter-notice {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Section browser: tighter padding, no helper text */
+  .result-section-browser {
+    gap: 0.5rem;
+    padding: 0.6rem 0.85rem;
+    margin-top: 0.5rem;
+  }
+
+  .result-section-browser-body {
+    gap: 0;
+  }
+
+  .result-section-browser-body .helper {
+    display: none;
   }
 }

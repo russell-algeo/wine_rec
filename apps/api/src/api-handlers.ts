@@ -292,14 +292,17 @@ export async function createUploadAnalysis(input: {
   }
 
   try {
-    const { messageId } = await publishWorkerJob({
-      mode: "coordinator",
-      jobId: id,
-      sourceType,
-      sourceFilename: input.filename,
-      mimeType,
-      fileBlobUrl,
-    });
+    const { messageId } = await publishWorkerJob(
+      {
+        mode: "coordinator",
+        jobId: id,
+        sourceType,
+        sourceFilename: input.filename,
+        mimeType,
+        fileBlobUrl,
+      },
+      getCoordinatorPublishOptions(),
+    );
     await updateJob(id, { queueMessageId: messageId });
   } catch (error) {
     await del(fileBlobUrl).catch(() => undefined);
@@ -335,13 +338,16 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
   });
 
   try {
-    const { messageId } = await publishWorkerJob({
-      mode: "coordinator",
-      jobId: id,
-      sourceType,
-      sourceFilename: url.toString(),
-      sourceUrl: url.toString(),
-    });
+    const { messageId } = await publishWorkerJob(
+      {
+        mode: "coordinator",
+        jobId: id,
+        sourceType,
+        sourceFilename: url.toString(),
+        sourceUrl: url.toString(),
+      },
+      getCoordinatorPublishOptions(),
+    );
     await updateJob(id, { queueMessageId: messageId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to enqueue analysis";
@@ -500,6 +506,16 @@ function getWorkerPublishOptions(
     retryDelay: SERVERLESS_WORKER_RETRY_DELAY_EXPRESSION,
     ...(delaySeconds > 0 ? { delaySeconds } : {}),
     flowControl: getWorkerFlowControl(jobId),
+  };
+}
+
+function getCoordinatorPublishOptions(): {
+  retries: number;
+  failureCallback: string;
+} {
+  return {
+    retries: 1,
+    failureCallback: getWorkerFailureUrl(),
   };
 }
 
@@ -886,10 +902,10 @@ export async function processWorkerJob(input: unknown): Promise<void> {
 }
 
 export async function processWorkerFailure(sourceBody: string): Promise<void> {
-  let payload: JobWorkerJobPayload;
+  let payload: WorkerJobPayload;
   try {
     const decoded = JSON.parse(Buffer.from(sourceBody, "base64").toString("utf8"));
-    payload = jobWorkerJobPayloadSchema.parse(decoded);
+    payload = workerJobPayloadSchema.parse(decoded);
   } catch {
     return;
   }
@@ -897,6 +913,15 @@ export async function processWorkerFailure(sourceBody: string): Promise<void> {
   const store = await loadJobStore();
   const job = await store.getJob(payload.jobId);
   if (!job || job.status === "canceled" || job.status === "completed") {
+    return;
+  }
+
+  if (payload.mode === "coordinator") {
+    await store.updateJob(payload.jobId, {
+      status: "failed",
+      queueMessageId: null,
+      errorMessage: "Analysis failed to start after multiple attempts. Please try again.",
+    });
     return;
   }
 

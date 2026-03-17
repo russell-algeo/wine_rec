@@ -6,10 +6,31 @@ export type PaneChangeCallback = (pane: number) => void;
 const SNAP_THRESHOLD = 20;
 
 /**
- * Pixel delta required to escape the results pane (pane 2) by
- * scrolling up while at its top boundary.
+ * Pixel delta required to escape the results pane (pane 2) via touch —
+ * measured from the wall contact point, so momentum after finger lift
+ * doesn't contribute.
  */
 const RESULTS_ESCAPE_THRESHOLD = 80;
+
+/**
+ * Wheel/trackpad equivalent of RESULTS_ESCAPE_THRESHOLD.
+ * Much higher because we cannot distinguish deliberate scroll from momentum:
+ * a normal trackpad flick produces ~100–300px of accumulated deltaY, so
+ * 500px requires a very sustained intentional upward scroll to escape.
+ */
+const WHEEL_RESULTS_ESCAPE_THRESHOLD = 500;
+
+/**
+ * Fraction of accumulated wheel delta shown as visual elastic stretch.
+ * 0.3 → 30px of visible rubber-band per 100px of wheel input.
+ */
+const WHEEL_ELASTIC_FACTOR = 0.3;
+
+/**
+ * If no wheel event arrives for this many ms, the gesture is considered
+ * finished and the spring snap-back fires (mirrors iOS finger-lift behaviour).
+ */
+const WHEEL_BOUNCE_DELAY_MS = 80;
 
 /**
  * How long (ms) to ignore new scroll events after a snap fires.
@@ -30,6 +51,8 @@ export class SnapController {
   private wallEntryY: number | null = null;
   private onPaneChange: PaneChangeCallback;
   private resizeObserver: ResizeObserver | null = null;
+  /** Timer that fires the spring snap-back after wheel events stop at the results wall. */
+  private wheelBounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(onPaneChange: PaneChangeCallback) {
     this.onPaneChange = onPaneChange;
@@ -62,12 +85,13 @@ export class SnapController {
       this.computeSnapPositions();
 
       const newPaneTop = this.snapPositions[this.currentPane] ?? 0;
-      if (scrolledBeyondPane > 5) {
-        // User has scrolled into the pane content — preserve their relative offset.
-        window.scrollTo({ top: newPaneTop + scrolledBeyondPane, behavior: 'instant' as ScrollBehavior });
-      } else {
-        // At or near the pane top — re-lock to the (possibly shifted) pane position.
-        window.scrollTo({ top: newPaneTop, behavior: 'instant' as ScrollBehavior });
+      const newScrollY = scrolledBeyondPane > 5
+        ? newPaneTop + scrolledBeyondPane
+        : newPaneTop;
+      // Only call scrollTo if the position actually changed — even an identical
+      // scrollTo({ behavior: 'instant' }) call kills iOS momentum scrolling.
+      if (Math.abs(newScrollY - window.scrollY) > 1) {
+        window.scrollTo({ top: newScrollY, behavior: 'instant' as ScrollBehavior });
       }
     });
 
@@ -84,6 +108,7 @@ export class SnapController {
     window.removeEventListener('touchmove', this.handleTouchMove);
     window.removeEventListener('scroll', this.handleScroll);
     this.resizeObserver?.disconnect();
+    if (this.wheelBounceTimer !== null) clearTimeout(this.wheelBounceTimer);
   }
 
   snapTo(pane: 0 | 1 | 2): void {
@@ -176,8 +201,67 @@ export class SnapController {
       return; // let native scroll handle
     }
     e.preventDefault();
+
+    if (this.currentPane === 2) {
+      // Elastic wall — mirrors the iOS touch + handleScroll pattern:
+      // accumulate delta → apply rubber-band stretch visually → spring back
+      // when the gesture ends (wheel events pause), just like finger lift on mobile.
+      this.applyWheelWallElastic(e.deltaY);
+      return;
+    }
+
     this.trySnap(e.deltaY);
   };
+
+  /**
+   * Rubber-band effect at the results top boundary for wheel/trackpad input.
+   *
+   * Mirrors the two-phase mobile approach:
+   *   Phase 1 (events arriving)  — stretch the page upward proportional to
+   *                                 accumulated delta, using WHEEL_ELASTIC_FACTOR
+   *                                 so the resistance feels physical.
+   *   Phase 2 (events stop)      — debounce fires; double the current stretch
+   *                                 (same as handleScroll does for iOS momentum)
+   *                                 then hand off to springSnapBack.
+   *
+   * Deliberate escape: if accumulated exceeds WHEEL_RESULTS_ESCAPE_THRESHOLD
+   * (much larger than a normal flick produces) we snap to ingest, same as
+   * the touch path snaps at RESULTS_ESCAPE_THRESHOLD.
+   */
+  private applyWheelWallElastic(delta: number): void {
+    if (this.cooldown) return;
+    this.accumulated += delta; // grows negative as user scrolls up
+
+    // Deliberate escape: very sustained upward scroll (not reachable by momentum alone).
+    if (this.accumulated < -WHEEL_RESULTS_ESCAPE_THRESHOLD) {
+      if (this.wheelBounceTimer !== null) clearTimeout(this.wheelBounceTimer);
+      this.wheelBounceTimer = null;
+      this.accumulated = 0;
+      this.snapTo(1);
+      return;
+    }
+
+    // Visual elastic stretch — same feel as the iOS rubber-band.
+    const stretchPx = -this.accumulated * WHEEL_ELASTIC_FACTOR;
+    window.scrollTo({ top: this.snapPositions[2] - stretchPx, behavior: 'instant' as ScrollBehavior });
+
+    // Schedule spring-back: fires when wheel events stop (gesture / momentum ends),
+    // exactly mirroring the iOS finger-lift moment detected by handleScroll.
+    if (this.wheelBounceTimer !== null) clearTimeout(this.wheelBounceTimer);
+    this.wheelBounceTimer = setTimeout(() => {
+      this.wheelBounceTimer = null;
+      if (this.currentPane !== 2 || this.cooldown) return;
+      const overscrollPx = this.snapPositions[2] - window.scrollY;
+      if (overscrollPx > 0.5) {
+        // Double the stretch before springing — matches handleScroll's 2× factor,
+        // giving the same extra "give" that iOS users feel on mobile.
+        const stretchedOverscroll = overscrollPx * 2;
+        window.scrollTo({ top: this.snapPositions[2] - stretchedOverscroll, behavior: 'instant' as ScrollBehavior });
+        this.springSnapBack(this.snapPositions[2], stretchedOverscroll);
+      }
+      this.accumulated = 0;
+    }, WHEEL_BOUNCE_DELAY_MS);
+  }
 
   private handleTouchStart = (e: TouchEvent): void => {
     this.touchStartY = e.touches[0]?.clientY ?? this.touchStartY;
@@ -227,20 +311,10 @@ export class SnapController {
     this.checkSnap();
   };
 
-  // Called by wheel handler — additively accumulates delta then checks threshold.
+  // Called by wheel handler for panes 0 and 1 only.
+  // Pane 2 wheel is routed through applyWheelWallElastic instead.
   private trySnap(delta: number): void {
     if (this.cooldown) return;
-
-    if (this.currentPane === 2) {
-      if (delta < 0 && this.isAtResultsTop()) {
-        this.accumulated += delta;
-        if (this.accumulated < -RESULTS_ESCAPE_THRESHOLD) this.snapTo(1);
-      } else {
-        this.accumulated = 0;
-      }
-      return;
-    }
-
     this.accumulated += delta;
     this.checkSnap();
   }

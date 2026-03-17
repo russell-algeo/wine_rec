@@ -14,7 +14,6 @@ const HIDE_DELAY_MS = 1500;
 export function SnapNav({ currentPane, onSnap }: SnapNavProps) {
   const [visible, setVisible] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isDark = currentPane === 0;
 
   const scheduleHide = () => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -43,24 +42,16 @@ export function SnapNav({ currentPane, onSnap }: SnapNavProps) {
   }, []);
 
   return (
-    <nav
-      className={`snap-nav snap-nav--${isDark ? 'dark' : 'light'}${visible ? ' snap-nav--visible' : ''}`}
+    <div
+      className={`snap-nav snap-nav--light${visible ? ' snap-nav--visible' : ''}`}
       aria-label="Section navigation"
+      role="navigation"
       onMouseEnter={() => {
         if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
         setVisible(true);
       }}
       onMouseLeave={scheduleHide}
     >
-      <button
-        className={`snap-nav__arrow${currentPane === 0 ? ' snap-nav__arrow--disabled' : ''}`}
-        onClick={() => onSnap((currentPane - 1) as 0 | 1 | 2)}
-        aria-label="Previous section"
-        disabled={currentPane === 0}
-      >
-        ▲
-      </button>
-
       {Array.from({ length: PANE_COUNT }, (_, i) => (
         <button
           key={i}
@@ -70,15 +61,6 @@ export function SnapNav({ currentPane, onSnap }: SnapNavProps) {
           aria-current={i === currentPane ? 'step' : undefined}
         />
       ))}
-
-      <button
-        className={`snap-nav__arrow${currentPane === PANE_COUNT - 1 ? ' snap-nav__arrow--disabled' : ''}`}
-        onClick={() => onSnap((currentPane + 1) as 0 | 1 | 2)}
-        aria-label="Next section"
-        disabled={currentPane === PANE_COUNT - 1}
-      >
-        ▼
-      </button>
-    </nav>
+    </div>
   );
 }
