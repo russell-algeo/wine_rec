@@ -3,7 +3,7 @@ import './SnapNav.css';
 
 interface SnapNavProps {
   currentPane: number;
-  onSnap: (pane: number) => void;
+  onSnap: (pane: 0 | 1 | 2) => void;
 }
 
 const PANE_COUNT = 3;
@@ -18,7 +18,7 @@ export function SnapNav({ currentPane, onSnap }: SnapNavProps) {
     >
       <button
         className={`snap-nav__arrow${currentPane === 0 ? ' snap-nav__arrow--disabled' : ''}`}
-        onClick={() => onSnap(currentPane - 1)}
+        onClick={() => onSnap((currentPane - 1) as 0 | 1 | 2)}
         aria-label="Previous section"
         disabled={currentPane === 0}
       >
@@ -29,14 +29,15 @@ export function SnapNav({ currentPane, onSnap }: SnapNavProps) {
         <button
           key={i}
           className={`snap-nav__pip snap-nav__pip--${i === currentPane ? 'active' : 'inactive'}`}
-          onClick={() => onSnap(i)}
+          onClick={() => onSnap(i as 0 | 1 | 2)}
           aria-label={`Go to section ${i + 1}`}
+          aria-current={i === currentPane ? 'step' : undefined}
         />
       ))}
 
       <button
         className={`snap-nav__arrow${currentPane === PANE_COUNT - 1 ? ' snap-nav__arrow--disabled' : ''}`}
-        onClick={() => onSnap(currentPane + 1)}
+        onClick={() => onSnap((currentPane + 1) as 0 | 1 | 2)}
         aria-label="Next section"
         disabled={currentPane === PANE_COUNT - 1}
       >

@@ -761,7 +761,7 @@ export function App() {
     <div className="page-shell">
       <SnapNav
         currentPane={currentPane}
-        onSnap={(pane) => snapControllerRef.current?.snapTo(pane as 0 | 1 | 2)}
+        onSnap={(pane) => snapControllerRef.current?.snapTo(pane)}
       />
       {/* ── Sticky nav ── */}
       <nav className="site-nav">

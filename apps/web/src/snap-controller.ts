@@ -74,7 +74,7 @@ export class SnapController {
   }
 
   private computeSnapPositions(): void {
-    const nav = document.querySelector<HTMLElement>('nav');
+    const nav = document.querySelector<HTMLElement>('.site-nav');
     const ingest = document.getElementById('ingest');
     const results = document.getElementById('results');
     const navH = nav?.getBoundingClientRect().height ?? 56;
