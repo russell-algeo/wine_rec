@@ -735,6 +735,37 @@ export function App() {
     }
   }
 
+  function handleNext() {
+    if (hasStoredPreferences) {
+      setModalPreferences((current) =>
+        tasteDimensionOrder.reduce(
+          (acc, d) => ({ ...acc, [d]: current[d] ?? preferences[d] }),
+          current
+        )
+      );
+    }
+    setStepTwoIsConfirmMode(
+      hasStoredPreferences || tasteDimensionOrder.every((d) => modalPreferences[d] !== null)
+    );
+    setOnboardingStep(2);
+
+    // Eager URL upload — only fires for URL path; file path already handled in handleFileChange
+    if (pendingUrl && !selectedFile) {
+      cancelEagerAnalysis(); // cancel any stale eager analysis first
+      const promise = getJson<CreateAnalysisResponse>("/api/urls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: pendingUrl }),
+      });
+      eagerUploadRef.current = promise;
+      void promise.then((result) => {
+        if (eagerUploadRef.current === promise) {
+          eagerAnalysisIdRef.current = result.analysisId;
+        }
+      }).catch(() => {});
+    }
+  }
+
   function handleDrop(event: React.DragEvent) {
     event.preventDefault();
     setIsDragOver(false);
@@ -946,18 +977,7 @@ export function App() {
                   <button
                     className="action"
                     disabled={!step1Ready}
-                    onClick={() => {
-                      if (hasStoredPreferences) {
-                        setModalPreferences((current) =>
-                          tasteDimensionOrder.reduce(
-                            (acc, d) => ({ ...acc, [d]: current[d] ?? preferences[d] }),
-                            current
-                          )
-                        );
-                      }
-                      setStepTwoIsConfirmMode(hasStoredPreferences || tasteDimensionOrder.every((d) => modalPreferences[d] !== null));
-                      setOnboardingStep(2);
-                    }}
+                    onClick={handleNext}
                     type="button"
                   >
                     {urlFetching ? <span className="btn-spinner" aria-hidden="true" /> : "Next →"}
