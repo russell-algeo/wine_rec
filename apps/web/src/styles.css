@@ -568,6 +568,13 @@ h1 {
   color: var(--muted);
 }
 
+/* #results is pane 2 of the snap layout. It needs min-height: 100vh so the
+   page is always tall enough for window.scrollTo(snapPositions[2]) to reach it.
+   Without this, an empty results section means the browser caps the scroll short. */
+#results {
+  min-height: 100vh;
+}
+
 .stack {
   display: grid;
   gap: 1.25rem;
