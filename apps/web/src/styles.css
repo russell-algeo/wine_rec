@@ -1963,7 +1963,7 @@ h1 {
     flex-direction: column;
   }
 
-  /* Card content: 2-column grid — name+fit row, then rating+price row */
+  /* Card content: 2-column grid — (name+fit+subtitle) row, then (rating+price) row */
   /* flex:1 fills the content area; align-content:space-evenly distributes
      equal whitespace above row 1, between rows, and below row 2 */
   .result-head {
@@ -1976,22 +1976,20 @@ h1 {
     align-items: start;
   }
 
-  /* Flatten the two inner wrappers so children participate directly in the grid */
-  .result-head > .result-copy,
-  .result-head > .result-summary {
-    display: contents;
-  }
-
-  /* Row 1, full width: wine name block.
-     Spans both columns so text can extend under the score badge when long enough. */
-  .result-head .wine-name-block {
+  /* Row 1: result-copy spans full width (name block + subtitle together) */
+  .result-head > .result-copy {
     grid-column: 1 / -1;
     grid-row: 1;
     min-width: 0;
   }
 
-  /* Invisible float spacer that reserves space for the absolutely-positioned score badge.
-     Text wraps around it; once the title clears the spacer height it extends to full width. */
+  /* Flatten result-summary so rating and price participate directly in the grid */
+  .result-head > .result-summary {
+    display: contents;
+  }
+
+  /* Float spacer inside wine-name-block reserves space for the absolutely-positioned
+     score badge; text wraps around it until the title clears the badge height. */
   .result-head .wine-name-block::before {
     content: '';
     float: right;
@@ -2005,16 +2003,6 @@ h1 {
     content: '';
     display: table;
     clear: both;
-  }
-
-  /* Row 2, full width: matched-wine subtitle / uncertainty note */
-  .result-head .wine-subtitle,
-  .result-head .wine-uncertainty {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    min-width: 0;
-    align-self: start;
-    margin-top: 0.2rem;
   }
 
   /* Score badge: absolutely positioned at top-right, overlaying the float spacer */
@@ -2034,16 +2022,16 @@ h1 {
     font-size: 1.05rem;
   }
 
-  /* Row 3, col 1: vivino rating */
+  /* Row 2, col 1: vivino rating */
   .result-head .vivino-rating {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 2;
   }
 
-  /* Row 3, col 2: price pill */
+  /* Row 2, col 2: price pill */
   .result-head .price-tag {
     grid-column: 2;
-    grid-row: 3;
+    grid-row: 2;
     align-self: start;
     justify-self: end;
     font-size: 0.8rem;

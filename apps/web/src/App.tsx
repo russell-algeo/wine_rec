@@ -1621,6 +1621,8 @@ function ResultCard(props: {
                 extracted wine details.
               </p>
             ) : null}
+          </div>
+          <div className="result-summary">
             {showRating ? (
               <VivinoRatingBlock
                 rating={rating}
@@ -1628,8 +1630,6 @@ function ResultCard(props: {
                 ratingSource={ratingSource}
               />
             ) : null}
-          </div>
-          <div className="result-summary">
             <p className={`price-tag${candidate?.price ? "" : " is-missing"}`}>
               {candidate?.price ?? "Price unavailable"}
             </p>
