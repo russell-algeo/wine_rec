@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { SnapController } from './snap-controller';
+import { SnapNav } from './SnapNav';
 
 import type {
   AnalysisRun,
@@ -347,6 +349,8 @@ export function App() {
   const [showRerankFlash, setShowRerankFlash] = useState(false);
   const [additionalFiltersOpen, setAdditionalFiltersOpen] = useState(false);
   const [hasStoredPreferences, setHasStoredPreferences] = useState(() => hasStoredPreferencesFlag());
+  const [currentPane, setCurrentPane] = useState(0);
+  const snapControllerRef = useRef<SnapController | null>(null);
   const [modalPreferences, setModalPreferences] = useState<Record<TasteDimension, number | null>>(
     () => {
       try {
@@ -427,6 +431,14 @@ export function App() {
       return { ...current, acidity: value };
     });
   }
+
+  useEffect(() => {
+    const controller = new SnapController(setCurrentPane);
+    snapControllerRef.current = controller;
+    controller.init();
+    return () => controller.destroy();
+  }, []);
+
 
   useEffect(() => {
     return () => {
@@ -642,13 +654,11 @@ export function App() {
     setAnalysis(nextAnalysis);
     setAnalysisNotice(null);
     setPollingPaused(false);
+    // Keep the setTimeout so React has flushed initial results state before we
+    // snap. The 50ms delay also ensures the ResizeObserver has had a chance to
+    // recompute snapPositions[2] if the results container changed size.
     setTimeout(() => {
-      const results = document.getElementById("results");
-      const nav = document.querySelector("nav");
-      if (results) {
-        const navHeight = nav?.getBoundingClientRect().height ?? 0;
-        window.scrollTo({ top: results.getBoundingClientRect().top + window.scrollY - navHeight, behavior: "smooth" });
-      }
+      snapControllerRef.current?.snapTo(2);
     }, 50);
   }
 
@@ -734,18 +744,11 @@ export function App() {
   }
 
   function scrollToIngest() {
-    document.getElementById("ingest")?.scrollIntoView({ behavior: "smooth" });
+    snapControllerRef.current?.snapTo(1);
   }
 
   function scrollToResults() {
-    setTimeout(() => {
-      const results = document.getElementById("results");
-      const nav = document.querySelector("nav");
-      if (results) {
-        const navHeight = nav?.getBoundingClientRect().height ?? 0;
-        window.scrollTo({ top: results.getBoundingClientRect().top + window.scrollY - navHeight, behavior: "smooth" });
-      }
-    }, 50);
+    snapControllerRef.current?.snapTo(2);
   }
 
   function updateModalPreference(dimension: TasteDimension, value: number) {
@@ -757,6 +760,10 @@ export function App() {
 
   return (
     <div className="page-shell">
+      <SnapNav
+        currentPane={currentPane}
+        onSnap={(pane) => snapControllerRef.current?.snapTo(pane)}
+      />
       {/* ── Sticky nav ── */}
       <nav className="site-nav">
         <span className="site-nav-brand">Wine Rec</span>
@@ -1038,6 +1045,8 @@ export function App() {
           </h2>
         </section>
 
+        {/* ── Pane 3: results + shelf fill exactly one viewport below the nav ── */}
+        <div className="pane-results">
         {/* ── Results ── */}
         <section id="results" className="stack">
           <div className="panel">
@@ -1303,6 +1312,7 @@ export function App() {
             Curated by data.<br />Chosen by taste.
           </h2>
         </section>
+        </div>
       </main>
 
     </div>
