@@ -549,7 +549,7 @@ export function App() {
   // an eager upload was already started for it. The user will need to
   // click Next again to start a fresh one.
   useEffect(() => {
-    if (eagerAnalysisIdRef.current) {
+    if (eagerAnalysisIdRef.current || eagerUploadRef.current) {
       cancelEagerAnalysis();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -595,11 +595,12 @@ export function App() {
 
     try {
       const result = await uploadPromise;
+      if (pendingUrl) setSourceUrl(pendingUrl);
       eagerUploadRef.current = null;
       eagerAnalysisIdRef.current = null;
       await launchAnalysis(result);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Upload failed");
+      setError(cause instanceof Error ? cause.message : "Failed to start analysis");
     } finally {
       setBusy(false);
     }
