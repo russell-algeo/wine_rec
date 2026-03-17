@@ -3,13 +3,13 @@
 export type PaneChangeCallback = (pane: number) => void;
 
 /** Pixel delta required to trigger a snap between panes 0 and 1. */
-const SNAP_THRESHOLD = 80;
+const SNAP_THRESHOLD = 50;
 
 /**
  * Pixel delta required to escape the results pane (pane 2) by
  * scrolling up while at its top boundary.
  */
-const RESULTS_ESCAPE_THRESHOLD = 120;
+const RESULTS_ESCAPE_THRESHOLD = 80;
 
 /**
  * How long (ms) to ignore new scroll events after a snap fires.
