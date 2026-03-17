@@ -249,7 +249,6 @@ input {
   margin: 0 auto;
   padding: clamp(3rem, 6vh, 5rem) 0;
   text-align: center;
-  scroll-margin-top: var(--nav-height);
 }
 
 .ingest-section h2 {
