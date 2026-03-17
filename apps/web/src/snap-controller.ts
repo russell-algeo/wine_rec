@@ -118,23 +118,56 @@ export class SnapController {
   }
 
   // Catches momentum scroll (after finger lift) carrying past the results top boundary.
-  // Touch events stop firing once the finger is lifted, so this scroll listener is the
-  // only hook we have on iOS momentum.
-  // Strategy: first call scrollTo at the *current* position with 'instant' — this has no
-  // visible effect but kills iOS inertia. Then in the next frame, smoothly animate to the
-  // boundary so the landing feels the same as the intentional auto-snap.
   private handleScroll = (): void => {
     if (this.cooldown) return;
     if (this.currentPane === 2 && window.scrollY < this.snapPositions[2] - 2) {
-      this.cooldown = true;
-      // Interrupt inertia without a visible jump.
-      window.scrollTo({ top: window.scrollY, behavior: 'instant' as ScrollBehavior });
-      // Smoothly land on the boundary in the next frame (after the instant call commits).
-      requestAnimationFrame(() => {
-        window.scrollTo({ top: this.snapPositions[2], behavior: 'smooth' });
-      });
-      setTimeout(() => { this.cooldown = false; }, SNAP_COOLDOWN_MS);
+      const rawOverscroll = this.snapPositions[2] - window.scrollY;
+      // Stretch factor: makes the page travel 2× as far for the same momentum.
+      // We jump to the stretched position in the same frame as killing iOS inertia,
+      // so the stretch is invisible as a separate step — the user just sees more give.
+      const stretchedOverscroll = rawOverscroll * 2;
+      window.scrollTo({ top: this.snapPositions[2] - stretchedOverscroll, behavior: 'instant' as ScrollBehavior });
+      this.springSnapBack(this.snapPositions[2], stretchedOverscroll);
     }
+  };
+
+  /**
+   * Critically-damped spring snap-back matching Apple's UIScrollView rubber-band physics.
+   *
+   * Formula (reverse-engineered from UIKit — Arek Holko / Ilya Lobanov):
+   *   x(t) = x₀ · (1 + ω·t) · e^(−ω·t)
+   *
+   * ω = 7.5 rad/s — half of Safari's reference value (15 rad/s), making the spring
+   * twice as loose: the same momentum displacement takes twice as long to pull back,
+   * and the effective snap-back duration is ~600–800 ms vs ~300–400 ms at ω=15.
+   */
+  private springSnapBack = (targetY: number, overscrollPx: number): void => {
+    this.cooldown = true;
+    const OMEGA = 9.375; // rad/s — 20% faster snap-back than the 2× loose baseline (7.5)
+    const x0 = -overscrollPx; // negative: we are above targetY in scrollY space
+    const startTime = performance.now();
+    let done = false;
+
+    const frame = () => {
+      if (done) return;
+      const t = (performance.now() - startTime) / 1000; // ms → seconds
+      const x = x0 * (1 + OMEGA * t) * Math.exp(-OMEGA * t);
+
+      if (Math.abs(x) < 0.5) {
+        done = true;
+        window.scrollTo({ top: targetY, behavior: 'instant' as ScrollBehavior });
+        setTimeout(() => { this.cooldown = false; }, 100);
+        return;
+      }
+
+      window.scrollTo({ top: targetY + x, behavior: 'instant' as ScrollBehavior });
+      requestAnimationFrame(frame);
+    };
+
+    requestAnimationFrame(frame);
+    setTimeout(() => {
+      if (!done) { done = true; window.scrollTo({ top: targetY, behavior: 'instant' as ScrollBehavior }); this.cooldown = false; }
+    }, 1500);
   };
 
   private handleWheel = (e: WheelEvent): void => {

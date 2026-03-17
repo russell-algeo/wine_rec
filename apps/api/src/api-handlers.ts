@@ -592,7 +592,6 @@ async function extractAndPersistJobState(
       throw new Error(`Failed to fetch upload from blob storage: ${response.status}`);
     }
     fileBuffer = Buffer.from(await response.arrayBuffer());
-    del(payload.fileBlobUrl).catch(() => undefined);
   } else if (payload.fileBase64) {
     fileBuffer = Buffer.from(payload.fileBase64, "base64");
   }
