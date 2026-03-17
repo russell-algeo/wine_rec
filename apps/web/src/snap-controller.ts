@@ -64,6 +64,7 @@ export class SnapController {
 
   snapTo(pane: 0 | 1 | 2): void {
     if (pane < 0 || pane > 2) return;
+    this.computeSnapPositions(); // always use fresh positions — elements between panes can shift layout
     this.cooldown = true;
     this.accumulated = 0;
     this.currentPane = pane;
