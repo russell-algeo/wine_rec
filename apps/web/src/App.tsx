@@ -366,6 +366,8 @@ export function App() {
     }
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const eagerUploadRef = useRef<Promise<CreateAnalysisResponse> | null>(null);
+  const eagerAnalysisIdRef = useRef<string | null>(null);
   const isLiveReranking = Boolean(analysis && !preferencesEqual(preferences, loadedPreferences));
   const baseRecommendations = isLiveReranking && analysis
     ? [...analysis.recommendations]
@@ -639,6 +641,16 @@ export function App() {
     setError(null);
   }
 
+  function cancelEagerAnalysis() {
+    const id = eagerAnalysisIdRef.current;
+    eagerUploadRef.current = null;
+    eagerAnalysisIdRef.current = null;
+    if (id) {
+      // Best-effort, fire-and-forget
+      void getJson(`/api/analyses/${id}/cancel`, { method: "POST" }).catch(() => {});
+    }
+  }
+
   function prepareAnalysis(prefsToUse?: UserTastePreference) {
     const prefs = prefsToUse ?? preferences;
     storePreferences(prefs);
@@ -761,13 +773,15 @@ export function App() {
 
   return (
     <div className="page-shell">
-      <SnapNav
-        currentPane={currentPane}
-        onSnap={(pane) => snapControllerRef.current?.snapTo(pane)}
-      />
       {/* ── Sticky nav ── */}
       <nav className="site-nav">
-        <span className="site-nav-brand">Wine Rec</span>
+        <div className="site-nav-left">
+          <SnapNav
+            currentPane={currentPane}
+            onSnap={(pane) => snapControllerRef.current?.snapTo(pane)}
+          />
+          <span className="site-nav-brand">Wine Rec</span>
+        </div>
         <button
           className="site-nav-toggle"
           onClick={() => setTastePanelOpen((open) => !open)}
