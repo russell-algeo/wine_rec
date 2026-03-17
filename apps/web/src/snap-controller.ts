@@ -70,7 +70,13 @@ export class SnapController {
     this.currentPane = pane;
     this.onPaneChange(pane);
     const pos = this.snapPositions[pane] ?? 0;
-    window.scrollTo({ top: pos, behavior: 'smooth' });
+    // Defer scroll to next animation frame so React's synchronous DOM flush
+    // (triggered by onPaneChange) completes before the smooth scroll begins.
+    // Without this, Chrome cancels the smooth scroll when React mutates the DOM
+    // in the same event-handler tick.
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: pos, behavior: 'smooth' });
+    });
     setTimeout(() => { this.cooldown = false; }, SNAP_COOLDOWN_MS);
   }
 
