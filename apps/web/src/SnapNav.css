@@ -1,0 +1,90 @@
+/* apps/web/src/SnapNav.css */
+
+.snap-nav {
+  position: fixed;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  /* z-index: 98 — intentionally below .site-nav (100) and .taste-panel (99)
+     so the taste panel can drop over the full screen without obstruction.
+     SnapNav lives on the left edge and doesn't need to be on top of overlays. */
+  z-index: 98;
+  padding: 6px 4px;
+  /* Increase hover hit area without affecting layout */
+  cursor: default;
+}
+
+/* Arrows — hidden by default, revealed on hover */
+.snap-nav__arrow {
+  font-size: 0.6rem;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.snap-nav:hover .snap-nav__arrow {
+  opacity: 1;
+}
+
+.snap-nav__arrow--disabled {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+
+/* Pills */
+.snap-nav__pip {
+  width: 5px;
+  border-radius: 10px;
+  transition: height 0.22s ease, background 0.22s ease;
+}
+
+.snap-nav__pip--inactive {
+  height: 11px;
+}
+
+.snap-nav__pip--active {
+  height: 24px;
+}
+
+/* Light panes (ingest = pane 1, results = pane 2) */
+.snap-nav--light .snap-nav__arrow {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+.snap-nav--light .snap-nav__pip--inactive {
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.snap-nav--light .snap-nav__pip--active {
+  background: #0c699a;
+}
+
+/* Dark pane (hero = pane 0) */
+.snap-nav--dark .snap-nav__arrow {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.snap-nav--dark .snap-nav__pip--inactive {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.snap-nav--dark .snap-nav__pip--active {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+/* On mobile, nudge slightly tighter to edge */
+@media (max-width: 480px) {
+  .snap-nav {
+    left: 8px;
+  }
+}
