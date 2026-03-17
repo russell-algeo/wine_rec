@@ -545,56 +545,20 @@ export function App() {
     return () => clearTimeout(timer);
   }, [sourceUrl]);
 
-  async function handleUpload() {
-    if (!selectedFile) {
-      setError("Choose an image or PDF first.");
-      return;
+  // Cancel any in-flight eager analysis if the pending URL changes after
+  // an eager upload was already started for it. The user will need to
+  // click Next again to start a fresh one.
+  useEffect(() => {
+    if (eagerAnalysisIdRef.current) {
+      cancelEagerAnalysis();
     }
-
-    setBusy(true);
-    setError(null);
-
-    try {
-      const formData = new FormData();
-      formData.set("file", selectedFile);
-
-      const upload = await getJson<CreateAnalysisResponse>("/api/uploads", {
-        method: "POST",
-        body: formData,
-      });
-
-      await launchAnalysis(upload);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Upload failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleUrlAnalyze() {
-    if (!pendingUrl) return;
-
-    setBusy(true);
-    setError(null);
-
-    try {
-      const created = await getJson<CreateAnalysisResponse>("/api/urls", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: pendingUrl }),
-      });
-      setSourceUrl(pendingUrl);
-      await launchAnalysis(created);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Failed to start analysis");
-    } finally {
-      setBusy(false);
-    }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingUrl]);
 
   async function handleIngestAnalyze() {
     const allSet = tasteDimensionOrder.every((d) => modalPreferences[d] !== null);
     if (!allSet) return;
+
     const confirmedPrefs: UserTastePreference = {
       ...loadPreferences(),
       body: modalPreferences.body!,
@@ -604,15 +568,42 @@ export function App() {
     };
     setPreferences(confirmedPrefs);
     prepareAnalysis(confirmedPrefs);
-    try {
+
+    // Use the in-flight eager promise if available; otherwise start fresh (same as before)
+    let uploadPromise = eagerUploadRef.current;
+    if (!uploadPromise) {
       if (selectedFile) {
-        await handleUpload();
+        const formData = new FormData();
+        formData.set("file", selectedFile);
+        uploadPromise = getJson<CreateAnalysisResponse>("/api/uploads", {
+          method: "POST",
+          body: formData,
+        });
       } else if (pendingUrl) {
-        await handleUrlAnalyze();
+        uploadPromise = getJson<CreateAnalysisResponse>("/api/urls", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: pendingUrl }),
+        });
       }
-    } catch {
-      // handleUpload / handleUrlAnalyze manage their own error state
     }
+
+    if (!uploadPromise) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const result = await uploadPromise;
+      eagerUploadRef.current = null;
+      eagerAnalysisIdRef.current = null;
+      await launchAnalysis(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+
     setInNewAnalysisFlow(false);
   }
 
