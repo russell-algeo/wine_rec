@@ -2,6 +2,7 @@ import type { WineCandidate } from "@wine-rec/contracts";
 import { nanoid } from "nanoid";
 
 const vintagePattern = /\b(19|20)\d{2}\b/;
+const abbreviatedVintagePattern = /[''`'](\d{2})\b/;
 const colorHints = ["red", "white", "rose", "rosé", "sparkling", "champagne", "orange"];
 const sectionHeaderHints = [
   "red",
@@ -96,7 +97,7 @@ function extractInlinePrice(line: string): { title: string; price: string | null
   };
 }
 
-function isNonWineLine(line: string): boolean {
+export function isNonWineLine(line: string): boolean {
   const normalized = line
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -156,7 +157,7 @@ function inferProducerAndLabel(
   };
 }
 
-function normalizeSectionHeader(line: string): string | null {
+export function normalizeSectionHeader(line: string): string | null {
   const normalized = line
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -168,7 +169,7 @@ function normalizeSectionHeader(line: string): string | null {
   const headers = words.filter((word) => sectionColors.has(word));
   const noise = words.filter((word) => !sectionColors.has(word) && !/^\d+$/.test(word));
 
-  if (headers.length === 1 && noise.length === 0) {
+  if (headers.length >= 1 && noise.length === 0) {
     return headers[0] ?? null;
   }
 
@@ -180,7 +181,15 @@ function isSectionHeader(line: string): boolean {
 }
 
 function isPriceLine(line: string): boolean {
-  return /^\$\d+(?:\.\d{2})?$/.test(line);
+  return /^\$\d+(?:\.\d{2})?$/.test(line) || /^\d+\s*\/\s*\d+$/.test(line);
+}
+
+function normalizePriceLine(line: string): string {
+  if (/^\$\d+(?:\.\d{2})?$/.test(line)) return line;
+  // "18 / 72" glass/bottle — take the bottle (larger) price
+  const parts = line.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (parts) return `$${parts[2]}`;
+  return line;
 }
 
 function looksLikeRegionLine(line: string): boolean {
@@ -216,7 +225,7 @@ function looksLikeTitleContinuation(line: string): boolean {
   );
 }
 
-function looksLikeTitleLine(line: string): boolean {
+export function looksLikeTitleLine(line: string): boolean {
   if (vintagePattern.test(line)) return true;
   if (/^(NV|N\.V\.)\b/i.test(line)) return true;
   if (/[‘'“"][^’'"”]+[’'"”]/.test(line)) return true;
@@ -227,7 +236,7 @@ function looksLikeTitleLine(line: string): boolean {
   return false;
 }
 
-function parseBlock(
+export function parseBlock(
   lines: string[],
   startLineNumber: number,
   color: string | null,
@@ -269,7 +278,15 @@ function parseBlock(
   );
   const normalizedTitle = priceStrippedTitle;
   const vintageMatch = normalizedTitle.match(vintagePattern);
-  const vintage = vintageMatch ? Number(vintageMatch[0]) : null;
+  const abbrVintageMatch = !vintageMatch ? normalizedTitle.match(abbreviatedVintagePattern) : null;
+  const vintage = vintageMatch
+    ? Number(vintageMatch[0])
+    : abbrVintageMatch
+      ? (() => {
+          const yy = Number(abbrVintageMatch[1]);
+          return yy <= (new Date().getFullYear() - 2000) + 1 ? 2000 + yy : 1900 + yy;
+        })()
+      : null;
   const splitTitle = normalizedTitle.split(/\s+-\s+/);
   const leftTitle = splitTitle[0] ?? normalizedTitle;
   const rightTitle = splitTitle[1]?.trim() ?? null;
@@ -356,7 +373,7 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
     }
 
     if (isPriceLine(line)) {
-      flushBlock(line);
+      flushBlock(normalizePriceLine(line));
       return;
     }
 
@@ -374,4 +391,14 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
 
   flushBlock();
   return candidates.filter((candidate) => candidate.extractionConfidence >= 0.5);
+}
+
+export function buildCandidateFromItem(item: {
+  name: string;
+  price: string | null;
+  section: string | null;
+  tab: string | null;
+}): WineCandidate | null {
+  const color = item.section ? normalizeSectionHeader(item.section) : null;
+  return parseBlock([item.name], 0, color, item.price, item.tab, item.section);
 }

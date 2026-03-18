@@ -29,6 +29,7 @@ const identityStopwords = new Set([
   "regional",
   "terre",
   "the",
+  "valley",
   "vin",
   "vino",
   "vinho",
@@ -121,6 +122,8 @@ const styleRubric: Record<string, Omit<TasteVector, "confidence" | "sourceMode">
 
 export function normalizeField(input: string | null | undefined): string {
   return (input ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
@@ -201,6 +204,71 @@ function scoreIdentityRecovery(
   return overlapRatio(remainingTokens, buildTokenSet(recoveryValues));
 }
 
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[] = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0]!;
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j]!;
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j - 1]!, dp[j]!);
+      prev = temp;
+    }
+  }
+  return dp[n]!;
+}
+
+/** Weight for a candidate token against a set of profile tokens.
+ *  Returns 1.0 for exact match, 0.8 for edit-distance-1 on tokens ≥4 chars, 0 otherwise. */
+function fuzzyTokenWeight(token: string, targetTokens: Set<string>): number {
+  if (targetTokens.has(token)) return 1.0;
+  if (token.length >= 4) {
+    for (const target of targetTokens) {
+      if (target.length >= 4 && levenshtein(token, target) <= 1) return 0.8;
+    }
+  }
+  return 0;
+}
+
+/** Bidirectional F1-style overlap across ALL fields of candidate vs ALL fields of profile.
+ *  Uses fuzzy token matching (edit-distance ≤1) for tokens ≥4 chars. */
+function scorePooledMatch(candidate: MatchParts, profile: Partial<MatchParts>): number {
+  const candidateTokens = buildTokenSet([
+    candidate.producer,
+    candidate.label,
+    candidate.varietal,
+    candidate.region,
+    candidate.rawText,
+  ]);
+  const profileTokens = buildTokenSet([
+    profile.producer,
+    profile.label,
+    profile.varietal,
+    profile.region,
+  ]);
+
+  if (candidateTokens.size === 0 || profileTokens.size === 0) return 0;
+
+  // recall: how much of the profile is covered by the candidate
+  let profileCoverage = 0;
+  for (const pt of profileTokens) {
+    profileCoverage += fuzzyTokenWeight(pt, candidateTokens);
+  }
+  const recall = profileCoverage / profileTokens.size;
+
+  // precision: how many candidate tokens are found in the profile
+  let candidateCoverage = 0;
+  for (const ct of candidateTokens) {
+    candidateCoverage += fuzzyTokenWeight(ct, profileTokens);
+  }
+  const precision = candidateCoverage / candidateTokens.size;
+
+  if (recall + precision === 0) return 0;
+  return (2 * recall * precision) / (recall + precision);
+}
+
 function scoreNovelRegionCoverage(
   candidateRegion: string | null | undefined,
   candidateLabel: string | null | undefined,
@@ -265,24 +333,29 @@ function scoreConceptPenalty(candidate: MatchParts, profile: Partial<MatchParts>
 }
 
 export function scoreWineMatch(candidate: MatchParts, profile: Partial<MatchParts>): number {
-  const producerScore = scoreToken(candidate.producer, profile.producer) * 0.35;
-  const labelScore = scoreIdentityCoverage(candidate.label, [profile.label], 0.6) * 0.35;
+  // Primary signal: bidirectional pooled token overlap across all fields.
+  // This is robust to field-alignment mismatches that are common in menu parsing.
+  const pooledScore = scorePooledMatch(candidate, profile) * 0.50;
+
+  // Secondary signals: field-aligned bonuses when fields do happen to align.
+  const producerScore = scoreToken(candidate.producer, profile.producer) * 0.18;
+  const labelScore = scoreIdentityCoverage(candidate.label, [profile.label], 0.6) * 0.18;
   const producerRecoveryBonus =
-    scoreIdentityRecovery(candidate.label, [profile.label], [profile.producer]) * 0.04;
+    scoreIdentityRecovery(candidate.label, [profile.label], [profile.producer]) * 0.03;
   const regionRecoveryBonus =
     scoreIdentityRecovery(candidate.label, [profile.label, profile.producer], [profile.region]) *
-    0.04;
-  const varietalScore = scoreIdentityCoverage(candidate.varietal, [profile.varietal]) * 0.1;
-  const regionScore = scoreNovelRegionCoverage(candidate.region, candidate.label, profile.region) * 0.05;
+    0.03;
+  const varietalScore = scoreIdentityCoverage(candidate.varietal, [profile.varietal]) * 0.06;
+  const regionScore = scoreNovelRegionCoverage(candidate.region, candidate.label, profile.region) * 0.03;
   const rawTextBonus =
     scoreIdentityCoverage(candidate.rawText, [profile.producer, profile.label, profile.region]) *
-    0.03;
-  const exactConceptBonus = scoreExactConceptTokenBonus(candidate, profile) * 0.05;
+    0.02;
+  const exactConceptBonus = scoreExactConceptTokenBonus(candidate, profile) * 0.03;
   const contradictionPenalty = scoreConceptPenalty(candidate, profile);
   const vintageScore =
     candidate.vintage && profile.vintage
       ? candidate.vintage === profile.vintage
-        ? 0.15
+        ? 0.10
         : 0
       : 0;
 
@@ -290,7 +363,8 @@ export function scoreWineMatch(candidate: MatchParts, profile: Partial<MatchPart
     0,
     Math.min(
       1,
-      producerScore +
+      pooledScore +
+        producerScore +
         labelScore +
         producerRecoveryBonus +
         regionRecoveryBonus +

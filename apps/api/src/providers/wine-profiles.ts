@@ -140,7 +140,7 @@ export function normalizeVivinoTasteReviewCount(value: number | null | undefined
 /*  Vivino Direct – browser search + public taste API                  */
 /* ------------------------------------------------------------------ */
 
-const VIVINO_DIRECT_MATCH_THRESHOLD = 0.58;
+const VIVINO_DIRECT_MATCH_THRESHOLD = 0.38;
 
 /** Map a Vivino structure value to our 1–5 int scale. */
 function vivinoStructureToScale(value: number | null | undefined): number | undefined {
