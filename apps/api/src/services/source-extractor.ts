@@ -1,6 +1,7 @@
 import type { WineCandidate } from "@wine-rec/contracts";
 
 import { createOcrProvider } from "../providers/ocr.js";
+import { VivinoBrowser } from "../providers/vivino-browser.js";
 import {
   buildCandidateFromItem,
   isNonWineLine,
@@ -45,7 +46,21 @@ export async function extractSourceText(input: {
 
 export async function extractCandidatesFromUrl(sourceUrl: string): Promise<WineCandidate[]> {
   const { html } = await fetchHtmlDocument(new URL(sourceUrl));
-  return extractMenuCandidates(html);
+  const candidates = extractMenuCandidates(html);
+
+  if (candidates.length > 0) {
+    return candidates;
+  }
+
+  // Static HTML yielded nothing — page may be JS-rendered. Try the browser.
+  let renderedHtml: string;
+  try {
+    renderedHtml = await VivinoBrowser.getInstance().renderHtml(sourceUrl);
+  } catch {
+    return candidates;
+  }
+
+  return extractMenuCandidates(renderedHtml);
 }
 
 // ---------------------------------------------------------------------------

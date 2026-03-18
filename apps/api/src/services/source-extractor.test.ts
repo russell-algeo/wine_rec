@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { VivinoBrowser } from "../providers/vivino-browser.js";
 import { parseWineCandidates } from "./parser.js";
 import {
   extractCandidatesFromUrl,
@@ -292,5 +293,73 @@ describe("extractCandidatesFromUrl", () => {
     expect(candidates[0]?.price).toBe("$21.99");
     expect(candidates[1]?.rawText).toContain("Cardedu");
     expect(candidates[1]?.price).toBe("$23.99");
+  });
+
+  it("falls back to browser rendering when static HTML yields no candidates", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(`<html><body><div id="root"></div></body></html>`, {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+
+    const renderedHtml = `<html><body>
+      <h2>Red</h2>
+      <h3>Gigondas, Domaine du Cayron, France, '22</h3>
+      <p>$95</p>
+    </body></html>`;
+
+    const mockRenderHtml = vi.fn(async () => renderedHtml);
+    vi.spyOn(VivinoBrowser, "getInstance").mockReturnValue({
+      renderHtml: mockRenderHtml,
+    } as unknown as VivinoBrowser);
+
+    const candidates = await extractCandidatesFromUrl("https://example.com/wine");
+    expect(mockRenderHtml).toHaveBeenCalledWith("https://example.com/wine");
+    expect(candidates.length).toBeGreaterThanOrEqual(1);
+    expect(candidates.some((c) => c.rawText.includes("Gigondas"))).toBe(true);
+  });
+
+  it("returns empty results when both static and browser rendering yield nothing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(`<html><body></body></html>`, {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+
+    vi.spyOn(VivinoBrowser, "getInstance").mockReturnValue({
+      renderHtml: vi.fn(async () => `<html><body></body></html>`),
+    } as unknown as VivinoBrowser);
+
+    const candidates = await extractCandidatesFromUrl("https://example.com/wine");
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("skips the browser when static extraction succeeds", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          `<html><body><h2>Red</h2><h3>Brunello, Ciacci, Italy, '20</h3><p>$120</p></body></html>`,
+          { status: 200, headers: { "content-type": "text/html" } },
+        ),
+      ),
+    );
+
+    const mockRenderHtml = vi.fn();
+    vi.spyOn(VivinoBrowser, "getInstance").mockReturnValue({
+      renderHtml: mockRenderHtml,
+    } as unknown as VivinoBrowser);
+
+    const candidates = await extractCandidatesFromUrl("https://example.com/wine");
+    expect(mockRenderHtml).not.toHaveBeenCalled();
+    expect(candidates.length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -461,6 +461,13 @@ export class VivinoBrowser {
     return (await this.fetchVintagePageMeta(vintagePageUrl))?.aggregateRating ?? null;
   }
 
+  async renderHtml(url: string): Promise<string> {
+    return this.runBrowserTaskWithRetries(`render ${url}`, async (page) => {
+      await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
+      return page.content();
+    });
+  }
+
   async close(): Promise<void> {
     this.activeBrowserTasks = 0;
     this.browserTaskWaiters.length = 0;
