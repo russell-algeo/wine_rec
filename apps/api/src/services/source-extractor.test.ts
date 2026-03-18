@@ -262,7 +262,7 @@ describe("extractCandidatesFromUrl", () => {
     expect(candidates.find((c) => c.rawText.includes("Gigondas"))?.color).toBe("red");
   });
 
-  it("extracts wine candidates from an e-commerce collection page", async () => {
+  it("extracts wine candidates from an e-commerce collection page via the menu token stream", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -290,44 +290,7 @@ describe("extractCandidatesFromUrl", () => {
     expect(candidates).toHaveLength(2);
     expect(candidates[0]?.rawText).toContain("Domaine de la Mongestine");
     expect(candidates[0]?.price).toBe("$21.99");
-    expect(candidates[0]?.color).toBe("red");
     expect(candidates[1]?.rawText).toContain("Cardedu");
     expect(candidates[1]?.price).toBe("$23.99");
-  });
-
-  it("follows pagination on e-commerce pages", async () => {
-    const pages = new Map([
-      [
-        "https://grahamwine.co/collections/red-wines",
-        `<div class="card card--standard card--media">
-          <a href="/products/wine-a" class="full-unstyled-link">Wine A</a>
-          <span class="price-item price-item--regular">$20</span>
-        </div>
-        <nav><a href="/collections/red-wines?page=2">2</a></nav>`,
-      ],
-      [
-        "https://grahamwine.co/collections/red-wines?page=2",
-        `<div class="card card--standard card--media">
-          <a href="/products/wine-b" class="full-unstyled-link">Wine B</a>
-          <span class="price-item price-item--regular">$25</span>
-        </div>`,
-      ],
-    ]);
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: string | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        const html = pages.get(url);
-        return html
-          ? new Response(html, { status: 200, headers: { "content-type": "text/html" } })
-          : new Response("not found", { status: 404 });
-      }),
-    );
-
-    const candidates = await extractCandidatesFromUrl("https://grahamwine.co/collections/red-wines");
-    expect(candidates).toHaveLength(2);
-    expect(candidates.map((c) => c.rawText)).toContain("Wine A");
-    expect(candidates.map((c) => c.rawText)).toContain("Wine B");
   });
 });

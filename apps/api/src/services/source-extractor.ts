@@ -44,26 +44,8 @@ export async function extractSourceText(input: {
 }
 
 export async function extractCandidatesFromUrl(sourceUrl: string): Promise<WineCandidate[]> {
-  const doc = await fetchHtmlDocument(new URL(sourceUrl));
-  const strategy = detectStrategy(doc.html);
-
-  if (strategy === "ecommerce") {
-    return extractEcommerceCandidates(doc.html, doc.url);
-  }
-
-  return extractMenuCandidates(doc.html);
-}
-
-// ---------------------------------------------------------------------------
-// Strategy detection
-// ---------------------------------------------------------------------------
-
-function detectStrategy(html: string): "ecommerce" | "menu" {
-  // Shopify / generic product-collection pages: links to /products/<slug>
-  // combined with price-item class elements.
-  const hasProductLinks = /href=["'][^"']*\/products\/[^"']+["']/i.test(html);
-  const hasPriceItemClass = /class=["'][^"']*\bprice-item\b[^"']*["']/i.test(html);
-  return hasProductLinks && hasPriceItemClass ? "ecommerce" : "menu";
+  const { html } = await fetchHtmlDocument(new URL(sourceUrl));
+  return extractMenuCandidates(html);
 }
 
 // ---------------------------------------------------------------------------
@@ -342,116 +324,6 @@ function extractMenuCandidates(html: string): WineCandidate[] {
 }
 
 // ---------------------------------------------------------------------------
-// E-commerce extraction (Shopify-style product collection pages)
-// ---------------------------------------------------------------------------
-
-async function extractEcommerceCandidates(html: string, pageUrl: URL): Promise<WineCandidate[]> {
-  const allPages = [{ url: pageUrl, html }];
-  const visitedUrls = new Set([canonicalUrl(pageUrl)]);
-
-  const paginationUrls = extractPaginationUrls(pageUrl, html);
-  for (const nextUrl of paginationUrls) {
-    const key = canonicalUrl(nextUrl);
-    if (visitedUrls.has(key) || allPages.length >= 24) break;
-    visitedUrls.add(key);
-    allPages.push(await fetchHtmlDocument(nextUrl));
-  }
-
-  const seenKeys = new Set<string>();
-  const items: RawMenuItem[] = [];
-
-  for (const page of allPages) {
-    const color = inferColorFromUrl(page.url);
-    for (const item of extractEcommerceItemsFromPage(page.html)) {
-      const key = `${item.name}::${item.price}`;
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-      items.push({ ...item, section: color, tab: null });
-    }
-  }
-
-  return items
-    .map((item) => buildCandidateFromItem(item))
-    .filter((c): c is WineCandidate => c !== null);
-}
-
-function extractEcommerceItemsFromPage(html: string): Array<{ name: string; price: string | null }> {
-  const blocks = collectBalancedDivBlocks(
-    html,
-    /<div[^>]+class=["'][^"']*\bcard\b[^"']*\bcard--standard\b[^"']*["'][^>]*>/gi,
-  );
-  const results: Array<{ name: string; price: string | null }> = [];
-
-  for (const block of blocks) {
-    const rawTitle = cleanInlineText(
-      extractFirst(
-        block,
-        new RegExp(
-          `<a[^>]+href="/products/[^"]+"[^>]+${classTokenMatcher("full-unstyled-link")}[^>]*>([\\s\\S]*?)<\\/a>`,
-          "i",
-        ),
-      ),
-    );
-    const rawPrice = cleanInlineText(
-      extractFirst(
-        block,
-        new RegExp(`<span[^>]+${classTokenMatcher("price-item")}[^>]*>([\\s\\S]*?)<\\/span>`, "i"),
-      ),
-    );
-
-    if (!rawTitle) continue;
-    const price = rawPrice ? (normalizeRawPrice(rawPrice) ?? null) : null;
-    results.push({ name: rawTitle, price });
-  }
-
-  return results;
-}
-
-function extractPaginationUrls(baseUrl: URL, html: string): URL[] {
-  const discovered = new Map<number, URL>();
-  const hrefPattern = /href=["']([^"']+)["']/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = hrefPattern.exec(html))) {
-    const href = match[1];
-    if (!href) continue;
-
-    let nextUrl: URL;
-    try {
-      nextUrl = new URL(href, baseUrl);
-    } catch {
-      continue;
-    }
-
-    if (normalizeHost(nextUrl) !== normalizeHost(baseUrl)) continue;
-    if (nextUrl.pathname !== baseUrl.pathname) continue;
-
-    const pageValue = nextUrl.searchParams.get("page");
-    if (!pageValue) continue;
-
-    const pageNumber = Number(pageValue);
-    if (!Number.isInteger(pageNumber) || pageNumber < 2) continue;
-
-    nextUrl.hash = "";
-    discovered.set(pageNumber, nextUrl);
-  }
-
-  return [...discovered.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, url]) => url);
-}
-
-function inferColorFromUrl(url: URL): string | null {
-  const path = url.pathname.toLowerCase();
-  if (path.includes("red")) return "RED";
-  if (path.includes("white")) return "WHITE";
-  if (path.includes("rose") || path.includes("rosé")) return "ROSE";
-  if (path.includes("sparkling") || path.includes("champagne")) return "SPARKLING";
-  if (path.includes("orange")) return "ORANGE";
-  return null;
-}
-
-// ---------------------------------------------------------------------------
 // Shared utilities
 // ---------------------------------------------------------------------------
 
@@ -509,50 +381,6 @@ function extractFirst(input: string, pattern: RegExp): string | null {
   return match?.[1] ?? null;
 }
 
-function classTokenMatcher(token: string): string {
-  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return `class=["'](?:[^"']*\\s)?${escaped}(?:\\s[^"']*)?["']`;
-}
-
-function collectBalancedDivBlocks(input: string, pattern: RegExp): string[] {
-  const blocks: string[] = [];
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(input))) {
-    const block = sliceBalancedDiv(input, match.index);
-    if (!block) continue;
-    blocks.push(block);
-    pattern.lastIndex = match.index + block.length;
-  }
-
-  return blocks;
-}
-
-function sliceBalancedDiv(input: string, startIndex: number): string | null {
-  const divPattern = /<\/?div\b[^>]*>/gi;
-  divPattern.lastIndex = startIndex;
-
-  let depth = 0;
-  let firstFound = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = divPattern.exec(input))) {
-    if (!firstFound) {
-      firstFound = true;
-      depth = 1;
-      continue;
-    }
-
-    if (match[0].startsWith("</")) {
-      depth -= 1;
-      if (depth === 0) return input.slice(startIndex, divPattern.lastIndex);
-    } else {
-      depth += 1;
-    }
-  }
-
-  return null;
-}
 
 function decodeEntities(input: string): string {
   const named: Record<string, string> = {
