@@ -113,6 +113,22 @@ describe("extractLeafTokens", () => {
     const tokens = extractLeafTokens("<div>SPARKLING</div><p>Some wine $95</p>");
     expect(tokens[0]).toEqual({ type: "section", text: "SPARKLING" });
   });
+
+  it("treats headings with uncommon section words as sections", () => {
+    const tokens = extractLeafTokens("<h2>BIODYNAMIC SELECTIONS</h2><h2>HALF BOTTLES</h2>");
+    expect(tokens[0]).toEqual({ type: "section", text: "BIODYNAMIC SELECTIONS" });
+    expect(tokens[1]).toEqual({ type: "section", text: "HALF BOTTLES" });
+  });
+
+  it("treats a long heading with no wine signals as a wine name", () => {
+    const tokens = extractLeafTokens("<h3>Domaine Croix de la Madeleine</h3>");
+    expect(tokens[0]).toEqual({ type: "text", text: "Domaine Croix de la Madeleine" });
+  });
+
+  it("treats a heading with a comma as a wine name regardless of length", () => {
+    const tokens = extractLeafTokens("<h3>Penfolds, Grange</h3>");
+    expect(tokens[0]).toEqual({ type: "text", text: "Penfolds, Grange" });
+  });
 });
 
 // ---------------------------------------------------------------------------

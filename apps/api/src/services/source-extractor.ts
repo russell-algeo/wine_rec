@@ -185,6 +185,15 @@ function extractTrailingInlinePrice(text: string): { name: string; price: string
   return { name, price };
 }
 
+function looksLikeWineName(text: string): boolean {
+  if (/\b(19|20)\d{2}\b/.test(text)) return true;       // 4-digit vintage
+  if (/[''`']\d{2}\b/.test(text)) return true;           // abbreviated vintage '22
+  if (/[''"][^''"]{2,}[''"]/.test(text)) return true;    // quoted label 'Primal'
+  if (/\s+-\s+/.test(text)) return true;                 // dash separator
+  if (text.includes(",")) return true;                   // commas = wine info parts
+  return false;
+}
+
 export function extractLeafTokens(html: string): LeafToken[] {
   // Strip noise elements
   const cleaned = html
@@ -211,10 +220,16 @@ export function extractLeafTokens(html: string): LeafToken[] {
     if (line.startsWith("@@HEADING@@")) {
       const text = line.slice("@@HEADING@@".length).trim();
       if (!text) continue;
-      if (looksLikeSectionName(text)) {
-        tokens.push({ type: "section", text });
-      } else {
-        // Heading contains a wine name — treat as regular text
+
+      // Layer 1: strong wine-name signals → wine name (text token)
+      // Layer 2: known section keyword → section token
+      // Layer 3: word-count fallback — long headings (>4 words) are wine names, short are sections
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      const isWine =
+        looksLikeWineName(text) ||
+        (!looksLikeSectionName(text) && wordCount > 4);
+
+      if (isWine) {
         const inline = extractTrailingInlinePrice(text);
         if (inline) {
           tokens.push({ type: "text", text: inline.name });
@@ -222,6 +237,8 @@ export function extractLeafTokens(html: string): LeafToken[] {
         } else {
           tokens.push({ type: "text", text });
         }
+      } else {
+        tokens.push({ type: "section", text });
       }
       continue;
     }
