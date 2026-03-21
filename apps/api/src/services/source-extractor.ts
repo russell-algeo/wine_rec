@@ -342,11 +342,13 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
     const name = nameLines.join(" ").trim().replace(/\s*\|\s*/g, ", ");
     nameLines = [];
     if (!name || isNonWineLine(name)) {
-      justFlushedNameBeforePrice = false;
+      // Preserve the nameBeforePrice flag so a duplicate price span that
+      // immediately follows a filtered item is not saved as pendingPrice.
+      justFlushedNameBeforePrice = nameBeforePrice;
       return;
     }
     if (isNonWineSection(currentSection)) {
-      justFlushedNameBeforePrice = false;
+      justFlushedNameBeforePrice = nameBeforePrice;
       return;
     }
     justFlushedNameBeforePrice = nameBeforePrice;
@@ -429,9 +431,11 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
 
     // Shopify Dawn and similar themes repeat the product name in two separate h3 tags
     // (one inside the image overlay, one in the info section). When the incoming text
-    // exactly matches the first line of the current block, treat it as a duplicate and
-    // flush the current block before starting fresh.
-    if (nameLines.length > 0 && token.text === nameLines[0]) {
+    // matches any accumulated name line, treat it as a duplicate and flush the current
+    // block before starting fresh. Using .includes() (rather than === nameLines[0])
+    // handles the case where promotional/UI text has accumulated before the first real
+    // wine name, so the dedup still fires when the second h3 copy arrives.
+    if (nameLines.length > 0 && nameLines.includes(token.text)) {
       flushItem(pendingPrice);
       pendingPrice = null;
     }
