@@ -479,7 +479,7 @@ class VivinoDirectProvider implements WineProfileProvider {
       return null;
     }
 
-    const query = [candidate.producer, candidate.label, candidate.vintage]
+    const query = [candidate.producer, candidate.label, candidate.region, candidate.vintage]
       .filter(Boolean)
       .join(" ");
     console.log("[vivino-direct] Searching for: %s", query);

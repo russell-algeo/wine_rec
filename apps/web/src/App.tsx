@@ -1021,7 +1021,7 @@ export function App() {
                         ← Back
                       </button>
                       <button
-                        className="action onboarding-btn-analyze"
+                        className={`action onboarding-btn-analyze${busy ? ' is-loading' : ''}`}
                         disabled={!step2Ready || busy}
                         onClick={() => void handleIngestAnalyze()}
                         type="button"
@@ -1058,7 +1058,7 @@ export function App() {
                         ← Back
                       </button>
                       <button
-                        className="action onboarding-btn-analyze"
+                        className={`action onboarding-btn-analyze${busy ? ' is-loading' : ''}`}
                         disabled={!step2Ready || busy}
                         onClick={() => void handleIngestAnalyze()}
                         type="button"

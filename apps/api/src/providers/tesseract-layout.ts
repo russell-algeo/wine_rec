@@ -17,6 +17,10 @@ type LayoutLine = {
 
 const pricePattern = /^\$\d+(?:\.\d{2})?$/;
 const ignoredWords = new Set(["sold", "out", "seal"]);
+const inlineMenuPricePattern =
+  /(?:NA|\$?\d+(?:\.\d{2})?)(?:\s*\/\s*(?:NA|\$?\d+(?:\.\d{2})?)){1,2}\s*$/i;
+const menuSectionPattern = /\b(red|white|rose|rosé|sparkling|champagne|orange|sherry|sake|sweet)\b/i;
+const menuSectionContextPattern = /\b(glass|carafe|bottle|split|wine|wines)\b/i;
 
 function parseInteger(value: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -58,6 +62,32 @@ function lineLooksLikeTitleContent(text: string): boolean {
   return alphaWords.some((word) => word.length >= 5);
 }
 
+function lineLooksLikeInlineMenuRow(text: string): boolean {
+  const match = text.match(inlineMenuPricePattern);
+  if (!match) return false;
+
+  const priceBlob = match[0] ?? "";
+  const slashCount = (priceBlob.match(/\//g) ?? []).length;
+  const isMultiPriceRow = slashCount >= 2 || /\bNA\b/i.test(priceBlob);
+  if (!isMultiPriceRow) return false;
+
+  const title = text.replace(inlineMenuPricePattern, "").trim().replace(/[:\s]+$/, "");
+  if (!title || !/[A-Za-z]/.test(title)) return false;
+
+  return title.includes(",") || title.includes(":");
+}
+
+function lineLooksLikeMenuSection(text: string): boolean {
+  return menuSectionPattern.test(text) && menuSectionContextPattern.test(text);
+}
+
+function shouldPreferPlainText(lines: LayoutLine[]): boolean {
+  const texts = lines.map((line) => lineText(line.words));
+  const menuRows = texts.filter((text) => lineLooksLikeInlineMenuRow(text)).length;
+  const sections = texts.filter((text) => lineLooksLikeMenuSection(text)).length;
+  return menuRows >= 4 && sections >= 1;
+}
+
 function findColumnIndex(word: TesseractWord, columnStarts: number[]): number {
   for (let index = columnStarts.length - 1; index >= 0; index -= 1) {
     if (word.left >= ((columnStarts[index] ?? 0) - 4)) {
@@ -77,6 +107,13 @@ export function buildPlainTextFromTsv(tsv: string): string {
 
 export function buildLayoutAwareTextFromTsv(tsv: string): string {
   const lines = groupLinesFromTsv(tsv);
+  if (shouldPreferPlainText(lines)) {
+    return lines
+      .map((line) => lineText(line.words))
+      .filter(Boolean)
+      .join("\n");
+  }
+
   const renderedBlocks: string[] = [];
   const consumedLineIndexes = new Set<number>();
 

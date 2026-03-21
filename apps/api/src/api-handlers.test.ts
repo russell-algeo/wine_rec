@@ -53,11 +53,13 @@ const {
   fetchUrlPreviewMock,
   runCandidateAnalysisMock,
   parseWineCandidatesMock,
+  extractCandidatesFromUrlMock,
   extractSourceTextMock,
   storeState,
   resetStoreState,
   createJobMock,
   getJobMock,
+  getJobStateMock,
   updateJobMock,
   createJobWorkersMock,
   getJobWorkerMock,
@@ -94,6 +96,7 @@ const {
 
   const createJobMock = vi.fn();
   const getJobMock = vi.fn(async () => (state.job ? clone(state.job) : null));
+  const getJobStateMock = vi.fn(async () => (state.job ? clone(state.job) : null));
   const updateJobMock = vi.fn(async (_jobId: string, updates: Partial<MockJob>) => {
     if (!state.job) {
       return;
@@ -218,7 +221,11 @@ const {
     async (_jobId: string, candidateId: string, leaseOwner: string, recommendation: Recommendation) => {
       const record = state.candidateWork.get(candidateId);
       if (!record || record.leaseOwner !== leaseOwner) {
-        return false;
+        return {
+          updated: false,
+          progressTracked: false,
+          jobStatus: null,
+        };
       }
 
       state.candidateWork.set(candidateId, {
@@ -229,7 +236,28 @@ const {
         leaseExpiresAt: null,
         errorMessage: null,
       });
-      return true;
+
+      let jobStatus: MockJob["status"] = "processing";
+      if (state.job) {
+        const records = Array.from(state.candidateWork.values());
+        const failedCount = records.filter((value) => value.status === "failed").length;
+        const completedCount = records.filter((value) => value.status === "completed").length;
+        jobStatus = failedCount > 0
+          ? "failed"
+          : completedCount === state.job.candidates.length
+            ? "completed"
+            : "processing";
+        state.job = {
+          ...state.job,
+          status: jobStatus,
+        };
+      }
+
+      return {
+        updated: true,
+        progressTracked: true,
+        jobStatus,
+      };
     },
   );
 
@@ -239,7 +267,11 @@ const {
     async (_jobId: string, candidateId: string, leaseOwner: string, errorMessage: string) => {
       const record = state.candidateWork.get(candidateId);
       if (!record || record.leaseOwner !== leaseOwner) {
-        return false;
+        return {
+          updated: false,
+          progressTracked: false,
+          jobStatus: null,
+        };
       }
 
       state.candidateWork.set(candidateId, {
@@ -249,7 +281,18 @@ const {
         leaseExpiresAt: null,
         errorMessage,
       });
-      return true;
+      if (state.job) {
+        state.job = {
+          ...state.job,
+          status: "failed",
+          errorMessage,
+        };
+      }
+      return {
+        updated: true,
+        progressTracked: true,
+        jobStatus: "failed",
+      };
     },
   );
 
@@ -268,11 +311,13 @@ const {
     fetchUrlPreviewMock: vi.fn(),
     runCandidateAnalysisMock: vi.fn(),
     parseWineCandidatesMock: vi.fn(),
+    extractCandidatesFromUrlMock: vi.fn(),
     extractSourceTextMock: vi.fn(),
     storeState: state,
     resetStoreState,
     createJobMock,
     getJobMock,
+    getJobStateMock,
     updateJobMock,
     createJobWorkersMock,
     getJobWorkerMock,
@@ -332,6 +377,7 @@ vi.mock("./services/parser.js", () => ({
 }));
 
 vi.mock("./services/source-extractor.js", () => ({
+  extractCandidatesFromUrl: extractCandidatesFromUrlMock,
   extractSourceText: extractSourceTextMock,
 }));
 
@@ -342,6 +388,7 @@ vi.mock("./services/url-preview.js", () => ({
 vi.mock("./store/job-store.js", () => ({
   createJob: createJobMock,
   getJob: getJobMock,
+  getJobState: getJobStateMock,
   updateJob: updateJobMock,
   createJobWorkers: createJobWorkersMock,
   getJobWorker: getJobWorkerMock,
@@ -513,8 +560,7 @@ describe("serverless worker orchestration", () => {
       [],
     );
 
-    extractSourceTextMock.mockResolvedValue("Wine list");
-    parseWineCandidatesMock.mockReturnValue(candidates);
+    extractCandidatesFromUrlMock.mockResolvedValue(candidates);
     publishJSONMock.mockImplementation(async ({ body }: { body: { workerIndex: number } }) => ({
       messageId: `msg-${body.workerIndex}`,
     }));

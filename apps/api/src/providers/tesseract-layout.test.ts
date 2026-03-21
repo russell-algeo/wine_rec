@@ -1,8 +1,13 @@
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { buildLayoutAwareTextFromTsv } from "./tesseract-layout.js";
 import { parseWineCandidates } from "../services/parser.js";
 import { canonicalizeText, hasTesseract, ocrFixtureToTsv } from "../test-support/ocr-fixtures.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("tesseract layout normalization", () => {
   const integration = hasTesseract ? it : it.skip;
@@ -46,5 +51,25 @@ describe("tesseract layout normalization", () => {
       "$9.99",
       "$24.99",
     ]);
+  }, 15_000);
+
+  integration("preserves row-based menu screenshots instead of exploding them into fake columns", async () => {
+    const imagePath = path.resolve(process.cwd(), "../../apps/web/public/images/RENEFAkn5FlzzGhhpc_QL.png");
+    const { stdout } = await execFileAsync(
+      "tesseract",
+      [imagePath, "stdout", "-l", "eng", "--psm", "6", "tsv"],
+      { encoding: "utf8", maxBuffer: 20_000_000 },
+    );
+
+    const normalized = buildLayoutAwareTextFromTsv(stdout);
+    const candidates = parseWineCandidates(normalized);
+    const normalizedNames = candidates.map((candidate) => canonicalizeText(candidate.rawText));
+
+    expect(normalized).toContain("Bianchi Chardonnay, Central Coast: $14 / $27 / $49");
+    expect(normalized).toContain("Sparkling (Split/Bottle)");
+    expect(candidates).toHaveLength(20);
+    expect(normalizedNames).toContain(canonicalizeText("Bianchi Chardonnay, Central Coast"));
+    expect(normalizedNames).toContain(canonicalizeText("Paraduxx Proprietary Red, Napa Valley"));
+    expect(normalizedNames).toContain(canonicalizeText("Mionetto Prosecco, Italy"));
   }, 15_000);
 });

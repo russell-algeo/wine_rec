@@ -4,10 +4,17 @@
   "installCommand": "npm install",
   "framework": null,
   "functions": {
-    "api/**/*.ts": {
+    "api/coordinator.ts": {
       "maxDuration": 60,
       "memory": 1024,
       "includeFiles": "{node_modules/tesseract.js,node_modules/tesseract.js-core,tessdata}/**"
+    },
+    "api/chunk-worker.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "api/**/*.ts": {
+      "maxDuration": 60
     }
   }
 }

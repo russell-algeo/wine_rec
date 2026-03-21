@@ -9,12 +9,28 @@ const sectionHeaderHints = [
   "white",
   "rose",
   "rosé",
+  "pink",
   "sparkling",
   "orange",
   "sherry",
   "sake",
   "sweet",
 ];
+const sectionHeaderContextHints = new Set([
+  "wines",
+  "glass",
+  "glasses",
+  "carafe",
+  "carafes",
+  "bottle",
+  "bottles",
+  "split",
+  "list",
+  "lists",
+  "by",
+  "the",
+  "and",
+]);
 const varietalHints = [
   "sauvignon blanc",
   "cabernet sauvignon",
@@ -51,11 +67,25 @@ const nonWineHints = [
   "beer",
   "drinks",
   "rinks",
+  // E-commerce / UI noise (Shopify, general web pages)
+  "sold out",
+  "regular price",
+  "sale price",
+  "add to cart",
+  "your cart",
+  "estimated total",
+  "skip to content",
+  "continue shopping",
+  "have an account",
+  "filter and sort",
+  "log in to check",
 ];
 const menuTabMarkerPattern = /^@@TAB:\s*(.+)$/;
 const menuSectionMarkerPattern = /^@@SECTION:\s*(.+)$/;
 const inlinePricePattern =
   /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?(?:\s+[A-Za-z0-9]+)?)\s*$/;
+const inlineMenuPricePattern =
+  /^(.*?)(?::\s*|\s+)((?:NA|\$?\d+(?:\.\d{2})?)(?:\s*\/\s*(?:NA|\$?\d+(?:\.\d{2})?)){1,2})\s*$/i;
 const ocrCorrections: Array<[RegExp, string]> = [
   [/\bRhone\b/g, "Rhône"],
   [/\bSchaztel\b/g, "Schäztel"],
@@ -69,14 +99,92 @@ function detectHint(line: string, hints: string[]): string | null {
   return hit ?? null;
 }
 
+function normalizeTitleWord(word: string): string {
+  return word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'’.-]+$/gu, "");
+}
+
 function sanitizeOcrLine(line: string): string {
   const trimmed = line
     .trim()
-    .replace(/^[*•|]+\s*/, "")
+    .replace(/^[*•|¢]+\s*/, "")
     .replace(/\s+[|«»]+$/g, "")
+    .replace(/\s*[*†‡§¶#]+\s*$/, "")
+    .replace(/\s+@\s*[A-Za-z0-9'’.+-]+$/u, "")
     .trim();
 
-  return applyOcrCorrections(trimmed);
+  const withoutSingleLetterBullet = trimmed.replace(/^[a-z]\s+(?=[A-Z])/u, "");
+  return applyOcrCorrections(withoutSingleLetterBullet);
+}
+
+/**
+ * Strips trailing annotation markers (*, †, etc.) from a string.
+ * These appear on wine menus to flag organic, vegan, natural items.
+ */
+function stripAnnotationMarkers(text: string): string {
+  return text.replace(/\s*[*†‡§¶#]+\s*$/, "").trim();
+}
+
+/**
+ * Extracts a trailing price from a region segment like "Beaujolais, France 17/68"
+ * or "Abruzzo, Italy 80". Returns null if no recognizable price is found.
+ */
+function extractTrailingOcrPrice(text: string): { region: string; price: string } | null {
+  const clean = stripAnnotationMarkers(text);
+  const match = clean.match(/^(.*\S)\s+(\d+(?:\s*\/\s*\d+)?)$/);
+  if (!match) return null;
+
+  const rawPrice = match[2]!.trim();
+  const region = match[1]!.trim();
+
+  if (/^(19|20)\d{2}$/.test(rawPrice)) return null;
+
+  const slashMatch = rawPrice.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (slashMatch) {
+    return { region, price: `$${Math.max(Number(slashMatch[1]), Number(slashMatch[2]))}` };
+  }
+
+  const n = Number(rawPrice);
+  if (n >= 5 && n <= 2000) return { region, price: `$${n}` };
+
+  return null;
+}
+
+/**
+ * Parses a pipe-delimited OCR line: "Producer 'Label' Vintage | Varietal | Region Price".
+ * Returns null if no pipes are present.
+ */
+function parsePipeDelimitedOcrLine(line: string): {
+  name: string;
+  varietal: string | null;
+  region: string | null;
+  price: string | null;
+} | null {
+  if (!line.includes("|")) return null;
+
+  const segments = line.split(/\s*\|\s*/).map((s) => s.trim()).filter(Boolean);
+  if (segments.length < 2) return null;
+
+  const name = segments[0]!;
+  const varietalRaw = segments[1] ?? null;
+  const varietal = varietalRaw ? stripAnnotationMarkers(varietalRaw) || null : null;
+
+  if (segments.length < 3) {
+    const extracted = extractTrailingOcrPrice(varietalRaw ?? "");
+    if (extracted) {
+      return { name, varietal: null, region: extracted.region, price: extracted.price };
+    }
+    return { name, varietal, region: null, price: null };
+  }
+
+  const regionSegment = segments.slice(2).join(", ");
+  const extracted = extractTrailingOcrPrice(regionSegment);
+
+  return {
+    name,
+    varietal,
+    region: extracted?.region ?? (stripAnnotationMarkers(regionSegment) || null),
+    price: extracted?.price ?? null,
+  };
 }
 
 function applyOcrCorrections(line: string): string {
@@ -97,7 +205,38 @@ function extractInlinePrice(line: string): { title: string; price: string | null
   };
 }
 
+function extractInlineMenuPrice(line: string): { title: string; price: string | null } | null {
+  const match = line.match(inlineMenuPricePattern);
+  if (!match) {
+    return null;
+  }
+
+  const title = match[1]?.trim().replace(/[:\s]+$/g, "") ?? "";
+  const priceBlob = match[2] ?? "";
+  const usesExplicitMenuSeparator = title.endsWith(":") || priceBlob.includes("$");
+  if (!title || !/[A-Za-z]/.test(title)) {
+    return null;
+  }
+  if (!usesExplicitMenuSeparator) {
+    return null;
+  }
+
+  const numericPrices = priceBlob
+    .split(/\s*\/\s*/g)
+    .map((token) => token.trim())
+    .filter((token) => token && !/^NA$/i.test(token))
+    .map((token) => Number(token.replace(/^\$/, "")))
+    .filter((value) => Number.isFinite(value));
+
+  return {
+    title,
+    price: numericPrices.length > 0 ? `$${Math.max(...numericPrices)}` : null,
+  };
+}
+
 export function isNonWineLine(line: string): boolean {
+  // Single-letter / single-letter column headers like "G / B" (glass/bottle indicators)
+  if (/^[A-Za-z]\s*\/\s*[A-Za-z]$/.test(line.trim())) return true;
   const normalized = line
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -105,6 +244,8 @@ export function isNonWineLine(line: string): boolean {
     .trim();
 
   if (!normalized) return true;
+  // Prose descriptions (>200 chars) are never wine names.
+  if (normalized.length > 200) return true;
   return nonWineHints.some((hint) => normalized.includes(hint));
 }
 
@@ -169,7 +310,7 @@ export function normalizeSectionHeader(line: string): string | null {
   const headers = words.filter((word) => sectionColors.has(word));
   const noise = words.filter((word) => !sectionColors.has(word) && !/^\d+$/.test(word));
 
-  if (headers.length >= 1 && noise.length === 0) {
+  if (headers.length >= 1 && noise.every((word) => sectionHeaderContextHints.has(word))) {
     return headers[0] ?? null;
   }
 
@@ -196,11 +337,32 @@ function looksLikeRegionLine(line: string): boolean {
   return /,\s*[A-Z]{2}$/.test(line);
 }
 
+/**
+ * Returns true if the line looks like a standalone grape varietal fragment,
+ * e.g. "Grenache/Carignan" or "Syrah" that OCR placed on its own line after
+ * stripping a trailing pipe from "Name | Varietal |".
+ */
+function looksLikeVarietalFragment(line: string): boolean {
+  const trimmed = line.trim();
+  // "Grenache/Carignan", "Mourvedre/Grenache" — slash-separated grape names, no spaces or digits
+  if (/^[A-Z][A-Za-zÀ-ÿ]+(\/[A-Z][A-Za-zÀ-ÿ]+)+$/.test(trimmed)) return true;
+  // Single-word known varietal: the entire line must be one word (no spaces), preventing
+  // false positives like "Stéphane Coquillette Champagne, France/31" which contains "champagne"
+  // as a substring of varietalHints.
+  if (/^[A-Za-zÀ-ÿ]+$/.test(trimmed)) {
+    return detectHint(trimmed, varietalHints) !== null;
+  }
+  return false;
+}
+
 function looksLikeTitleContinuation(line: string): boolean {
   if (vintagePattern.test(line)) return false;
   if (/^(NV|N\.V\.)\b/i.test(line)) return false;
   if (/[‘'“"][^’'"”]+[’'"”]/.test(line)) return false;
   if (/\s+-\s+/.test(line) || /\s+-$/.test(line)) return false;
+  // A standalone varietal fragment should not be consumed as a title continuation;
+  // it needs to stay in the notes so synthetic extraction can promote it.
+  if (looksLikeVarietalFragment(line)) return false;
   if (looksLikeRegionLine(line)) return true;
   if (line.includes(",")) return false;
 
@@ -211,7 +373,8 @@ function looksLikeTitleContinuation(line: string): boolean {
   if (alphaWords.length === 0) return false;
 
   const titleLikeWords = alphaWords.filter((word) => {
-    return /^[A-Z][A-Za-z'’.-]*$/.test(word) || /^[A-Z]{2,}$/.test(word);
+    const normalizedWord = normalizeTitleWord(word);
+    return /^\p{Lu}[\p{L}'’.-]*$/u.test(normalizedWord) || /^\p{Lu}{2,}$/u.test(normalizedWord);
   }).length;
 
   if (titleLikeWords / alphaWords.length >= 0.6) {
@@ -227,11 +390,13 @@ function looksLikeTitleContinuation(line: string): boolean {
 
 export function looksLikeTitleLine(line: string): boolean {
   if (vintagePattern.test(line)) return true;
+  if (abbreviatedVintagePattern.test(line)) return true;
   if (/^(NV|N\.V\.)\b/i.test(line)) return true;
   if (/[‘'“"][^’'"”]+[’'"”]/.test(line)) return true;
   if (/\s+-\s+/.test(line) || /\s+-$/.test(line)) return true;
   const words = line.split(/\s+/).filter(Boolean);
-  const capitalizedWords = words.filter((word) => /^[A-Z][A-Za-z'’.-]+$/.test(word)).length;
+  const capitalizedWords = words.filter((word) => /^\p{Lu}[\p{L}'’.-]+$/u.test(normalizeTitleWord(word))).length;
+  if (/\/\s*\$?\d+(?:\.\d{2})?\b/.test(line) && capitalizedWords >= 3) return true;
   if (!line.includes(",") && words.length >= 4 && capitalizedWords >= 3) return true;
   return false;
 }
@@ -273,8 +438,13 @@ export function parseBlock(
     return null;
   }
 
+  // Parse pipe-delimited OCR format: "Name | Varietal | Region Price"
+  const pipeData = parsePipeDelimitedOcrLine(title);
+  const titleForParsing = pipeData ? pipeData.name : title;
+  const inlineMenuPrice = pipeData ? null : extractInlineMenuPrice(titleForParsing);
+
   const { title: priceStrippedTitle, price: inlinePrice } = extractInlinePrice(
-    applyOcrCorrections(title.replace(/\s+-\s+/, " - ")),
+    applyOcrCorrections((inlineMenuPrice?.title ?? titleForParsing).replace(/\s+-\s+/, " - ")),
   );
   const normalizedTitle = priceStrippedTitle;
   const vintageMatch = normalizedTitle.match(vintagePattern);
@@ -291,14 +461,56 @@ export function parseBlock(
   const leftTitle = splitTitle[0] ?? normalizedTitle;
   const rightTitle = splitTitle[1]?.trim() ?? null;
   const { producer, label } = inferProducerAndLabel(leftTitle, vintage);
-  const varietal = detectHint(`${normalizedTitle} ${lines.slice(noteStartIndex).join(" ")}`, varietalHints);
-  const region = rightTitle ?? detectHint(normalizedTitle, regionHints);
-  const notes = lines.slice(noteStartIndex).join(" ").trim() || null;
+
+  // When pipeData is null, OCR may have delivered the pipe-delimited segments as separate
+  // lines (trailing "|" stripped by sanitizeOcrLine). Detect "Varietal" + "Region Price"
+  // fragments in the note lines and promote them to structured fields.
+  let syntheticVarietal: string | null = null;
+  let syntheticRegion: string | null = null;
+  let syntheticPrice: string | null = null;
+  let adjustedNoteStart = noteStartIndex;
+
+  if (!pipeData && lines.length > noteStartIndex) {
+    const firstNote = lines[noteStartIndex]!;
+    if (looksLikeVarietalFragment(firstNote)) {
+      syntheticVarietal = firstNote;
+      adjustedNoteStart++;
+      const secondNote = lines[adjustedNoteStart];
+      if (secondNote) {
+        const extracted = extractTrailingOcrPrice(secondNote);
+        if (extracted) {
+          syntheticRegion = extracted.region;
+          syntheticPrice = extracted.price;
+        } else {
+          syntheticRegion = stripAnnotationMarkers(secondNote) || null;
+        }
+        adjustedNoteStart++;
+      }
+    }
+  }
+
+  const effectiveVarietal = pipeData?.varietal ?? syntheticVarietal;
+  const effectiveRegion = pipeData?.region ?? syntheticRegion ?? rightTitle;
+  const effectivePrice = pipeData?.price ?? syntheticPrice ?? inlineMenuPrice?.price;
+
+  const varietal = effectiveVarietal?.toLowerCase() ?? detectHint(`${normalizedTitle} ${lines.slice(noteStartIndex).join(" ")}`, varietalHints);
+  const region = effectiveRegion ?? detectHint(normalizedTitle, regionHints);
+  const notes = lines.slice(adjustedNoteStart).join(" ").trim() || null;
+
+  // Build a human-readable rawText. When we have structured varietal/region info
+  // (either from inline pipes or from promoted note fragments), join with ", " so that
+  // the display reads naturally: "Elodie Balme, Grenache/Carignan, Rhône, France".
+  const rawTextParts = [
+    pipeData ? pipeData.name : normalizedTitle,
+    effectiveVarietal,
+    effectiveRegion,
+  ].filter(Boolean);
+  const rawText = rawTextParts.length > 1 ? rawTextParts.join(", ") : (pipeData ? pipeData.name : normalizedTitle);
 
   return {
     id: nanoid(),
-    rawText: normalizedTitle,
-    price: price ?? inlinePrice,
+    rawText,
+    price: price ?? effectivePrice ?? inlinePrice,
     menuTab,
     menuSection,
     lineNumber: startLineNumber,
@@ -315,6 +527,8 @@ export function parseBlock(
 
 export function parseWineCandidates(extractedText: string): WineCandidate[] {
   const rawLines = extractedText.split(/\r?\n/);
+  const sanitizedLines = rawLines.map((rawLine) => sanitizeOcrLine(rawLine));
+  const firstSectionIndex = sanitizedLines.findIndex((line) => line && isSectionHeader(line));
   const candidates: WineCandidate[] = [];
   let currentColor: string | null = null;
   let currentMenuTab: string | null = null;
@@ -337,8 +551,11 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
     currentBlock = [];
   };
 
-  rawLines.forEach((rawLine, index) => {
-    const line = sanitizeOcrLine(rawLine);
+  sanitizedLines.forEach((line, index) => {
+    if (firstSectionIndex >= 0 && index < firstSectionIndex) {
+      return;
+    }
+
     if (!line) {
       return;
     }
@@ -374,6 +591,23 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
 
     if (isPriceLine(line)) {
       flushBlock(normalizePriceLine(line));
+      return;
+    }
+
+    const inlineMenuPrice = extractInlineMenuPrice(line);
+    if (inlineMenuPrice) {
+      flushBlock();
+      const candidate = parseBlock(
+        [inlineMenuPrice.title],
+        index,
+        currentColor,
+        inlineMenuPrice.price,
+        currentMenuTab,
+        currentMenuSection,
+      );
+      if (candidate) {
+        candidates.push(candidate);
+      }
       return;
     }
 

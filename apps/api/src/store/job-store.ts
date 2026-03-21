@@ -47,6 +47,19 @@ export type JobCandidateWorkRecord = {
   updatedAt: string;
 };
 
+export type JobProgressRecord = {
+  jobId: string;
+  candidateCount: number;
+  completedCount: number;
+  failedCount: number;
+};
+
+export type JobCandidateTransitionResult = {
+  updated: boolean;
+  progressTracked: boolean;
+  jobStatus: AnalysisRun["status"] | null;
+};
+
 function getJobKey(jobId: string): string {
   return `job:${jobId}`;
 }
@@ -67,6 +80,10 @@ function getJobCandidateLeaseKey(jobId: string): string {
   return `job:${jobId}:candidate-leases`;
 }
 
+function getJobProgressKey(jobId: string): string {
+  return `job:${jobId}:progress`;
+}
+
 function getJobRecommendationsKey(jobId: string): string {
   return `job:${jobId}:recommendations`;
 }
@@ -84,8 +101,39 @@ async function getJson<T>(key: string): Promise<T | null> {
   return typeof raw === "string" ? JSON.parse(raw) as T : raw as unknown as T;
 }
 
+export function normalizeWineCandidate(candidate: WineCandidate): WineCandidate {
+  return {
+    ...candidate,
+    price: candidate.price ?? null,
+    menuTab: candidate.menuTab ?? null,
+    menuSection: candidate.menuSection ?? null,
+    producer: candidate.producer ?? null,
+    label: candidate.label ?? null,
+    vintage: candidate.vintage ?? null,
+    color: candidate.color ?? null,
+    varietal: candidate.varietal ?? null,
+    region: candidate.region ?? null,
+    notes: candidate.notes ?? null,
+  };
+}
+
+export function normalizeJobRecord(record: JobRecord): JobRecord {
+  return {
+    ...record,
+    queueMessageId: record.queueMessageId ?? null,
+    errorMessage: record.errorMessage ?? null,
+    extractedText: record.extractedText ?? null,
+    recommendations: Array.isArray(record.recommendations) ? record.recommendations : [],
+    workerCount: typeof record.workerCount === "number" ? record.workerCount : 0,
+    candidates: Array.isArray(record.candidates)
+      ? record.candidates.map((candidate) => normalizeWineCandidate(candidate))
+      : [],
+  };
+}
+
 async function getStoredJob(jobId: string): Promise<JobRecord | null> {
-  return getJson<JobRecord>(getJobKey(jobId));
+  const record = await getJson<JobRecord>(getJobKey(jobId));
+  return record ? normalizeJobRecord(record) : null;
 }
 
 async function getJobRecommendations(jobId: string): Promise<Recommendation[]> {
@@ -93,11 +141,6 @@ async function getJobRecommendations(jobId: string): Promise<Recommendation[]> {
   return items.map((item) =>
     typeof item === "string" ? (JSON.parse(item) as Recommendation) : (item as unknown as Recommendation),
   );
-}
-
-export async function appendJobRecommendation(jobId: string, recommendation: Recommendation): Promise<void> {
-  await redis.rpush(getJobRecommendationsKey(jobId), JSON.stringify(recommendation));
-  await redis.expire(getJobRecommendationsKey(jobId), JOB_TTL_SECONDS);
 }
 
 const claimNextJobCandidateScript = redis.createScript<string | false>(`
@@ -173,22 +216,33 @@ while true do
 end
 `);
 
-const completeJobCandidateScript = redis.createScript<number>(`
+const completeJobCandidateScript = redis.createScript<JobCandidateTransitionResult | string>(`
 local leaseKey = KEYS[1]
 local candidateKey = KEYS[2]
+local recommendationsKey = KEYS[3]
+local progressKey = KEYS[4]
+local jobKey = KEYS[5]
 local leaseOwner = ARGV[1]
 local recommendationJson = ARGV[2]
 local nowIso = ARGV[3]
 local ttlSeconds = tonumber(ARGV[4])
 
+local function result(updated, progressTracked, jobStatus)
+  return cjson.encode({
+    updated = updated,
+    progressTracked = progressTracked,
+    jobStatus = jobStatus or cjson.null,
+  })
+end
+
 local raw = redis.call("GET", candidateKey)
 if not raw then
-  return 0
+  return result(false, false, nil)
 end
 
 local record = cjson.decode(raw)
 if type(record.leaseOwner) ~= "string" or record.leaseOwner ~= leaseOwner then
-  return 0
+  return result(false, false, nil)
 end
 
 record.status = "completed"
@@ -201,8 +255,38 @@ record.updatedAt = nowIso
 redis.call("SET", candidateKey, cjson.encode(record), "EX", ttlSeconds)
 redis.call("ZREM", leaseKey, record.candidateId)
 redis.call("EXPIRE", leaseKey, ttlSeconds)
+local recommendationCount = redis.call("RPUSH", recommendationsKey, recommendationJson)
+if recommendationCount == 1 then
+  redis.call("EXPIRE", recommendationsKey, ttlSeconds)
+end
 
-return 1
+local progressRaw = redis.call("GET", progressKey)
+local jobRaw = redis.call("GET", jobKey)
+if not progressRaw or not jobRaw then
+  return result(true, false, nil)
+end
+
+local progress = cjson.decode(progressRaw)
+progress.completedCount = math.min((progress.completedCount or 0) + 1, progress.candidateCount or 0)
+redis.call("SET", progressKey, cjson.encode(progress), "EX", ttlSeconds)
+
+local job = cjson.decode(jobRaw)
+local jobStatus = "processing"
+if (progress.failedCount or 0) > 0 then
+  jobStatus = "failed"
+elseif (progress.candidateCount or 0) > 0 and (progress.completedCount or 0) >= (progress.candidateCount or 0) then
+  jobStatus = "completed"
+end
+
+job.status = jobStatus
+job.updatedAt = nowIso
+if jobStatus == "completed" then
+  job.queueMessageId = cjson.null
+end
+job.errorMessage = cjson.null
+redis.call("SET", jobKey, cjson.encode(job), "EX", ttlSeconds)
+
+return result(true, true, jobStatus)
 `);
 
 const requeueJobCandidateScript = redis.createScript<number>(`
@@ -239,22 +323,32 @@ redis.call("EXPIRE", leaseKey, ttlSeconds)
 return 1
 `);
 
-const failJobCandidateScript = redis.createScript<number>(`
+const failJobCandidateScript = redis.createScript<JobCandidateTransitionResult | string>(`
 local leaseKey = KEYS[1]
 local candidateKey = KEYS[2]
+local progressKey = KEYS[3]
+local jobKey = KEYS[4]
 local leaseOwner = ARGV[1]
 local errorMessage = ARGV[2]
 local nowIso = ARGV[3]
 local ttlSeconds = tonumber(ARGV[4])
 
+local function result(updated, progressTracked, jobStatus)
+  return cjson.encode({
+    updated = updated,
+    progressTracked = progressTracked,
+    jobStatus = jobStatus or cjson.null,
+  })
+end
+
 local raw = redis.call("GET", candidateKey)
 if not raw then
-  return 0
+  return result(false, false, nil)
 end
 
 local record = cjson.decode(raw)
 if type(record.leaseOwner) ~= "string" or record.leaseOwner ~= leaseOwner then
-  return 0
+  return result(false, false, nil)
 end
 
 record.status = "failed"
@@ -266,9 +360,39 @@ record.updatedAt = nowIso
 redis.call("SET", candidateKey, cjson.encode(record), "EX", ttlSeconds)
 redis.call("ZREM", leaseKey, record.candidateId)
 redis.call("EXPIRE", leaseKey, ttlSeconds)
+local progressRaw = redis.call("GET", progressKey)
+local jobRaw = redis.call("GET", jobKey)
+if not progressRaw or not jobRaw then
+  return result(true, false, nil)
+end
 
-return 1
+local progress = cjson.decode(progressRaw)
+progress.failedCount = math.min((progress.failedCount or 0) + 1, progress.candidateCount or 0)
+redis.call("SET", progressKey, cjson.encode(progress), "EX", ttlSeconds)
+
+local job = cjson.decode(jobRaw)
+job.status = "failed"
+job.queueMessageId = cjson.null
+job.errorMessage = errorMessage
+job.updatedAt = nowIso
+redis.call("SET", jobKey, cjson.encode(job), "EX", ttlSeconds)
+
+return result(true, true, "failed")
 `);
+
+export function parseTransitionResult(
+  raw: JobCandidateTransitionResult | string | null | undefined,
+): JobCandidateTransitionResult {
+  const parsed = typeof raw === "string"
+    ? JSON.parse(raw) as Partial<JobCandidateTransitionResult>
+    : raw ?? {};
+
+  return {
+    updated: parsed.updated === true,
+    progressTracked: parsed.progressTracked === true,
+    jobStatus: parsed.jobStatus ?? null,
+  };
+}
 
 export async function createJob(input: {
   id: string;
@@ -309,6 +433,10 @@ export async function getJob(jobId: string): Promise<JobRecord | null> {
   };
 }
 
+export async function getJobState(jobId: string): Promise<JobRecord | null> {
+  return getStoredJob(jobId);
+}
+
 export async function updateJob(jobId: string, updates: Partial<JobRecord>): Promise<void> {
   const existing = await getStoredJob(jobId);
   if (!existing) {
@@ -333,13 +461,6 @@ export async function updateJobStatus(
     ...updates,
     status,
   });
-}
-
-export async function updateJobRecommendations(
-  jobId: string,
-  recommendations: Recommendation[],
-): Promise<void> {
-  await updateJob(jobId, { recommendations });
 }
 
 export async function createJobWorkers(
@@ -374,7 +495,7 @@ export async function listJobWorkers(
   jobId: string,
   workerCount?: number,
 ): Promise<JobWorkerRecord[]> {
-  const resolvedWorkerCount = workerCount ?? (await getStoredJob(jobId))?.workerCount ?? 0;
+  const resolvedWorkerCount = workerCount ?? (await getJobState(jobId))?.workerCount ?? 0;
   if (resolvedWorkerCount <= 0) {
     return [];
   }
@@ -428,9 +549,16 @@ export async function createJobCandidateWork(
 
   const queueKey = getJobCandidateQueueKey(jobId);
   const leaseKey = getJobCandidateLeaseKey(jobId);
+  const progressKey = getJobProgressKey(jobId);
 
-  await redis.del(queueKey, leaseKey, getJobRecommendationsKey(jobId));
+  await redis.del(queueKey, leaseKey, getJobRecommendationsKey(jobId), progressKey);
   await Promise.all(records.map((record) => setJson(getJobCandidateWorkKey(jobId, record.candidateId), record)));
+  await setJson(progressKey, {
+    jobId,
+    candidateCount: records.length,
+    completedCount: 0,
+    failedCount: 0,
+  } satisfies JobProgressRecord);
 
   if (records.length > 0) {
     await redis.rpush(queueKey, ...records.map((record) => record.candidateId));
@@ -451,7 +579,7 @@ export async function listJobCandidateWork(
   jobId: string,
   candidates?: CandidateIdentity[],
 ): Promise<JobCandidateWorkRecord[]> {
-  const resolvedCandidates = candidates ?? (await getStoredJob(jobId))?.candidates ?? [];
+  const resolvedCandidates = candidates ?? (await getJobState(jobId))?.candidates ?? [];
   if (resolvedCandidates.length === 0) {
     return [];
   }
@@ -526,11 +654,14 @@ export async function completeJobCandidate(
   candidateId: string,
   leaseOwner: string,
   recommendation: Recommendation,
-): Promise<boolean> {
+): Promise<JobCandidateTransitionResult> {
   const result = await completeJobCandidateScript.exec(
     [
       getJobCandidateLeaseKey(jobId),
       getJobCandidateWorkKey(jobId, candidateId),
+      getJobRecommendationsKey(jobId),
+      getJobProgressKey(jobId),
+      getJobKey(jobId),
     ],
     [
       leaseOwner,
@@ -540,7 +671,7 @@ export async function completeJobCandidate(
     ],
   );
 
-  return result === 1;
+  return parseTransitionResult(result);
 }
 
 export async function requeueJobCandidate(
@@ -571,11 +702,13 @@ export async function failJobCandidate(
   candidateId: string,
   leaseOwner: string,
   errorMessage: string,
-): Promise<boolean> {
+): Promise<JobCandidateTransitionResult> {
   const result = await failJobCandidateScript.exec(
     [
       getJobCandidateLeaseKey(jobId),
       getJobCandidateWorkKey(jobId, candidateId),
+      getJobProgressKey(jobId),
+      getJobKey(jobId),
     ],
     [
       leaseOwner,
@@ -585,7 +718,7 @@ export async function failJobCandidate(
     ],
   );
 
-  return result === 1;
+  return parseTransitionResult(result);
 }
 
 export async function hasQueuedJobCandidates(jobId: string): Promise<boolean> {
@@ -593,7 +726,12 @@ export async function hasQueuedJobCandidates(jobId: string): Promise<boolean> {
 }
 
 export async function clearJobCandidateState(jobId: string): Promise<void> {
-  await redis.del(getJobCandidateQueueKey(jobId), getJobCandidateLeaseKey(jobId), getJobRecommendationsKey(jobId));
+  await redis.del(
+    getJobCandidateQueueKey(jobId),
+    getJobCandidateLeaseKey(jobId),
+    getJobRecommendationsKey(jobId),
+    getJobProgressKey(jobId),
+  );
 }
 
 export async function clearJobCandidateQueue(jobId: string): Promise<void> {

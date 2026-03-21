@@ -23,7 +23,7 @@ import {
   runCandidateAnalysis,
 } from "./services/pipeline.js";
 import { parseWineCandidates } from "./services/parser.js";
-import { extractSourceText } from "./services/source-extractor.js";
+import { extractCandidatesFromUrl, extractSourceText } from "./services/source-extractor.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
 
 const coordinatorWorkerJobPayloadSchema = z.object({
@@ -144,11 +144,11 @@ function getWorkerFailureUrl(): string {
   return `${workerUrl.replace(/\/$/, "")}/api/worker-failure`;
 }
 
-function getWorkerUrl(): string {
+function getCoordinatorUrl(): string {
   const vercelUrl = process.env.VERCEL_URL;
   if (vercelUrl) {
     const base = vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`;
-    return `${base.replace(/\/$/, "")}/api/worker`;
+    return `${base.replace(/\/$/, "")}/api/coordinator`;
   }
 
   const workerUrl = process.env.WORKER_URL;
@@ -156,8 +156,22 @@ function getWorkerUrl(): string {
     throw new Error("WORKER_URL is not configured");
   }
 
-  const normalized = workerUrl.replace(/\/$/, "");
-  return normalized.endsWith("/api/worker") ? normalized : `${normalized}/api/worker`;
+  return `${workerUrl.replace(/\/$/, "")}/api/coordinator`;
+}
+
+function getChunkWorkerUrl(): string {
+  const vercelUrl = process.env.VERCEL_URL;
+  if (vercelUrl) {
+    const base = vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`;
+    return `${base.replace(/\/$/, "")}/api/chunk-worker`;
+  }
+
+  const workerUrl = process.env.WORKER_URL;
+  if (!workerUrl) {
+    throw new Error("WORKER_URL is not configured");
+  }
+
+  return `${workerUrl.replace(/\/$/, "")}/api/chunk-worker`;
 }
 
 async function publishWorkerJob(
@@ -174,7 +188,7 @@ async function publishWorkerJob(
   } = {},
 ): Promise<{ messageId: string }> {
   const request = {
-    url: getWorkerUrl(),
+    url: payload.mode === "coordinator" ? getCoordinatorUrl() : getChunkWorkerUrl(),
     body: payload,
     retries: options.retries ?? 0,
     ...(options.retryDelay ? { retryDelay: options.retryDelay } : {}),
@@ -372,13 +386,14 @@ export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
   const {
     clearJobCandidateQueue,
     getJob,
+    getJobState,
     listJobCandidateWork,
     listJobWorkers,
     updateJob,
     updateJobCandidateWork,
     updateJobWorker,
   } = await loadJobStore();
-  const existing = await getJob(id);
+  const existing = await getJobState(id);
 
   if (!existing) {
     return null;
@@ -430,7 +445,7 @@ export function parseWorkerJobPayload(input: unknown): WorkerJobPayload {
 
 async function assertJobActive(jobId: string, store?: JobStore): Promise<void> {
   const jobStore = store ?? await loadJobStore();
-  const current = await jobStore.getJob(jobId);
+  const current = await jobStore.getJobState(jobId);
 
   if (!current) {
     throw new JobInactiveError(jobId, "missing");
@@ -574,7 +589,7 @@ async function requeueWorkerJob(
 }
 
 async function syncJobFromCandidateWork(store: JobStore, jobId: string): Promise<void> {
-  const job = await store.getJob(jobId);
+  const job = await store.getJobState(jobId);
   if (!job || job.status === "canceled" || job.candidates.length === 0) {
     return;
   }
@@ -600,29 +615,36 @@ async function extractAndPersistJobState(
   payload: CoordinatorWorkerJobPayload,
   store: JobStore,
 ): Promise<{ extractedText: string; candidates: WineCandidate[] }> {
-  let fileBuffer: Buffer | undefined;
+  let extractedText = "";
+  let candidates: WineCandidate[];
 
-  if (payload.fileBlobUrl) {
-    const response = await fetch(payload.fileBlobUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch upload from blob storage: ${response.status}`);
+  if (payload.sourceUrl) {
+    candidates = await extractCandidatesFromUrl(payload.sourceUrl);
+  } else {
+    let fileBuffer: Buffer | undefined;
+
+    if (payload.fileBlobUrl) {
+      const response = await fetch(payload.fileBlobUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch upload from blob storage: ${response.status}`);
+      }
+      fileBuffer = Buffer.from(await response.arrayBuffer());
+    } else if (payload.fileBase64) {
+      fileBuffer = Buffer.from(payload.fileBase64, "base64");
     }
-    fileBuffer = Buffer.from(await response.arrayBuffer());
-  } else if (payload.fileBase64) {
-    fileBuffer = Buffer.from(payload.fileBase64, "base64");
+
+    extractedText = await extractSourceText({
+      sourceType: payload.sourceType,
+      filename: payload.sourceFilename,
+      mimeType: payload.mimeType ?? "text/uri-list",
+      storagePath: "",
+      ...(fileBuffer ? { fileBuffer } : {}),
+    });
+    candidates = parseWineCandidates(extractedText);
   }
 
-  const extractedText = await extractSourceText({
-    sourceType: payload.sourceType,
-    filename: payload.sourceFilename,
-    mimeType: payload.mimeType ?? "text/uri-list",
-    storagePath: "",
-    ...(payload.sourceUrl ? { sourceUrl: payload.sourceUrl } : {}),
-    ...(fileBuffer ? { fileBuffer } : {}),
-  });
   await assertJobActive(payload.jobId, store);
 
-  const candidates = parseWineCandidates(extractedText);
   await store.updateJob(payload.jobId, {
     extractedText,
     candidates,
@@ -644,7 +666,7 @@ async function processCoordinatorJob(
   });
   await assertJobActive(payload.jobId, store);
 
-  let current = await store.getJob(payload.jobId);
+  let current = await store.getJobState(payload.jobId);
   if (!current) {
     return;
   }
@@ -659,7 +681,7 @@ async function processCoordinatorJob(
 
   if (!hasParsedJobState(current)) {
     ({ extractedText, candidates } = await extractAndPersistJobState(payload, store));
-    current = await store.getJob(payload.jobId);
+    current = await store.getJobState(payload.jobId);
     if (!current) {
       return;
     }
@@ -722,7 +744,7 @@ function getJobCandidate(job: AnalysisRun, candidateId: string): WineCandidate |
 }
 
 async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): Promise<void> {
-  const job = await store.getJob(payload.jobId);
+  const job = await store.getJobState(payload.jobId);
   if (!job || !hasParsedJobState(job)) {
     return;
   }
@@ -767,13 +789,23 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
 
     const candidate = getJobCandidate(job, claimedCandidate.candidateId);
     if (!candidate) {
-      await store.failJobCandidate(
+      const failed = await store.failJobCandidate(
         payload.jobId,
         claimedCandidate.candidateId,
         leaseOwner,
         `Candidate ${claimedCandidate.candidateId} is missing from analysis state.`,
       );
-      await syncJobFromCandidateWork(store, payload.jobId);
+      if (!failed.progressTracked) {
+        await syncJobFromCandidateWork(store, payload.jobId);
+      }
+      if (failed.updated && failed.jobStatus === "failed") {
+        await store.updateJobWorker(payload.jobId, payload.workerIndex, {
+          status: "failed",
+          queueMessageId: null,
+          errorMessage: `Candidate ${claimedCandidate.candidateId} is missing from analysis state.`,
+        });
+        return;
+      }
       continue;
     }
 
@@ -801,18 +833,17 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
       leaseOwner,
       recommendation,
     );
-    if (!completed) {
+    if (!completed.updated) {
       await syncJobFromCandidateWork(store, payload.jobId);
       return;
     }
-
-    await store.appendJobRecommendation(payload.jobId, recommendation);
-    await syncJobFromCandidateWork(store, payload.jobId);
-    const currentJob = await store.getJob(payload.jobId);
-    if (!currentJob || currentJob.status === "canceled" || currentJob.status === "failed") {
+    if (!completed.progressTracked) {
+      await syncJobFromCandidateWork(store, payload.jobId);
+    }
+    if (completed.jobStatus === "failed" || completed.jobStatus === "canceled") {
       return;
     }
-    if (currentJob.status === "completed") {
+    if (completed.jobStatus === "completed") {
       await store.updateJobWorker(payload.jobId, payload.workerIndex, {
         status: "completed",
         queueMessageId: null,
@@ -822,8 +853,7 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
     }
   }
 
-  await syncJobFromCandidateWork(store, payload.jobId);
-  const currentJob = await store.getJob(payload.jobId);
+  const currentJob = await store.getJobState(payload.jobId);
   if (!currentJob || currentJob.status === "canceled" || currentJob.status === "failed") {
     return;
   }
@@ -852,7 +882,7 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
 export async function processWorkerJob(input: unknown): Promise<void> {
   const payload = parseWorkerJobPayload(input);
   const store = await loadJobStore();
-  const existing = await store.getJob(payload.jobId);
+  const existing = await store.getJobState(payload.jobId);
 
   if (!existing) {
     return;
@@ -888,7 +918,7 @@ export async function processWorkerJob(input: unknown): Promise<void> {
     }
 
     const message = error instanceof Error ? error.message : "Unknown worker error";
-    const current = await store.getJob(payload.jobId);
+    const current = await store.getJobState(payload.jobId);
     if (!current || current.status === "canceled") {
       return;
     }
@@ -911,7 +941,7 @@ export async function processWorkerFailure(sourceBody: string): Promise<void> {
   }
 
   const store = await loadJobStore();
-  const job = await store.getJob(payload.jobId);
+  const job = await store.getJobState(payload.jobId);
   if (!job || job.status === "canceled" || job.status === "completed") {
     return;
   }
@@ -937,18 +967,33 @@ export async function processWorkerFailure(sourceBody: string): Promise<void> {
     job.candidates,
   );
 
+  let failureStatus: AnalysisRun["status"] | null = null;
   if (claimedCandidate) {
-    await store.failJobCandidate(
+    const failed = await store.failJobCandidate(
       payload.jobId,
       claimedCandidate.candidateId,
       leaseOwner,
       claimedCandidate.errorMessage ?? "Analysis failed after exhausting all retry attempts.",
     );
+    failureStatus = failed.jobStatus;
+    if (!failed.progressTracked) {
+      await syncJobFromCandidateWork(store, payload.jobId);
+    }
+  }
+  if (!claimedCandidate) {
+    await syncJobFromCandidateWork(store, payload.jobId);
   }
 
-  await syncJobFromCandidateWork(store, payload.jobId);
+  if (failureStatus === "failed") {
+    await store.updateJobWorker(payload.jobId, payload.workerIndex, {
+      status: "failed",
+      queueMessageId: null,
+      errorMessage: claimedCandidate?.errorMessage ?? "Analysis failed after exhausting all retry attempts.",
+    });
+    return;
+  }
 
-  const updatedJob = await store.getJob(payload.jobId);
+  const updatedJob = await store.getJobState(payload.jobId);
   if (!updatedJob || updatedJob.status === "canceled") {
     return;
   }

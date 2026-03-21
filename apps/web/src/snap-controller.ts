@@ -13,24 +13,27 @@ const SNAP_THRESHOLD = 20;
 const RESULTS_ESCAPE_THRESHOLD = 80;
 
 /**
- * Wheel/trackpad equivalent of RESULTS_ESCAPE_THRESHOLD.
- * Much higher because we cannot distinguish deliberate scroll from momentum:
- * a normal trackpad flick produces ~100–300px of accumulated deltaY, so
- * 500px requires a very sustained intentional upward scroll to escape.
+ * Accumulated wheel deltaY (across multiple spring cycles) required to
+ * escape from results back to ingest. Builds up as the user repeatedly
+ * pushes upward against the wall; resets on any pane change or when
+ * scrolling back into results.
  */
-const WHEEL_RESULTS_ESCAPE_THRESHOLD = 500;
+const WHEEL_RESULTS_ESCAPE_THRESHOLD = 400;
 
 /**
- * Fraction of accumulated wheel delta shown as visual elastic stretch.
- * 0.3 → 30px of visible rubber-band per 100px of wheel input.
- */
-const WHEEL_ELASTIC_FACTOR = 0.3;
-
-/**
- * If no wheel event arrives for this many ms, the gesture is considered
- * finished and the spring snap-back fires (mirrors iOS finger-lift behaviour).
+ * Debounce duration for the snap-entry guard: how long (ms) after the
+ * last downward wheel event the guard stays active to block residual
+ * trackpad momentum from drifting the page down past the snap point.
  */
 const WHEEL_BOUNCE_DELAY_MS = 80;
+
+/**
+ * Recoil-specific guard duration after the results-top spring settles.
+ * Desktop trackpad inertia can deliver a straggling upward pulse a few
+ * hundred milliseconds later, so this must be longer than the generic
+ * wheel debounce used for snap-entry protection.
+ */
+const WHEEL_RECOIL_GUARD_MS = 400;
 
 /**
  * How long (ms) to ignore new scroll events after a snap fires.
@@ -51,8 +54,27 @@ export class SnapController {
   private wallEntryY: number | null = null;
   private onPaneChange: PaneChangeCallback;
   private resizeObserver: ResizeObserver | null = null;
-  /** Timer that fires the spring snap-back after wheel events stop at the results wall. */
-  private wheelBounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Current scrollY that the active results-top spring owns. Desktop fling
+   * inertia can still deliver non-cancelable upward scroll during the spring;
+   * clamp those events back to this trajectory instead of letting them punch
+   * a second dip above the wall.
+   */
+  private activeSpringY: number | null = null;
+  /**
+   * Snap-entry guard: armed whenever we snap INTO pane 2 to block residual
+   * downward trackpad momentum from drifting the page past the snap point.
+   * Extends itself on each arriving downward event (debounce), so it adapts
+   * to gesture strength. Clears WHEEL_BOUNCE_DELAY_MS after the last event.
+   */
+  private snapEntryGuardTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Wall-recoil guard: armed when the results-top spring settles to block
+   * residual upward trackpad momentum from triggering a second spring.
+   * Extends itself on each arriving upward event (debounce) so it adapts to
+   * gesture strength. Clears WHEEL_BOUNCE_DELAY_MS after the last event.
+   */
+  private wallRecoilGuardTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(onPaneChange: PaneChangeCallback) {
     this.onPaneChange = onPaneChange;
@@ -71,7 +93,8 @@ export class SnapController {
     window.addEventListener('wheel', this.handleWheel, { passive: false });
     window.addEventListener('touchstart', this.handleTouchStart, { passive: true });
     window.addEventListener('touchmove', this.handleTouchMove, { passive: false });
-    // Catches iOS momentum scroll carrying past the results top boundary after finger lift.
+    // Catches momentum scroll carrying past the results top boundary — both
+    // iOS finger-lift inertia and desktop wheel scroll that we let through.
     window.addEventListener('scroll', this.handleScroll, { passive: true });
 
     // Recompute snap positions whenever ingest or results section resizes.
@@ -108,22 +131,55 @@ export class SnapController {
     window.removeEventListener('touchmove', this.handleTouchMove);
     window.removeEventListener('scroll', this.handleScroll);
     this.resizeObserver?.disconnect();
-    if (this.wheelBounceTimer !== null) clearTimeout(this.wheelBounceTimer);
+    if (this.snapEntryGuardTimer !== null) clearTimeout(this.snapEntryGuardTimer);
+    if (this.wallRecoilGuardTimer !== null) clearTimeout(this.wallRecoilGuardTimer);
+    this.snapEntryGuardTimer = null;
+    this.wallRecoilGuardTimer = null;
+  }
+
+  /** Arm (or re-arm) the snap-entry guard for pane 2. */
+  private armSnapEntryGuard(): void {
+    if (this.snapEntryGuardTimer !== null) clearTimeout(this.snapEntryGuardTimer);
+    this.snapEntryGuardTimer = setTimeout(() => {
+      this.snapEntryGuardTimer = null;
+    }, WHEEL_BOUNCE_DELAY_MS);
+  }
+
+  /** Arm (or re-arm) the wall-recoil guard after the spring settles. */
+  private armWallRecoilGuard(): void {
+    if (this.wallRecoilGuardTimer !== null) clearTimeout(this.wallRecoilGuardTimer);
+    this.wallRecoilGuardTimer = setTimeout(() => {
+      this.wallRecoilGuardTimer = null;
+    }, WHEEL_RECOIL_GUARD_MS);
+  }
+
+  /**
+   * Release the spring cooldown only after seeding a fresh recoil guard.
+   * On desktop, trackpad inertia can outlive the spring animation itself.
+   */
+  private releaseSpringCooldown(): void {
+    this.activeSpringY = null;
+    this.armWallRecoilGuard();
+    this.cooldown = false;
   }
 
   snapTo(pane: 0 | 1 | 2): void {
     if (pane < 0 || pane > 2) return;
-    this.computeSnapPositions(); // always use fresh positions — elements between panes can shift layout
     this.cooldown = true;
     this.accumulated = 0;
     this.currentPane = pane;
     this.onPaneChange(pane);
-    const pos = this.snapPositions[pane] ?? 0;
+    // Arm the snap-entry guard when entering results so residual downward
+    // momentum from the triggering gesture cannot drift the page past the top.
+    if (pane === 2) this.armSnapEntryGuard();
     // Defer scroll to next animation frame so React's synchronous DOM flush
     // (triggered by onPaneChange) completes before the smooth scroll begins.
     // Without this, Chrome cancels the smooth scroll when React mutates the DOM
-    // in the same event-handler tick.
+    // in the same event-handler tick. Computing positions here (inside the rAF)
+    // also ensures we use post-commit layout rather than pre-commit values.
     requestAnimationFrame(() => {
+      this.computeSnapPositions();
+      const pos = this.snapPositions[pane] ?? 0;
       window.scrollTo({ top: pos, behavior: 'smooth' });
     });
     setTimeout(() => { this.cooldown = false; }, SNAP_COOLDOWN_MS);
@@ -137,23 +193,44 @@ export class SnapController {
 
     this.snapPositions = [
       0, // pane 0 (hero) is always the top of the document — no element lookup needed
-      ingest ? ingest.getBoundingClientRect().top + window.scrollY - navH : 0,
-      results ? results.getBoundingClientRect().top + window.scrollY - navH : 0,
+      ingest ? Math.ceil(ingest.getBoundingClientRect().top + window.scrollY - navH) : 0,
+      results ? Math.ceil(results.getBoundingClientRect().top + window.scrollY - navH) : 0,
     ];
   }
 
-  // Catches momentum scroll (after finger lift) carrying past the results top boundary.
+  // Catches momentum scroll carrying past the results top boundary — used by
+  // both the iOS touch path (finger-lift inertia) and the desktop wheel path
+  // (upward events we let through so native scroll moves the page naturally).
   private handleScroll = (): void => {
-    if (this.cooldown) return;
-    if (this.currentPane === 2 && window.scrollY < this.snapPositions[2] - 2) {
-      const rawOverscroll = this.snapPositions[2] - window.scrollY;
-      // Stretch factor: makes the page travel 2× as far for the same momentum.
-      // We jump to the stretched position in the same frame as killing iOS inertia,
-      // so the stretch is invisible as a separate step — the user just sees more give.
-      const stretchedOverscroll = rawOverscroll * 2;
-      window.scrollTo({ top: this.snapPositions[2] - stretchedOverscroll, behavior: 'instant' as ScrollBehavior });
-      this.springSnapBack(this.snapPositions[2], stretchedOverscroll);
+    if (this.currentPane !== 2) return;
+    if (window.scrollY >= this.snapPositions[2] - 2) return;
+
+    // While the spring is already running, ignore any browser momentum that
+    // tries to shove the page farther above the wall than the spring itself.
+    // This is the remaining desktop bug: those late fling pulses are often
+    // non-cancelable, so wheel.preventDefault() cannot stop them.
+    if (this.activeSpringY !== null) {
+      if (window.scrollY < this.activeSpringY - 1) {
+        window.scrollTo({ top: this.activeSpringY, behavior: 'instant' as ScrollBehavior });
+      }
+      return;
     }
+
+    // Some browser-generated fling wheel events are non-cancelable on desktop.
+    // If one slips through after the spring has already settled, clamp it
+    // straight back to the wall instead of launching a second visible spring.
+    if (!this.cooldown && this.wallRecoilGuardTimer !== null) {
+      window.scrollTo({ top: this.snapPositions[2], behavior: 'instant' as ScrollBehavior });
+      return;
+    }
+
+    if (this.cooldown) return;
+    const rawOverscroll = this.snapPositions[2] - window.scrollY;
+    // Stretch factor: makes the page travel 2× as far for the same momentum,
+    // giving the spring snap-back its elastic feel on both iOS and desktop.
+    const stretchedOverscroll = rawOverscroll * 2;
+    window.scrollTo({ top: this.snapPositions[2] - stretchedOverscroll, behavior: 'instant' as ScrollBehavior });
+    this.springSnapBack(this.snapPositions[2], stretchedOverscroll);
   };
 
   /**
@@ -162,14 +239,13 @@ export class SnapController {
    * Formula (reverse-engineered from UIKit — Arek Holko / Ilya Lobanov):
    *   x(t) = x₀ · (1 + ω·t) · e^(−ω·t)
    *
-   * ω = 7.5 rad/s — half of Safari's reference value (15 rad/s), making the spring
-   * twice as loose: the same momentum displacement takes twice as long to pull back,
-   * and the effective snap-back duration is ~600–800 ms vs ~300–400 ms at ω=15.
+   * ω = 9.375 rad/s
    */
   private springSnapBack = (targetY: number, overscrollPx: number): void => {
     this.cooldown = true;
-    const OMEGA = 9.375; // rad/s — 20% faster snap-back than the 2× loose baseline (7.5)
+    const OMEGA = 9.375;
     const x0 = -overscrollPx; // negative: we are above targetY in scrollY space
+    this.activeSpringY = targetY + x0;
     const startTime = performance.now();
     let done = false;
 
@@ -177,11 +253,13 @@ export class SnapController {
       if (done) return;
       const t = (performance.now() - startTime) / 1000; // ms → seconds
       const x = x0 * (1 + OMEGA * t) * Math.exp(-OMEGA * t);
+      this.activeSpringY = targetY + x;
 
       if (Math.abs(x) < 0.5) {
         done = true;
+        this.activeSpringY = targetY;
         window.scrollTo({ top: targetY, behavior: 'instant' as ScrollBehavior });
-        setTimeout(() => { this.cooldown = false; }, 100);
+        setTimeout(() => { this.releaseSpringCooldown(); }, 100);
         return;
       }
 
@@ -191,77 +269,80 @@ export class SnapController {
 
     requestAnimationFrame(frame);
     setTimeout(() => {
-      if (!done) { done = true; window.scrollTo({ top: targetY, behavior: 'instant' as ScrollBehavior }); this.cooldown = false; }
+      if (!done) {
+        done = true;
+        this.activeSpringY = targetY;
+        window.scrollTo({ top: targetY, behavior: 'instant' as ScrollBehavior });
+        this.releaseSpringCooldown();
+      }
     }, 1500);
   };
 
   private handleWheel = (e: WheelEvent): void => {
-    // In results pane, only intercept at top boundary scrolling up.
-    if (this.currentPane === 2 && !(this.isAtResultsTop() && e.deltaY < 0)) {
-      return; // let native scroll handle
-    }
-    e.preventDefault();
-
     if (this.currentPane === 2) {
-      // Elastic wall — mirrors the iOS touch + handleScroll pattern:
-      // accumulate delta → apply rubber-band stretch visually → spring back
-      // when the gesture ends (wheel events pause), just like finger lift on mobile.
-      this.applyWheelWallElastic(e.deltaY);
+      // During cooldown (spring or snap animation), block all wheel events so
+      // native momentum can't fight our position management. Keep the snap-entry
+      // guard alive for any downward events still arriving; keep the wall-recoil
+      // guard alive for upward events so the guard extends through the full spring.
+      if (this.cooldown) {
+        e.preventDefault();
+        if (e.deltaY > 0) this.armSnapEntryGuard();
+        if (e.deltaY < 0) this.armWallRecoilGuard();
+        return;
+      }
+
+      // Snap-entry guard: block residual downward momentum after snapping to
+      // results. Self-adapts to gesture strength via debounce re-arming.
+      if (this.snapEntryGuardTimer !== null && e.deltaY > 0) {
+        e.preventDefault();
+        this.armSnapEntryGuard();
+        return;
+      }
+
+      // Wall-recoil guard: block residual upward momentum that arrives after the
+      // spring settles to prevent a second spring from firing.
+      if (this.wallRecoilGuardTimer !== null && e.deltaY < 0 && this.isAtResultsTop()) {
+        e.preventDefault();
+        // Count guarded upward pushes toward deliberate escape so a longer
+        // recoil guard doesn't make the results wall feel artificially sticky.
+        this.accumulated += e.deltaY;
+        if (this.accumulated < -WHEEL_RESULTS_ESCAPE_THRESHOLD) {
+          this.accumulated = 0;
+          this.snapTo(1);
+          return;
+        }
+        this.armWallRecoilGuard();
+        return;
+      }
+
+      // At the top boundary, scrolling up: accumulate for escape detection,
+      // then let native scroll carry the page past the wall — handleScroll
+      // springs it back, identical to the iOS momentum-scroll path.
+      if (this.isAtResultsTop() && e.deltaY < 0) {
+        this.accumulated += e.deltaY; // grows more negative with each push
+        if (this.accumulated < -WHEEL_RESULTS_ESCAPE_THRESHOLD) {
+          // Deliberate sustained escape: preventDefault to stop native scroll
+          // then snap cleanly to ingest.
+          e.preventDefault();
+          this.accumulated = 0;
+          this.snapTo(1);
+          return;
+        }
+        // No preventDefault → native scroll moves the page past the wall →
+        // handleScroll fires the spring, same as iOS finger-lift inertia.
+        return;
+      }
+
+      // Scrolling into results (not at top, or downward): native scroll.
+      // Reset stale wall-contact accumulation so the next upward push
+      // starts fresh rather than counting toward an old escape gesture.
+      if (e.deltaY > 0) this.accumulated = 0;
       return;
     }
 
+    e.preventDefault();
     this.trySnap(e.deltaY);
   };
-
-  /**
-   * Rubber-band effect at the results top boundary for wheel/trackpad input.
-   *
-   * Mirrors the two-phase mobile approach:
-   *   Phase 1 (events arriving)  — stretch the page upward proportional to
-   *                                 accumulated delta, using WHEEL_ELASTIC_FACTOR
-   *                                 so the resistance feels physical.
-   *   Phase 2 (events stop)      — debounce fires; double the current stretch
-   *                                 (same as handleScroll does for iOS momentum)
-   *                                 then hand off to springSnapBack.
-   *
-   * Deliberate escape: if accumulated exceeds WHEEL_RESULTS_ESCAPE_THRESHOLD
-   * (much larger than a normal flick produces) we snap to ingest, same as
-   * the touch path snaps at RESULTS_ESCAPE_THRESHOLD.
-   */
-  private applyWheelWallElastic(delta: number): void {
-    if (this.cooldown) return;
-    this.accumulated += delta; // grows negative as user scrolls up
-
-    // Deliberate escape: very sustained upward scroll (not reachable by momentum alone).
-    if (this.accumulated < -WHEEL_RESULTS_ESCAPE_THRESHOLD) {
-      if (this.wheelBounceTimer !== null) clearTimeout(this.wheelBounceTimer);
-      this.wheelBounceTimer = null;
-      this.accumulated = 0;
-      this.snapTo(1);
-      return;
-    }
-
-    // Visual elastic stretch — same feel as the iOS rubber-band.
-    const stretchPx = -this.accumulated * WHEEL_ELASTIC_FACTOR;
-    window.scrollTo({ top: this.snapPositions[2] - stretchPx, behavior: 'instant' as ScrollBehavior });
-
-    // Schedule spring-back: fires when wheel events stop (gesture / momentum ends),
-    // exactly mirroring the iOS finger-lift moment detected by handleScroll.
-    if (this.wheelBounceTimer !== null) clearTimeout(this.wheelBounceTimer);
-    this.wheelBounceTimer = setTimeout(() => {
-      this.wheelBounceTimer = null;
-      if (this.currentPane !== 2 || this.cooldown) return;
-      const overscrollPx = this.snapPositions[2] - window.scrollY;
-      if (overscrollPx > 0.5) {
-        // Double the stretch before springing — matches handleScroll's 2× factor,
-        // giving the same extra "give" that iOS users feel on mobile.
-        const stretchedOverscroll = overscrollPx * 2;
-        window.scrollTo({ top: this.snapPositions[2] - stretchedOverscroll, behavior: 'instant' as ScrollBehavior });
-        this.springSnapBack(this.snapPositions[2], stretchedOverscroll);
-      }
-      this.accumulated = 0;
-    }, WHEEL_BOUNCE_DELAY_MS);
-  }
 
   private handleTouchStart = (e: TouchEvent): void => {
     this.touchStartY = e.touches[0]?.clientY ?? this.touchStartY;
@@ -312,7 +393,6 @@ export class SnapController {
   };
 
   // Called by wheel handler for panes 0 and 1 only.
-  // Pane 2 wheel is routed through applyWheelWallElastic instead.
   private trySnap(delta: number): void {
     if (this.cooldown) return;
     this.accumulated += delta;

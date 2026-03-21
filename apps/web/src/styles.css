@@ -656,6 +656,9 @@ h1 {
 
 .action:disabled {
   opacity: 0.65;
+}
+
+.action.is-loading {
   cursor: wait;
 }
 
