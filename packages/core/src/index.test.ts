@@ -45,7 +45,10 @@ describe("core scoring", () => {
       },
     );
 
-    expect(score).toBeGreaterThanOrEqual(0.99);
+    // Common varietal tokens (e.g. "sauvignon") are excluded from identity scoring
+    // to prevent false matches across different producers sharing a grape variety.
+    // Exact matches still rank as "matched" with a high score.
+    expect(score).toBeGreaterThanOrEqual(0.88);
     expect(rankMatch(score)).toBe("matched");
   });
 
@@ -191,6 +194,14 @@ describe("core scoring", () => {
       expect(score).toBeGreaterThanOrEqual(THRESHOLD);
     });
 
+    it("matches Emmanuel Haget Preamble despite French spelling Preambule on Vivino", () => {
+      const score = scoreWineMatch(
+        { producer: "Emmanuel Haget", label: "Preamble", vintage: null, varietal: null, region: "Loire Valley, FR", rawText: "Emmanuel Haget 'Preamble' - Loire Valley, FR" },
+        { producer: "Emmanuel Haget", label: "Preambule Sparkling White", vintage: null, varietal: null, region: "Loire Valley, France" },
+      );
+      expect(score).toBeGreaterThanOrEqual(THRESHOLD);
+    });
+
     it("ranks the correct Turley profile above a different Napa producer", () => {
       const candidate = { producer: "Turley", label: "Napa Cabernet", vintage: 2022, varietal: "cabernet", region: "Napa", rawText: "Turley Napa Cabernet 2022" };
       const turleyScore   = scoreWineMatch(candidate, { producer: "Turley Wine Cellars", label: "Napa Valley Cabernet Sauvignon", vintage: 2022, varietal: null, region: "Napa Valley, California" });
@@ -255,6 +266,79 @@ describe("core scoring", () => {
         { producer: "François Ducrot", label: "Auguste", vintage: null, varietal: null, region: null, rawText: "François Ducrot Auguste" },
         { producer: "François Ducrot", label: "Auguste", vintage: null, varietal: null, region: null },
       )).toBeGreaterThanOrEqual(THRESHOLD);
+    });
+  });
+
+  // False-positive guard: wines that share a varietal or same winery but are
+  // different products must not cross the match threshold.
+  describe("false-positive guard", () => {
+    const THRESHOLD = 0.38;
+
+    it("does not match Slope Ardèche Syrah-Viognier to Ravasqueira Syrah-Viognier", () => {
+      // Different producers entirely; only the grape varieties overlap.
+      const score = scoreWineMatch(
+        { producer: "Slope", label: "Ardèche syrah viognier", vintage: 2022, varietal: "syrah", region: null, rawText: "Slope 2022 Ardèche syrah, viognier" },
+        { producer: "Ravasqueira", label: "Syrah - Viognier", vintage: 2022, varietal: null, region: "Portugal" },
+      );
+      expect(score).toBeLessThan(THRESHOLD);
+    });
+
+    it("does not match Clos des Grillons Dimanche to Le Clos des Grillons Calcaires", () => {
+      // Same winery, different cuvées; 'calcaires' does not appear anywhere in the candidate.
+      const score = scoreWineMatch(
+        { producer: "Clos des Grillons", label: "Dimanche", vintage: 2023, varietal: "grenache", region: null, rawText: "Clos des Grillons 'Dimanche', Chardonnay, Grenache Gris, (2023) VDF" },
+        { producer: "Le Clos des Grillons", label: "Calcaires", vintage: 2023, varietal: null, region: null },
+      );
+      expect(score).toBeLessThan(THRESHOLD);
+    });
+
+    it("does not match Fanny Sabre Bourgogne Rouge to Fanny Sabre Cuvée Anatole", () => {
+      // Same winery but different wines; label tokens share zero overlap.
+      const score = scoreWineMatch(
+        { producer: "Fanny Sabre", label: "Bourgogne Rouge", vintage: 2023, varietal: "pinot noir", region: null, rawText: "Fanny Sabre 2023 Bourgogne Rouge pinot noir" },
+        { producer: "Fanny Sabre", label: "Cuvée Anatole Pinot Noir", vintage: 2023, varietal: null, region: null },
+      );
+      expect(score).toBeLessThan(THRESHOLD);
+    });
+
+    it("does not match Korab Frankevka Moravia to Lazne Leopoldov Cabernet Moravia (only region in common)", () => {
+      const score = scoreWineMatch(
+        { producer: "Korab", label: "Frankevka", vintage: 2021, varietal: null, region: "Moravia, Czech Republic", rawText: "Korab 2021 Frankevka Moravia, Czech Republic" },
+        { producer: "Lázně Leopoldov", label: "Lázeňské Víno Cabernet Moravia", vintage: 2021, varietal: null, region: "Moravia, Czech Republic" },
+      );
+      expect(score).toBeLessThan(THRESHOLD);
+    });
+
+    it("does not match Contatto Vinho Verde Avesso to Curvos Avesso (only Avesso in common)", () => {
+      const score = scoreWineMatch(
+        { producer: "Contatto", label: "Vinho Verde Avesso", vintage: null, varietal: null, region: "Vinho Verde, Portugal", rawText: "Contatto, Vinho Verde Avesso" },
+        { producer: "Curvos", label: "Avesso", vintage: null, varietal: null, region: "Vinho Verde, Portugal" },
+      );
+      expect(score).toBeLessThan(THRESHOLD);
+    });
+
+    it("does not match Biddizza Skin Contact Orange to Wine Drinks Like Skin Contact (technique descriptor)", () => {
+      const score = scoreWineMatch(
+        { producer: "Biddizza", label: "Skin Contact Orange", vintage: null, varietal: null, region: null, rawText: "Biddizza Skin Contact Orange" },
+        { producer: "Wine", label: "Drinks Like Skin Contact", vintage: null, varietal: null, region: null },
+      );
+      expect(score).toBeLessThan(THRESHOLD);
+    });
+
+    it("does not match Christian Binner Verdammi Rouge Pet-Nat to Binner Le Pet Nat de René (only producer + style)", () => {
+      const score = scoreWineMatch(
+        { producer: "Christian Binner", label: "Verdammi Rouge Pet-Nat", vintage: null, varietal: null, region: "Alsace, FR", rawText: "Christian Binner 'Verdammi!' Rouge Pet-Nat - Alsace, FR" },
+        { producer: "Binner", label: "Le Pet Nat de René", vintage: null, varietal: null, region: null },
+      );
+      expect(score).toBeLessThan(THRESHOLD);
+    });
+
+    it("does not match La Chimera Eos Rosato Pet-Nat to La Prova Pet-Nat Aglianico Rosato (only style in common)", () => {
+      const score = scoreWineMatch(
+        { producer: "La Chimera", label: "Eos Rosato Pet-Nat", vintage: null, varietal: null, region: "Piedmont, IT", rawText: "La Chimera 'Eos' Rosato Pet-Nat - Piedmont, IT" },
+        { producer: "La Prova", label: "Pet-Nat Aglianico Rosato", vintage: null, varietal: null, region: null },
+      );
+      expect(score).toBeLessThan(THRESHOLD);
     });
   });
 

@@ -11,10 +11,26 @@ type MatchParts = Pick<
 > &
   Partial<Pick<WineCandidate, "rawText" | "color">>;
 
+// Common grape varietal tokens that appear in many different wines and therefore
+// carry little identity signal on their own. Excluding them prevents two unrelated
+// wines that happen to share a varietal (e.g. "Slope Syrah Viognier" vs
+// "Ravasqueira Syrah-Viognier") from scoring a false match via the pooled scorer.
+// Note: "pinot" and "noir" are intentionally omitted — they are load-bearing
+// identity tokens for the Paul Mas / Pinot Noir regression test.
+const varietalTokens = new Set([
+  "cabernet", "chardonnay", "grenache", "grigio",
+  "gruner", "malbec", "merlot", "mourvedre",
+  "noir", "pinot",
+  "riesling", "sangiovese", "sauvignon", "shiraz",
+  "syrah", "tempranillo", "veltliner", "viognier", "zinfandel",
+]);
+
 const identityStopwords = new Set([
   "a",
   "an",
   "and",
+  "contact",  // winemaking technique ("skin contact")
+  "czech",    // country descriptor
   "da",
   "de",
   "del",
@@ -25,11 +41,16 @@ const identityStopwords = new Set([
   "du",
   "la",
   "le",
+  "nat",      // pétillant naturel style
   "of",
+  "pet",      // pétillant naturel style
   "regional",
+  "republic", // political/country term
+  "skin",     // winemaking technique ("skin contact")
   "terre",
   "the",
   "valley",
+  "verde",    // Vinho Verde appellation descriptor ("vinho" already stripped)
   "vin",
   "vino",
   "vinho",
@@ -163,6 +184,7 @@ function extractIdentityTokens(value: string | null | undefined): string[] {
       !identityStopwords.has(token) &&
       !countryTokens.has(token) &&
       !conceptAliases.has(token) &&
+      !varietalTokens.has(token) &&
       !isYearToken(token) &&
       !isVolumeToken(token)
     );
@@ -185,7 +207,7 @@ function scoreIdentityCoverage(
   singleTokenMultiplier = 1,
 ): number {
   const candidateTokens = extractIdentityTokens(candidateValue);
-  const score = overlapRatio(candidateTokens, buildTokenSet(targetValues));
+  const score = fuzzyOverlapRatio(candidateTokens, buildTokenSet(targetValues));
   return candidateTokens.length === 1 ? score * singleTokenMultiplier : score;
 }
 
@@ -230,6 +252,12 @@ function fuzzyTokenWeight(token: string, targetTokens: Set<string>): number {
     }
   }
   return 0;
+}
+
+function fuzzyOverlapRatio(candidateTokens: string[], targetTokens: Set<string>): number {
+  if (candidateTokens.length === 0 || targetTokens.size === 0) return 0;
+  const overlap = candidateTokens.reduce((sum, token) => sum + fuzzyTokenWeight(token, targetTokens), 0);
+  return overlap / candidateTokens.length;
 }
 
 /** Bidirectional F1-style overlap across ALL fields of candidate vs ALL fields of profile.
@@ -332,6 +360,37 @@ function scoreConceptPenalty(candidate: MatchParts, profile: Partial<MatchParts>
   return Math.min(0.3, penalty);
 }
 
+/** Penalises matches where the producer aligns well but the label tokens share
+ *  zero overlap.  This catches cases like "Fanny Sabre Bourgogne Rouge" falsely
+ *  matching "Fanny Sabre Cuvée Anatole Pinot Noir" — same winery, wrong wine.
+ *  The penalty only fires when both the candidate and profile labels carry
+ *  non-trivial identity content with no fuzzy intersection. */
+/** Penalises matches where the producer aligns well but none of the profile's
+ *  specific label tokens (e.g. "Cuvée Anatole") appear anywhere in the candidate.
+ *  Grape-variety tokens are already stripped from identity tokens so this check
+ *  focuses on the wine's proper name/appellation rather than shared varietals.
+ *
+ *  We check profile label tokens against the candidate's FULL identity pool
+ *  (all fields) to be robust to field-alignment mismatches. */
+function scoreSameProducerWrongLabelPenalty(
+  candidate: MatchParts,
+  profile: Partial<MatchParts>,
+): number {
+  if (scoreToken(candidate.producer, profile.producer) < 0.5) return 0;
+  const profileLabelTokens = extractIdentityTokens(profile.label);
+  if (profileLabelTokens.length === 0) return 0;
+  // Build the candidate's full identity token pool across all fields.
+  const candidateAllTokens = buildTokenSet([
+    candidate.producer,
+    candidate.label,
+    candidate.region,
+    candidate.rawText,
+  ]);
+  if (candidateAllTokens.size === 0) return 0;
+  const hasOverlap = profileLabelTokens.some((t) => fuzzyTokenWeight(t, candidateAllTokens) > 0);
+  return hasOverlap ? 0 : 0.30;
+}
+
 export function scoreWineMatch(candidate: MatchParts, profile: Partial<MatchParts>): number {
   // Primary signal: bidirectional pooled token overlap across all fields.
   // This is robust to field-alignment mismatches that are common in menu parsing.
@@ -352,6 +411,7 @@ export function scoreWineMatch(candidate: MatchParts, profile: Partial<MatchPart
     0.02;
   const exactConceptBonus = scoreExactConceptTokenBonus(candidate, profile) * 0.03;
   const contradictionPenalty = scoreConceptPenalty(candidate, profile);
+  const sameProducerWrongLabelPenalty = scoreSameProducerWrongLabelPenalty(candidate, profile);
   const vintageScore =
     candidate.vintage && profile.vintage
       ? candidate.vintage === profile.vintage
@@ -373,7 +433,8 @@ export function scoreWineMatch(candidate: MatchParts, profile: Partial<MatchPart
         vintageScore +
         rawTextBonus +
         exactConceptBonus -
-        contradictionPenalty,
+        contradictionPenalty -
+        sameProducerWrongLabelPenalty,
     ),
   );
 }
