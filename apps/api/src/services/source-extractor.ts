@@ -45,8 +45,27 @@ export async function extractSourceText(input: {
 }
 
 export async function extractCandidatesFromUrl(sourceUrl: string): Promise<WineCandidate[]> {
-  const { html } = await fetchHtmlDocument(new URL(sourceUrl));
-  const candidates = extractMenuCandidates(html);
+  const { url: resolvedUrl, html } = await fetchHtmlDocument(new URL(sourceUrl));
+  let candidates = extractMenuCandidates(html);
+
+  // Follow pagination links (e.g. Shopify collection pages with ?page=N).
+  const pageUrls = extractPaginationUrls(html, resolvedUrl);
+  if (pageUrls.length > 0) {
+    const extraPages = await Promise.all(
+      pageUrls.slice(0, 9).map(async (pageUrl) => {
+        try {
+          const { html: pageHtml } = await fetchHtmlDocument(pageUrl);
+          return extractMenuCandidates(pageHtml);
+        } catch {
+          return [] as WineCandidate[];
+        }
+      }),
+    );
+    for (const pageCandidates of extraPages) {
+      candidates = candidates.concat(pageCandidates);
+    }
+    return candidates;
+  }
 
   if (candidates.length > 0) {
     return candidates;
@@ -78,12 +97,15 @@ const nonWineSectionKeywords = new Set([
   "food", "snack", "snacks",
   "starter", "starters", "appetizer", "appetizers",
   "entree", "entrees", "main", "mains", "dessert", "desserts",
+  "shellfish", "oyster", "oysters", "seafood", "raw",
+  "cheese", "charcuterie", "cured", "meat", "meats",
 ]);
 
 const wineSectionKeywords = new Set([
   "red", "white", "orange", "rose", "rosé", "sparkling", "champagne",
   "sherry", "sake", "sweet", "wine", "wines",
   "glass", "bottle",
+  "pink",
 ]);
 
 function isNonWineSection(section: string | null): boolean {
@@ -163,8 +185,11 @@ export function normalizeRawPrice(raw: string): string | null {
 }
 
 function extractTrailingInlinePrice(text: string): { name: string; price: string } | null {
-  // Match a price at the very end: "Wine Name text 16/72" or "Wine Name 145"
-  const match = text.match(/^(.*\S)\s+(\$?\d+(?:\s*[/\-–]\s*\$?\d+)?)$/);
+  // Try slash/dash form first. This prevents greedy (.*) from assigning "33/" to
+  // the name and matching only "145" as the price — the slash form forces the
+  // regex engine to backtrack until the full "33/ 145" pattern is found.
+  const slashMatch = text.match(/^(.*\S)\s+(\$?\d+\s*[\/–\-]\s*\$?\d+)$/);
+  const match = slashMatch ?? text.match(/^(.*\S)\s+(\$?\d+(?:\.\d{2})?)$/);
   if (!match) return null;
 
   const name = match[1]!.trim();
@@ -195,7 +220,14 @@ export function extractLeafTokens(html: string): LeafToken[] {
   // Strip noise elements
   const cleaned = html
     .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(script|style|noscript|svg|template|nav|header|footer|form|figure)\b[\s\S]*?<\/\1>/gi, " ");
+    // Strip entire head section (title, meta, etc.) and known non-content elements.
+    // Also strip Shopify/e-commerce custom elements (cart-drawer, menu-drawer).
+    .replace(/<(script|style|noscript|svg|template|nav|header|footer|form|figure|head|cart-drawer|cart-notification|menu-drawer)\b[\s\S]*?<\/\1>/gi, " ")
+    // Strip tasting-note / description elements before tokenising so their
+    // text doesn't get appended to the preceding wine name.
+    .replace(/<[^>]+\bclass="[^"]*\bdescription\b[^"]*"[^>]*>[\s\S]*?<\/[a-z]+>/gi, " ")
+    // Strip screen-reader-only labels (e.g. Shopify's "Regular price", "Sale price" spans).
+    .replace(/<[^>]+\bclass="[^"]*\bvisually-hidden\b[^"]*"[^>]*>[\s\S]*?<\/[a-z]+>/gi, " ");
 
   // Mark headings so we can classify them after stripping tags
   const marked = cleaned
@@ -240,6 +272,21 @@ export function extractLeafTokens(html: string): LeafToken[] {
       continue;
     }
 
+    // Bento/GetBento CMS splits prices across two lines via </span>:
+    //   "glass $"  (label fragment — discard)
+    //   "13 per Glass"  (glass price — discard; we take the bottle price instead)
+    //   "bottle $"  (label fragment — discard)
+    //   "64 per Bottle"  (bottle price — emit as price token)
+    if (/^(glass|bottle)\s*\$\s*$/.test(line)) continue;
+    const perUnitMatch = line.match(/^(\d+(?:\.\d{2})?)\s+per\s+(glass|bottle)$/i);
+    if (perUnitMatch) {
+      if (perUnitMatch[2]!.toLowerCase() === "bottle") {
+        const p = normalizeRawPrice(perUnitMatch[1]!);
+        if (p) tokens.push({ type: "price", value: p });
+      }
+      continue;
+    }
+
     // Attempt inline trailing price extraction first
     const inline = extractTrailingInlinePrice(line);
     if (inline) {
@@ -272,13 +319,25 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
   let currentSection: string | null = null;
   let pendingPrice: string | null = null;
   let nameLines: string[] = [];
+  // Set to true when we flush a name-before-price item (inline glass price extracted).
+  // A bare price token that arrives with no accumulated name immediately after is
+  // the dangling bottle price for the same item — discard it rather than attributing
+  // it to the next wine (BINX-style "18 / $80" split across nodes).
+  let justFlushedNameBeforePrice = false;
 
-  const flushItem = (price: string | null): void => {
+  const flushItem = (price: string | null, nameBeforePrice = false): void => {
     if (nameLines.length === 0) return;
-    const name = nameLines.join(" ").trim();
+    const name = nameLines.join(" ").trim().replace(/\s*\|\s*/g, ", ");
     nameLines = [];
-    if (!name || isNonWineLine(name)) return;
-    if (isNonWineSection(currentSection)) return;
+    if (!name || isNonWineLine(name)) {
+      justFlushedNameBeforePrice = false;
+      return;
+    }
+    if (isNonWineSection(currentSection)) {
+      justFlushedNameBeforePrice = false;
+      return;
+    }
+    justFlushedNameBeforePrice = nameBeforePrice;
     items.push({ name, price, section: currentSection, tab: null });
   };
 
@@ -286,6 +345,7 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
     if (token.type === "section") {
       flushItem(pendingPrice);
       pendingPrice = null;
+      justFlushedNameBeforePrice = false;
       currentSection = token.text;
       continue;
     }
@@ -299,12 +359,16 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
           pendingPrice = token.value; // this price is for the next item
         } else {
           // Name-before-price pattern
-          flushItem(token.value);
+          flushItem(token.value, true);
           pendingPrice = null;
         }
       } else {
-        // No name accumulated yet — price is ahead of name
-        pendingPrice = token.value;
+        // No name accumulated yet — price is ahead of name.
+        // If we just flushed an inline-priced name, this is the dangling bottle
+        // price for that same item; discard it.
+        if (!justFlushedNameBeforePrice) {
+          pendingPrice = token.value;
+        }
       }
       continue;
     }
@@ -313,6 +377,9 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
     if (isNonWineLine(token.text)) {
       flushItem(pendingPrice);
       pendingPrice = null;
+      // Do NOT reset justFlushedNameBeforePrice here: separator tokens like "/"
+      // appear between the inline glass price and the dangling bottle price in
+      // split-node menus (e.g. BINX) and must not prematurely clear the flag.
       continue;
     }
 
@@ -323,6 +390,16 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
       pendingPrice = null;
     }
 
+    // Shopify Dawn and similar themes repeat the product name in two separate h3 tags
+    // (one inside the image overlay, one in the info section). When the incoming text
+    // exactly matches the first line of the current block, treat it as a duplicate and
+    // flush the current block before starting fresh.
+    if (nameLines.length > 0 && token.text === nameLines[0]) {
+      flushItem(pendingPrice);
+      pendingPrice = null;
+    }
+
+    justFlushedNameBeforePrice = false;
     nameLines.push(token.text);
   }
 
@@ -330,12 +407,45 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
   return items;
 }
 
+function deduplicateItems(items: RawMenuItem[]): RawMenuItem[] {
+  const seen = new Map<string, RawMenuItem>();
+  for (const item of items) {
+    const key = `${item.section ?? ""}::${item.name.toLowerCase()}`;
+    const existing = seen.get(key);
+    if (!existing || (item.price !== null && existing.price === null)) {
+      seen.set(key, item);
+    }
+  }
+  return Array.from(seen.values());
+}
+
 function extractMenuCandidates(html: string): WineCandidate[] {
   const tokens = extractLeafTokens(html);
-  const items = groupTokensIntoItems(tokens);
+  const items = deduplicateItems(groupTokensIntoItems(tokens));
   return items
     .map((item) => buildCandidateFromItem(item))
     .filter((c): c is WineCandidate => c !== null);
+}
+
+function extractPaginationUrls(html: string, baseUrl: URL): URL[] {
+  const urls: URL[] = [];
+  const seen = new Set<string>();
+  const hrefPattern = /href="([^"#]*[?&]page=\d+[^"]*)"/gi;
+  let match;
+  while ((match = hrefPattern.exec(html)) !== null) {
+    try {
+      const pageUrl = new URL(match[1]!, baseUrl);
+      pageUrl.hash = "";
+      const key = pageUrl.toString();
+      if (!seen.has(key)) {
+        seen.add(key);
+        urls.push(pageUrl);
+      }
+    } catch {
+      // invalid URL, skip
+    }
+  }
+  return urls;
 }
 
 // ---------------------------------------------------------------------------

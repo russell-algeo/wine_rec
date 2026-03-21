@@ -110,6 +110,29 @@ describe("extractLeafTokens", () => {
     expect(tokens).toContainEqual({ type: "text", text: "Wine Name" });
   });
 
+  it("strips visually-hidden elements (Shopify price labels)", () => {
+    const html = `
+      <a href="/products/contatto">Contatto, Vinho Verde Avesso</a>
+      <span class="visually-hidden visually-hidden--inline">Regular price</span>
+      <span class="price-item price-item--regular">$21.99</span>
+    `;
+    const tokens = extractLeafTokens(html);
+    expect(tokens.some((t) => "text" in t && t.text.includes("Regular price"))).toBe(false);
+    expect(tokens.some((t) => t.type === "text" && t.text.includes("Contatto"))).toBe(true);
+  });
+
+  it("strips menu-item-description elements so tasting notes don't merge with names", () => {
+    const html = `
+      <span class="menu-item-price-top"><span class="currency-sign">$</span>14</span>
+      <div class="menu-item-title">Les Salicaires 'Primal' - Roussillon, FR</div>
+      <div class="menu-item-description">Chilled, dry, sour cherry, watermelon Jolly Rancher, sea kelp</div>
+    `;
+    const tokens = extractLeafTokens(html);
+    const textTokens = tokens.filter((t) => t.type === "text");
+    expect(textTokens.some((t) => t.text === "Les Salicaires 'Primal' - Roussillon, FR")).toBe(true);
+    expect(textTokens.some((t) => t.text.includes("sour cherry"))).toBe(false);
+  });
+
   it("emits a section token for bare wine-category keywords", () => {
     const tokens = extractLeafTokens("<div>SPARKLING</div><p>Some wine $95</p>");
     expect(tokens[0]).toEqual({ type: "section", text: "SPARKLING" });
@@ -129,6 +152,19 @@ describe("extractLeafTokens", () => {
   it("treats a heading with a comma as a wine name regardless of length", () => {
     const tokens = extractLeafTokens("<h3>Penfolds, Grange</h3>");
     expect(tokens[0]).toEqual({ type: "text", text: "Penfolds, Grange" });
+  });
+
+  it("captures the full glass/bottle inline price so the glass amount does not bleed into the name", () => {
+    // "33/ 145" is glass/bottle — the name should have no trailing "33/"
+    const tokens = extractLeafTokens(
+      `<div>Domaine Rougeot 'Les Plumes' | Aligoté | Bourgogne, France (2023) 33/ 145</div>`,
+    );
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).toMatchObject({
+      type: "text",
+      text: "Domaine Rougeot 'Les Plumes' | Aligoté | Bourgogne, France (2023)",
+    });
+    expect(tokens[1]).toMatchObject({ type: "price", value: "$145" });
   });
 });
 
@@ -205,8 +241,40 @@ describe("groupTokensIntoItems — inline prices", () => {
     `);
     const items = groupTokensIntoItems(tokens);
     expect(items).toHaveLength(2);
-    expect(items[0]).toMatchObject({ name: "Croci 'Lubigo' | Ortrugo | Emilia-Romagna, Italy", price: "$72", section: "SPARKLING" });
-    expect(items[1]).toMatchObject({ name: "Hager Matthias 'Blanc de Noir' Reserve 2019 | Zweigelt | Austria", price: "$145" });
+    expect(items[0]).toMatchObject({ name: "Croci 'Lubigo', Ortrugo, Emilia-Romagna, Italy", price: "$72", section: "SPARKLING" });
+    expect(items[1]).toMatchObject({ name: "Hager Matthias 'Blanc de Noir' Reserve 2019, Zweigelt, Austria", price: "$145" });
+  });
+
+  it("strips pipe separators from wine names", () => {
+    const tokens = extractLeafTokens(`
+      <div>Domaine des Trois Filles | Mourvèdre, Grenache | Bandol, France (2020) 85</div>
+    `);
+    const items = groupTokensIntoItems(tokens);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.name).not.toContain("|");
+    expect(items[0]?.name).toContain("Domaine des Trois Filles");
+    expect(items[0]?.name).toContain("Bandol, France");
+  });
+
+  it("discards a dangling bottle price after an inline-priced name (BINX split-node format)", () => {
+    // Simulates BINX HTML where glass price is inline but the $ and bottle price
+    // are in separate text nodes: "Wine Name 18" → "/" → "$" → "80"
+    const tokens: import("./source-extractor.js").LeafToken[] = [
+      { type: "text", text: "Calalta 'Undercover' Cortese di Piemonte" },
+      { type: "price", value: "$18" },
+      // "/" separator becomes a non-wine text token
+      { type: "text", text: "/" },
+      // dangling bottle price that should be discarded
+      { type: "price", value: "$80" },
+      { type: "text", text: "Domaine des Trois Filles 'Sœur' Mourvedre" },
+      { type: "price", value: "$85" },
+    ];
+    const items = groupTokensIntoItems(tokens);
+    expect(items).toHaveLength(2);
+    // First wine gets its own inline price ($18), not the dangling $80
+    expect(items[0]).toMatchObject({ name: "Calalta 'Undercover' Cortese di Piemonte", price: "$18" });
+    // Second wine gets its own price ($85), not corrupted by the discarded $80
+    expect(items[1]).toMatchObject({ name: "Domaine des Trois Filles 'Sœur' Mourvedre", price: "$85" });
   });
 });
 
