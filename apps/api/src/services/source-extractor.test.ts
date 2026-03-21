@@ -342,6 +342,41 @@ describe("groupTokensIntoItems — inline prices", () => {
 });
 
 // ---------------------------------------------------------------------------
+// groupTokensIntoItems — deduplication
+// ---------------------------------------------------------------------------
+
+describe("groupTokensIntoItems — deduplication", () => {
+  it("removes exact-match duplicates keeping the last occurrence (correct section)", () => {
+    // Simulates Squarespace: same wine in price-top (before section header,
+    // wrong section) and price-bottom (after section header, correct section).
+    const tokens: import("./source-extractor.js").LeafToken[] = [
+      { type: "text", text: "Sondre Lerche 'Cuvée Patos' | Macabeo | Spain" },
+      { type: "price", value: "$86" },
+      { type: "section", text: "SPARKLING" },
+      { type: "text", text: "Sondre Lerche 'Cuvée Patos' | Macabeo | Spain" },
+      { type: "price", value: "$86" },
+    ];
+    const items = groupTokensIntoItems(tokens);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.section).toBe("SPARKLING");
+  });
+
+  it("keeps both items when name matches but prices differ (genuine multi-section entry)", () => {
+    // Same wine listed at glass price in one section, bottle price in another.
+    const tokens: import("./source-extractor.js").LeafToken[] = [
+      { type: "section", text: "WHITE" },
+      { type: "text", text: "Sancerre, Domaine Roland Tissier" },
+      { type: "price", value: "$18" },
+      { type: "section", text: "BOTTLES" },
+      { type: "text", text: "Sancerre, Domaine Roland Tissier" },
+      { type: "price", value: "$75" },
+    ];
+    const items = groupTokensIntoItems(tokens);
+    expect(items).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // groupTokensIntoItems — non-wine section filtering
 // ---------------------------------------------------------------------------
 

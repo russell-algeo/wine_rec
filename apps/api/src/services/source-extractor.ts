@@ -454,19 +454,38 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
   }
 
   flushItem(pendingPrice);
-  return items;
+
+  // Deduplicate: items with the same normalised name AND same price are parsing
+  // artifacts (e.g. Squarespace price-top/price-bottom duplication). Keep the
+  // last occurrence — it appears after the section header and therefore has the
+  // correct section context. Items with the same name but different prices are
+  // intentional (e.g., glass vs. bottle listings) and are kept as-is.
+  const lastIndexByKey = new Map<string, number>();
+  for (let i = 0; i < items.length; i++) {
+    const key = `${items[i]!.name.toLowerCase().replace(/\s+/g, " ").trim()}||${items[i]!.price ?? ""}`;
+    lastIndexByKey.set(key, i);
+  }
+  return items.filter((_, i) => {
+    const key = `${items[i]!.name.toLowerCase().replace(/\s+/g, " ").trim()}||${items[i]!.price ?? ""}`;
+    return lastIndexByKey.get(key) === i;
+  });
 }
 
 function deduplicateItems(items: RawMenuItem[]): RawMenuItem[] {
-  const seen = new Map<string, RawMenuItem>();
-  for (const item of items) {
-    const key = `${item.section ?? ""}::${item.name.toLowerCase()}`;
-    const existing = seen.get(key);
-    if (!existing || (item.price !== null && existing.price === null)) {
-      seen.set(key, item);
-    }
+  // Items with the same normalised name AND same price are parsing artifacts
+  // (e.g. Squarespace price-top/price-bottom duplication). Keep the last
+  // occurrence — it appears after the section header and therefore has the
+  // correct section context. Items with the same name but different prices are
+  // intentional (e.g., glass vs. bottle listings) and are kept as-is.
+  const lastIndexByKey = new Map<string, number>();
+  for (let i = 0; i < items.length; i++) {
+    const key = `${items[i]!.name.toLowerCase().replace(/\s+/g, " ").trim()}||${items[i]!.price ?? ""}`;
+    lastIndexByKey.set(key, i);
   }
-  return Array.from(seen.values());
+  return items.filter((_, i) => {
+    const key = `${items[i]!.name.toLowerCase().replace(/\s+/g, " ").trim()}||${items[i]!.price ?? ""}`;
+    return lastIndexByKey.get(key) === i;
+  });
 }
 
 function extractMenuCandidates(html: string): WineCandidate[] {
