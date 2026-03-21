@@ -495,7 +495,108 @@ function removePricelessDuplicates(items: RawMenuItem[]): RawMenuItem[] {
   });
 }
 
+/**
+ * Attempts to extract menu items from Schema.org JSON-LD `Menu` data embedded
+ * in the page. Returns a non-null array when at least one Schema.org `Menu`
+ * block is found, otherwise returns null (caller falls back to HTML parsing).
+ *
+ * GetBento CMS (and similar platforms) split each wine into a short `name`
+ * (the varietal category, e.g. "folle blanche") and a `description` (producer,
+ * label, vintage, region). Combining them here avoids the token-stream parser
+ * splitting them into two separate wine items.
+ */
+function extractJsonLdMenuItems(html: string): RawMenuItem[] | null {
+  const scriptPattern = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  const items: RawMenuItem[] = [];
+  let foundMenu = false;
+  let match;
+
+  while ((match = scriptPattern.exec(html)) !== null) {
+    let data: unknown;
+    try {
+      data = JSON.parse(match[1]!);
+    } catch {
+      continue;
+    }
+
+    const records: unknown[] = Array.isArray(data) ? data : [data];
+    for (const record of records) {
+      if (typeof record !== "object" || record === null) continue;
+      const r = record as Record<string, unknown>;
+      if (r["@type"] !== "Menu") continue;
+
+      const sections = r["hasMenuSection"];
+      const sectionArray: unknown[] = Array.isArray(sections) ? sections : sections ? [sections] : [];
+      if (sectionArray.length === 0) continue;
+
+      foundMenu = true;
+
+      for (const section of sectionArray) {
+        if (typeof section !== "object" || section === null) continue;
+        const s = section as Record<string, unknown>;
+        const sectionName = typeof s["name"] === "string" ? s["name"].trim() || null : null;
+        if (isNonWineSection(sectionName)) continue;
+
+        const menuItems = s["hasMenuItem"];
+        const itemArray: unknown[] = Array.isArray(menuItems) ? menuItems : menuItems ? [menuItems] : [];
+
+        for (const menuItem of itemArray) {
+          if (typeof menuItem !== "object" || menuItem === null) continue;
+          const mi = menuItem as Record<string, unknown>;
+
+          const itemName = typeof mi["name"] === "string" ? mi["name"].trim() : null;
+          if (!itemName) continue;
+
+          // Combine the short name (varietal/category) with the description
+          // (producer, label, vintage, region) so the parser receives a single
+          // coherent wine text string instead of two disconnected fragments.
+          const rawDesc = typeof mi["description"] === "string" ? mi["description"].trim() : null;
+          const fullName = rawDesc
+            ? `${itemName} ${rawDesc.replace(/\n+/g, " ").replace(/\s+/g, " ").trim()}`
+            : itemName;
+
+          // Extract price: prefer the explicit "bottle" offer; fall back to the
+          // largest offer price (still better than glass price for bottle lists).
+          const offers = mi["offers"];
+          const offerArray: unknown[] = Array.isArray(offers) ? offers : offers ? [offers] : [];
+          let bottlePrice: number | null = null;
+          let maxPrice = 0;
+          for (const offer of offerArray) {
+            if (typeof offer !== "object" || offer === null) continue;
+            const o = offer as Record<string, unknown>;
+            const priceNum = Number.parseFloat(String(o["price"] ?? ""));
+            if (!Number.isFinite(priceNum) || priceNum < 5 || priceNum > 2000) continue;
+            const offerDesc = (typeof o["description"] === "string" ? o["description"] : "").toLowerCase();
+            if (offerDesc.includes("bottle") && bottlePrice === null) {
+              bottlePrice = priceNum;
+            }
+            if (priceNum > maxPrice) maxPrice = priceNum;
+          }
+          const priceNum = bottlePrice ?? (maxPrice > 0 ? maxPrice : null);
+          const price = priceNum !== null ? `$${Math.round(priceNum)}` : null;
+
+          items.push({ name: fullName, price, section: sectionName, tab: null });
+        }
+      }
+    }
+  }
+
+  return foundMenu ? items : null;
+}
+
 function extractMenuCandidates(html: string): WineCandidate[] {
+  // Try structured JSON-LD extraction first (e.g. GetBento / Schema.org menus).
+  // This avoids the HTML token-stream parser splitting a short varietal-category
+  // heading (e.g. "folle blanche") from its producer/label/region detail line.
+  const jsonLdItems = extractJsonLdMenuItems(html);
+  if (jsonLdItems !== null && jsonLdItems.length > 0) {
+    const items = removePricelessDuplicates(jsonLdItems);
+    return items
+      .map((item) => buildCandidateFromItem(item))
+      .filter((c): c is WineCandidate => c !== null);
+  }
+
+  // Fall back to generic HTML token-stream parsing.
   const tokens = extractLeafTokens(html);
   const items = removePricelessDuplicates(groupTokensIntoItems(tokens));
   return items
