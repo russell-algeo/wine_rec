@@ -471,26 +471,33 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
   });
 }
 
-function deduplicateItems(items: RawMenuItem[]): RawMenuItem[] {
-  // Items with the same normalised name AND same price are parsing artifacts
-  // (e.g. Squarespace price-top/price-bottom duplication). Keep the last
-  // occurrence — it appears after the section header and therefore has the
-  // correct section context. Items with the same name but different prices are
-  // intentional (e.g., glass vs. bottle listings) and are kept as-is.
-  const lastIndexByKey = new Map<string, number>();
-  for (let i = 0; i < items.length; i++) {
-    const key = `${items[i]!.name.toLowerCase().replace(/\s+/g, " ").trim()}||${items[i]!.price ?? ""}`;
-    lastIndexByKey.set(key, i);
+/**
+ * Removes priceless duplicates that have a priced counterpart with the same
+ * name and section. This handles card-based layouts (e.g. Shopify Dawn) that
+ * render the product heading twice — once inside the image overlay (no price
+ * nearby) and once in the info section (with price).
+ *
+ * Items with the same name but *different* prices are left alone — they are
+ * intentional (e.g. glass vs. bottle listings on a restaurant wine menu).
+ */
+function removePricelessDuplicates(items: RawMenuItem[]): RawMenuItem[] {
+  const keyedWithPrice = new Set<string>();
+  for (const item of items) {
+    if (item.price !== null) {
+      const key = `${item.section ?? ""}::${item.name.toLowerCase().replace(/\s+/g, " ").trim()}`;
+      keyedWithPrice.add(key);
+    }
   }
-  return items.filter((_, i) => {
-    const key = `${items[i]!.name.toLowerCase().replace(/\s+/g, " ").trim()}||${items[i]!.price ?? ""}`;
-    return lastIndexByKey.get(key) === i;
+  return items.filter((item) => {
+    if (item.price !== null) return true;
+    const key = `${item.section ?? ""}::${item.name.toLowerCase().replace(/\s+/g, " ").trim()}`;
+    return !keyedWithPrice.has(key);
   });
 }
 
 function extractMenuCandidates(html: string): WineCandidate[] {
   const tokens = extractLeafTokens(html);
-  const items = deduplicateItems(groupTokensIntoItems(tokens));
+  const items = removePricelessDuplicates(groupTokensIntoItems(tokens));
   return items
     .map((item) => buildCandidateFromItem(item))
     .filter((c): c is WineCandidate => c !== null);

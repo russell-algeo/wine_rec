@@ -129,11 +129,11 @@ async function loadJobStore() {
 
 type JobStore = Awaited<ReturnType<typeof loadJobStore>>;
 
-function getWorkerFailureUrl(): string {
+function buildApiUrl(endpoint: string): string {
   const vercelUrl = process.env.VERCEL_URL;
   if (vercelUrl) {
     const base = vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`;
-    return `${base.replace(/\/$/, "")}/api/worker-failure`;
+    return `${base.replace(/\/$/, "")}${endpoint}`;
   }
 
   const workerUrl = process.env.WORKER_URL;
@@ -141,37 +141,7 @@ function getWorkerFailureUrl(): string {
     throw new Error("WORKER_URL is not configured");
   }
 
-  return `${workerUrl.replace(/\/$/, "")}/api/worker-failure`;
-}
-
-function getCoordinatorUrl(): string {
-  const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl) {
-    const base = vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`;
-    return `${base.replace(/\/$/, "")}/api/coordinator`;
-  }
-
-  const workerUrl = process.env.WORKER_URL;
-  if (!workerUrl) {
-    throw new Error("WORKER_URL is not configured");
-  }
-
-  return `${workerUrl.replace(/\/$/, "")}/api/coordinator`;
-}
-
-function getChunkWorkerUrl(): string {
-  const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl) {
-    const base = vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`;
-    return `${base.replace(/\/$/, "")}/api/chunk-worker`;
-  }
-
-  const workerUrl = process.env.WORKER_URL;
-  if (!workerUrl) {
-    throw new Error("WORKER_URL is not configured");
-  }
-
-  return `${workerUrl.replace(/\/$/, "")}/api/chunk-worker`;
+  return `${workerUrl.replace(/\/$/, "")}${endpoint}`;
 }
 
 async function publishWorkerJob(
@@ -188,7 +158,7 @@ async function publishWorkerJob(
   } = {},
 ): Promise<{ messageId: string }> {
   const request = {
-    url: payload.mode === "coordinator" ? getCoordinatorUrl() : getChunkWorkerUrl(),
+    url: payload.mode === "coordinator" ? buildApiUrl("/api/coordinator") : buildApiUrl("/api/chunk-worker"),
     body: payload,
     retries: options.retries ?? 0,
     ...(options.retryDelay ? { retryDelay: options.retryDelay } : {}),
@@ -517,7 +487,7 @@ function getWorkerPublishOptions(
 } {
   return {
     retries: 3,
-    failureCallback: getWorkerFailureUrl(),
+    failureCallback: buildApiUrl("/api/worker-failure"),
     retryDelay: SERVERLESS_WORKER_RETRY_DELAY_EXPRESSION,
     ...(delaySeconds > 0 ? { delaySeconds } : {}),
     flowControl: getWorkerFlowControl(jobId),
@@ -530,7 +500,7 @@ function getCoordinatorPublishOptions(): {
 } {
   return {
     retries: 1,
-    failureCallback: getWorkerFailureUrl(),
+    failureCallback: buildApiUrl("/api/worker-failure"),
   };
 }
 
