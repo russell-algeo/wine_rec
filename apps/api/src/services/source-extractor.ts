@@ -223,9 +223,6 @@ export function extractLeafTokens(html: string): LeafToken[] {
     // Strip entire head section (title, meta, etc.) and known non-content elements.
     // Also strip Shopify/e-commerce custom elements (cart-drawer, menu-drawer).
     .replace(/<(script|style|noscript|svg|template|nav|header|footer|form|figure|head|cart-drawer|cart-notification|menu-drawer)\b[\s\S]*?<\/\1>/gi, " ")
-    // Strip tasting-note / description elements before tokenising so their
-    // text doesn't get appended to the preceding wine name.
-    .replace(/<[^>]+\bclass="[^"]*\bdescription\b[^"]*"[^>]*>[\s\S]*?<\/[a-z]+>/gi, " ")
     // Strip screen-reader-only labels (e.g. Shopify's "Regular price", "Sale price" spans).
     .replace(/<[^>]+\bclass="[^"]*\bvisually-hidden\b[^"]*"[^>]*>[\s\S]*?<\/[a-z]+>/gi, " ");
 
@@ -314,6 +311,18 @@ export function extractLeafTokens(html: string): LeafToken[] {
   return tokens;
 }
 
+/**
+ * Returns true when a text snippet contains structural wine-menu signals:
+ * a pipe separator, a 4-digit vintage year, or a quoted wine label.
+ * Used to distinguish wine-entry text from tasting-note prose.
+ */
+function hasWineStructureSignals(text: string): boolean {
+  if (text.includes("|")) return true;
+  if (/\b(19|20)\d{2}\b/.test(text)) return true;
+  if (/['''""][^'''""]{2,}['''""]/.test(text)) return true;
+  return false;
+}
+
 export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
   const items: RawMenuItem[] = [];
   let currentSection: string | null = null;
@@ -397,6 +406,17 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
     if (nameLines.length > 0 && token.text === nameLines[0]) {
       flushItem(pendingPrice);
       pendingPrice = null;
+    }
+
+    // Skip tasting-note-like text when the accumulated name already has wine
+    // structure signals. Tasting notes lack pipe separators, vintage years, and
+    // quoted labels — so they would otherwise merge into the wine name.
+    if (
+      nameLines.length > 0 &&
+      hasWineStructureSignals(nameLines.join(" ")) &&
+      !hasWineStructureSignals(token.text)
+    ) {
+      continue;
     }
 
     justFlushedNameBeforePrice = false;

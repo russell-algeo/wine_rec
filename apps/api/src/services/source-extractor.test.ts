@@ -121,16 +121,47 @@ describe("extractLeafTokens", () => {
     expect(tokens.some((t) => t.type === "text" && t.text.includes("Contatto"))).toBe(true);
   });
 
-  it("strips menu-item-description elements so tasting notes don't merge with names", () => {
+  it("tasting notes from menu-item-description do not merge into wine names", () => {
+    // After removing element-level description stripping, tasting note text
+    // appears in the token stream but is filtered out at the grouping stage.
     const html = `
-      <span class="menu-item-price-top"><span class="currency-sign">$</span>14</span>
+      <span class="menu-item-price-top">
+        <span class="currency-sign">$</span>14
+      </span>
       <div class="menu-item-title">Les Salicaires 'Primal' - Roussillon, FR</div>
       <div class="menu-item-description">Chilled, dry, sour cherry, watermelon Jolly Rancher, sea kelp</div>
     `;
     const tokens = extractLeafTokens(html);
-    const textTokens = tokens.filter((t) => t.type === "text");
-    expect(textTokens.some((t) => t.text === "Les Salicaires 'Primal' - Roussillon, FR")).toBe(true);
-    expect(textTokens.some((t) => t.text.includes("sour cherry"))).toBe(false);
+    const items = groupTokensIntoItems(tokens);
+    // The wine is extracted correctly
+    expect(items).toHaveLength(1);
+    expect(items[0]!.name).toContain("Les Salicaires");
+    // The tasting note text does NOT appear in any item name
+    expect(items.some((i) => i.name.includes("cherry"))).toBe(false);
+  });
+
+  it("extracts wines from menu-item-description elements (BINX-style Squarespace)", () => {
+    const html = `
+      <div class="menu-item">
+        <div class="menu-item-title">SPARKLING</div>
+        <div class="menu-item-description">Croci 'Lubigo' | Ortrugo | Emilia-Romagna, Italy 16/72</div>
+        <div class="menu-item-options">
+          <div class="menu-item-option">Hager Matthias 'Blanc de Noir' Reserve 2019 | Zweigelt | Austria 145</div>
+        </div>
+      </div>
+      <div class="menu-item">
+        <div class="menu-item-title">ROSE</div>
+        <div class="menu-item-description">Noella Morantin Osiana | Cabernet Franc | VDF 17/77</div>
+      </div>
+    `;
+    const tokens = extractLeafTokens(html);
+    const items = groupTokensIntoItems(tokens);
+    const names = items.map((i) => i.name);
+    expect(names.some((n) => n.includes("Croci"))).toBe(true);
+    expect(names.some((n) => n.includes("Noella"))).toBe(true);
+    expect(names.some((n) => n.includes("Hager"))).toBe(true);
+    expect(items.find((i) => i.name.includes("Croci"))?.section).toBe("SPARKLING");
+    expect(items.find((i) => i.name.includes("Noella"))?.section).toBe("ROSE");
   });
 
   it("emits a section token for bare wine-category keywords", () => {
