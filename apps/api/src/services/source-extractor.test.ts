@@ -287,25 +287,57 @@ describe("groupTokensIntoItems — inline prices", () => {
     expect(items[0]?.name).toContain("Bandol, France");
   });
 
-  it("discards a dangling bottle price after an inline-priced name (BINX split-node format)", () => {
-    // Simulates BINX HTML where glass price is inline but the $ and bottle price
-    // are in separate text nodes: "Wine Name 18" → "/" → "$" → "80"
+  it("upgrades to bottle price when a '/' separator precedes a larger dangling price", () => {
+    // Simulates BINX HTML where glass price is inline and the bottle price
+    // arrives after a "/" text node: "Wine Name 18" → "/" → "80"
     const tokens: import("./source-extractor.js").LeafToken[] = [
       { type: "text", text: "Calalta 'Undercover' Cortese di Piemonte" },
       { type: "price", value: "$18" },
-      // "/" separator becomes a non-wine text token
       { type: "text", text: "/" },
-      // dangling bottle price that should be discarded
       { type: "price", value: "$80" },
       { type: "text", text: "Domaine des Trois Filles 'Sœur' Mourvedre" },
       { type: "price", value: "$85" },
     ];
     const items = groupTokensIntoItems(tokens);
     expect(items).toHaveLength(2);
-    // First wine gets its own inline price ($18), not the dangling $80
-    expect(items[0]).toMatchObject({ name: "Calalta 'Undercover' Cortese di Piemonte", price: "$18" });
-    // Second wine gets its own price ($85), not corrupted by the discarded $80
+    // First wine is upgraded to the bottle price ($80)
+    expect(items[0]).toMatchObject({ name: "Calalta 'Undercover' Cortese di Piemonte", price: "$80" });
+    // Second wine gets its own price ($85)
     expect(items[1]).toMatchObject({ name: "Domaine des Trois Filles 'Sœur' Mourvedre", price: "$85" });
+  });
+
+  it("does not split a multi-varietal wine name at a '/' separator between DOM nodes", () => {
+    // Simulates Squarespace split-node format: "Cab Sauv / Zinfandel" where
+    // "/" is a separate text node. The wine must stay as one item.
+    const tokens: import("./source-extractor.js").LeafToken[] = [
+      { type: "section", text: "ROSE" },
+      { type: "text", text: "Caleb Leisure 'Just Under There' | Cabernet Sauvignon" },
+      { type: "text", text: "/" },
+      { type: "text", text: "Zinfandel | Alexander Valley, California (2022)" },
+      { type: "price", value: "$17" },
+    ];
+    const items = groupTokensIntoItems(tokens);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.name).toContain("Caleb Leisure");
+    expect(items[0]!.name).toContain("Zinfandel");
+    expect(items[0]!.section).toBe("ROSE");
+  });
+
+  it("upgrades a split-node inline price to the bottle price when '/' separator is present", () => {
+    // Simulates "SomeName 19 / [currency-sign] 86" across nodes.
+    // The glass price $19 is captured inline; $86 arrives as a dangling price
+    // after "/" and should upgrade the item to $86.
+    const tokens: import("./source-extractor.js").LeafToken[] = [
+      { type: "section", text: "SPARKLING" },
+      { type: "text", text: "Sondre Lerche 'Cuvée Patos' | Macabeo | Catalonia, Spain" },
+      { type: "price", value: "$19" },
+      { type: "text", text: "/" },
+      { type: "price", value: "$86" },
+    ];
+    const items = groupTokensIntoItems(tokens);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.price).toBe("$86");
+    expect(items[0]!.section).toBe("SPARKLING");
   });
 });
 

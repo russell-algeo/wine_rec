@@ -333,6 +333,9 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
   // the dangling bottle price for the same item — discard it rather than attributing
   // it to the next wine (BINX-style "18 / $80" split across nodes).
   let justFlushedNameBeforePrice = false;
+  // Set to true when we see a non-alphabetic "/" separator token. Signals that the
+  // next price token is a bottle price and should upgrade the last item's price.
+  let afterSlash = false;
 
   const flushItem = (price: string | null, nameBeforePrice = false): void => {
     if (nameLines.length === 0) return;
@@ -355,6 +358,7 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
       flushItem(pendingPrice);
       pendingPrice = null;
       justFlushedNameBeforePrice = false;
+      afterSlash = false;
       currentSection = token.text;
       continue;
     }
@@ -372,10 +376,20 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
           pendingPrice = null;
         }
       } else {
-        // No name accumulated yet — price is ahead of name.
-        // If we just flushed an inline-priced name, this is the dangling bottle
-        // price for that same item; discard it.
-        if (!justFlushedNameBeforePrice) {
+        if (justFlushedNameBeforePrice && afterSlash) {
+          // Dangling bottle price after a confirmed "/" separator — upgrade the
+          // last item's price if the bottle price is larger than the glass price.
+          const lastItem = items[items.length - 1];
+          if (lastItem) {
+            const lastNum = Number.parseInt((lastItem.price ?? "0").replace(/\D/g, ""), 10);
+            const newNum = Number.parseInt(token.value.replace(/\D/g, ""), 10);
+            if (Number.isFinite(newNum) && newNum > lastNum) {
+              lastItem.price = token.value;
+            }
+          }
+          afterSlash = false;
+        } else if (!justFlushedNameBeforePrice) {
+          // No name accumulated yet — save as pending price for the next wine.
           pendingPrice = token.value;
         }
       }
@@ -384,17 +398,31 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
 
     // Text token
     if (isNonWineLine(token.text)) {
+      if (!/[A-Za-z]/.test(token.text)) {
+        // Pure structural separator (/, $, ·, etc.) — skip without flushing so
+        // the current wine name accumulation is not interrupted.
+        // Set afterSlash when the separator is "/" so the next price token can
+        // be identified as a dangling bottle price and upgrade the glass price.
+        if (token.text.includes("/")) {
+          afterSlash = true;
+        }
+        // Do NOT reset justFlushedNameBeforePrice here: the "/" appears between
+        // the inline glass price and the dangling bottle price in split-node menus.
+        continue;
+      }
+      // Substantive non-wine text — flush and reset.
       flushItem(pendingPrice);
       pendingPrice = null;
-      // Do NOT reset justFlushedNameBeforePrice here: separator tokens like "/"
-      // appear between the inline glass price and the dangling bottle price in
-      // split-node menus (e.g. BINX) and must not prematurely clear the flag.
+      justFlushedNameBeforePrice = false;
+      afterSlash = false;
       continue;
     }
 
     // If we already have name lines and the new token looks like a fresh title,
     // flush the current block before starting the new one.
-    if (nameLines.length > 0 && looksLikeTitleLine(token.text)) {
+    // Exception: afterSlash means this token is a continuation (e.g., second
+    // varietal in "Cab Sauv / Zinfandel" split across nodes).
+    if (nameLines.length > 0 && !afterSlash && looksLikeTitleLine(token.text)) {
       flushItem(pendingPrice);
       pendingPrice = null;
     }
@@ -413,12 +441,14 @@ export function groupTokensIntoItems(tokens: LeafToken[]): RawMenuItem[] {
     // quoted labels — so they would otherwise merge into the wine name.
     if (
       nameLines.length > 0 &&
+      !afterSlash &&
       hasWineStructureSignals(nameLines.join(" ")) &&
       !hasWineStructureSignals(token.text)
     ) {
       continue;
     }
 
+    afterSlash = false;
     justFlushedNameBeforePrice = false;
     nameLines.push(token.text);
   }
