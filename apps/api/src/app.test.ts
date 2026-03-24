@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   bootstrapDatabaseMock,
   createAnalysisMock,
+  createUploadAnalysisHandlerMock,
   createOcrProviderMock,
   createWineProfileProvidersMock,
   fetchUrlPreviewMock,
@@ -16,9 +17,11 @@ const {
   saveUrlSourceMock,
   updateAnalysisStoragePathMock,
   writeAnalysisMetadataMock,
+  RequestErrorMock,
 } = vi.hoisted(() => ({
   bootstrapDatabaseMock: vi.fn(),
   createAnalysisMock: vi.fn(),
+  createUploadAnalysisHandlerMock: vi.fn(),
   createOcrProviderMock: vi.fn(),
   createWineProfileProvidersMock: vi.fn(),
   fetchUrlPreviewMock: vi.fn(),
@@ -32,6 +35,15 @@ const {
   saveUrlSourceMock: vi.fn(),
   updateAnalysisStoragePathMock: vi.fn(),
   writeAnalysisMetadataMock: vi.fn(),
+  RequestErrorMock: class RequestError extends Error {
+    statusCode: number;
+
+    constructor(message: string, statusCode: number) {
+      super(message);
+      this.name = "RequestError";
+      this.statusCode = statusCode;
+    }
+  },
 }));
 
 vi.mock("./db/bootstrap.js", () => ({
@@ -65,6 +77,16 @@ vi.mock("./services/storage.js", () => ({
 
 vi.mock("./services/url-preview.js", () => ({
   fetchUrlPreview: fetchUrlPreviewMock,
+}));
+
+vi.mock("./api-handlers.js", () => ({
+  RequestError: RequestErrorMock,
+  cancelAnalysis: vi.fn(),
+  createUploadAnalysis: createUploadAnalysisHandlerMock,
+  createUrlAnalysis: vi.fn(),
+  getAnalysisRun: vi.fn(),
+  getPreview: vi.fn(),
+  getProviderHealth: vi.fn(async () => []),
 }));
 
 import { buildApp } from "./app.js";
@@ -116,12 +138,12 @@ describe("app upload route", () => {
   });
 
   it("rejects uploads when the configured OCR provider is disabled", async () => {
-    createOcrProviderMock.mockReturnValue({
-      name: "tesseract",
-      isEnabled: false,
-      detail: "Tesseract is not installed; provider is disabled.",
-      extractText: vi.fn(),
-    });
+    createUploadAnalysisHandlerMock.mockRejectedValue(
+      new RequestErrorMock(
+        "Image and PDF uploads require OCR. Tesseract is not installed; provider is disabled. Use a wine-list URL instead or configure an available OCR provider.",
+        503,
+      ),
+    );
 
     app = await buildApp();
 
@@ -136,20 +158,14 @@ describe("app upload route", () => {
       message:
         "Image and PDF uploads require OCR. Tesseract is not installed; provider is disabled. Use a wine-list URL instead or configure an available OCR provider.",
     });
-    expect(createAnalysisMock).not.toHaveBeenCalled();
-    expect(saveUploadMock).not.toHaveBeenCalled();
+    expect(createUploadAnalysisHandlerMock).toHaveBeenCalledTimes(1);
   });
 
   it("accepts uploads when the configured OCR provider is enabled", async () => {
-    createAnalysisMock.mockResolvedValue({
-      id: "analysis-1",
+    createUploadAnalysisHandlerMock.mockResolvedValue({
+      analysisId: "analysis-1",
       status: "uploaded",
     });
-    getAnalysisByIdMock.mockResolvedValue({
-      id: "analysis-1",
-      status: "uploaded",
-    });
-    saveUploadMock.mockResolvedValue("/tmp/menu.png");
 
     app = await buildApp();
 
@@ -164,15 +180,10 @@ describe("app upload route", () => {
       analysisId: "analysis-1",
       status: "uploaded",
     });
-    expect(createAnalysisMock).toHaveBeenCalledWith({
-      sourceType: "upload-image",
-      sourceFilename: "menu.png",
-      storagePath: "",
-    });
-    expect(saveUploadMock).toHaveBeenCalledWith("analysis-1", "menu.png", expect.any(Buffer));
-    expect(writeAnalysisMetadataMock).toHaveBeenCalledWith("analysis-1", "/tmp/menu.png", {
+    expect(createUploadAnalysisHandlerMock).toHaveBeenCalledWith({
+      buffer: expect.any(Buffer),
+      filename: "menu.png",
       mimeType: "image/png",
     });
-    expect(updateAnalysisStoragePathMock).toHaveBeenCalledWith("analysis-1", "/tmp/menu.png");
   });
 });

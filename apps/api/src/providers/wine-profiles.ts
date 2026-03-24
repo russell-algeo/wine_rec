@@ -57,6 +57,29 @@ type RawExternalProfile = {
   retailPrice?: number | null | undefined;
 };
 
+const VIVINO_DIRECT_MATCH_THRESHOLD = 0.38;
+const MIN_CONFIDENCE_FOR_RULE_BASED_INFERENCE = 0.68;
+const styleListingLabels = new Set(["chilled red", "red", "white", "orange", "rose", "rosé", "sparkling"]);
+const searchNoiseTokens = new Set([
+  "bottle",
+  "bottles",
+  "by",
+  "carafe",
+  "glass",
+  "glasses",
+  "list",
+  "menu",
+  "price",
+  "section",
+  "wine",
+  "wines",
+]);
+
+function isAnonymousStyleListingCandidate(candidate: WineCandidate): boolean {
+  const label = candidate.label?.trim().toLowerCase() ?? "";
+  return !candidate.producer && Boolean(candidate.region) && styleListingLabels.has(label);
+}
+
 function buildProfile(
   provider: string,
   candidate: WineCandidate,
@@ -140,7 +163,63 @@ export function normalizeVivinoTasteReviewCount(value: number | null | undefined
 /*  Vivino Direct – browser search + public taste API                  */
 /* ------------------------------------------------------------------ */
 
-const VIVINO_DIRECT_MATCH_THRESHOLD = 0.38;
+function cleanVivinoQueryFragment(value: string | null | undefined): string {
+  const rawTokens = (value ?? "")
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .replace(/[‘’'“”"]/g, " ")
+    .replace(/[^A-Za-z0-9\s/-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const cleaned = rawTokens.filter((token) => {
+    const lower = token.toLowerCase();
+    if (searchNoiseTokens.has(lower)) return false;
+    if (/^\d{1,3}(?:\.\d{2})?$/.test(lower)) return false;
+    if (/^\d+(?:l|ml)$/.test(lower)) return false;
+    if (lower.length <= 1) return false;
+    if (lower.length <= 2 && /^[a-z]+$/i.test(lower)) return false;
+    return /[A-Za-z]/.test(lower);
+  });
+
+  return [...new Set(cleaned.map((token) => token.toLowerCase()))].join(" ").trim();
+}
+
+function extractNoteSearchHint(notes: string | null | undefined): string {
+  const cleaned = cleanVivinoQueryFragment(notes);
+  if (!cleaned) return "";
+  return cleaned
+    .split(/\s+/)
+    .filter((token) => token.length >= 4)
+    .slice(0, 5)
+    .join(" ");
+}
+
+function buildQuery(parts: Array<string | number | null | undefined>): string | null {
+  const query = parts
+    .map((part) => (typeof part === "number" ? String(part) : cleanVivinoQueryFragment(part)))
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return query.split(/\s+/).length >= 2 ? query : null;
+}
+
+export function buildVivinoSearchQueries(candidate: WineCandidate): string[] {
+  const noteHint = extractNoteSearchHint(candidate.notes);
+  const queries = [
+    buildQuery([candidate.producer, candidate.label, candidate.region, candidate.vintage]),
+    buildQuery([candidate.rawText, candidate.region, candidate.vintage]),
+    buildQuery([candidate.producer, candidate.label, noteHint]),
+    buildQuery([candidate.label, candidate.region, noteHint, candidate.vintage]),
+    buildQuery([candidate.rawText, noteHint]),
+  ].filter((query): query is string => Boolean(query));
+
+  return [...new Set(queries)].slice(0, 4);
+}
 
 /** Map a Vivino structure value to our 1–5 int scale. */
 function vivinoStructureToScale(value: number | null | undefined): number | undefined {
@@ -479,29 +558,46 @@ class VivinoDirectProvider implements WineProfileProvider {
       return null;
     }
 
-    const query = [candidate.producer, candidate.label, candidate.region, candidate.vintage]
-      .filter(Boolean)
-      .join(" ");
-    console.log("[vivino-direct] Searching for: %s", query);
+    if (isAnonymousStyleListingCandidate(candidate)) {
+      return null;
+    }
 
-    // Step 1: Search by name via browser
-    const hits = await this.searchByName(query);
-    if (!hits.length) {
+    const queries = buildVivinoSearchQueries(candidate);
+    console.log("[vivino-direct] Searching with %d query variant(s): %s", queries.length, queries.join(" || "));
+
+    const hitsByWineId = new Map<number, { hit: SearchHit; score: number }>();
+    for (const query of queries) {
+      const hits = await this.searchByName(query);
+      for (const hit of hits) {
+        const score = scoreWineMatch(candidate, {
+          producer: hit.wineryName,
+          label: hit.wineName,
+          vintage: hit.year,
+          varietal: null,
+          region: hit.regionAndCountry,
+        });
+        const existing = hitsByWineId.get(hit.wineId);
+        if (!existing || score > existing.score) {
+          hitsByWineId.set(hit.wineId, { hit, score });
+        }
+      }
+
+      const bestSoFar = [...hitsByWineId.values()].reduce(
+        (best, current) => (current.score > best ? current.score : best),
+        0,
+      );
+      if (bestSoFar >= 0.72) {
+        break;
+      }
+    }
+
+    if (!hitsByWineId.size) {
       console.log("[vivino-direct] No results from browser search");
       return null;
     }
 
     // Step 2: Score all hits and pick the best match
-    const scored = hits.map((hit) => ({
-      hit,
-      score: scoreWineMatch(candidate, {
-        producer: hit.wineryName,
-        label: hit.wineName,
-        vintage: hit.year,
-        varietal: null,
-        region: hit.regionAndCountry,
-      }),
-    }));
+    const scored = [...hitsByWineId.values()].map(({ hit, score }) => ({ hit, score }));
     scored.sort((a, b) => b.score - a.score);
     const { hit: bestHit, score: matchScore } = scored[0]!;
     console.log(
@@ -693,6 +789,14 @@ class RuleBasedInferenceProvider implements WineProfileProvider {
   detail = "Always available local inference from extracted wine metadata.";
 
   async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
+    if (isAnonymousStyleListingCandidate(candidate)) {
+      return null;
+    }
+
+    if (candidate.extractionConfidence < MIN_CONFIDENCE_FOR_RULE_BASED_INFERENCE) {
+      return null;
+    }
+
     const result = buildProfile(this.name, candidate, {}, "inferred", 0.45);
     return {
       ...result,

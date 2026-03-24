@@ -15,7 +15,7 @@ type LayoutLine = {
   bottom: number;
 };
 
-const pricePattern = /^\$\d+(?:\.\d{2})?$/;
+const pricePattern = /^\$?\d{1,3}(?:\.\d{2})?$/;
 const ignoredWords = new Set(["sold", "out", "seal"]);
 const inlineMenuPricePattern =
   /(?:NA|\$?\d+(?:\.\d{2})?)(?:\s*\/\s*(?:NA|\$?\d+(?:\.\d{2})?)){1,2}\s*$/i;
@@ -29,6 +29,12 @@ function parseInteger(value: string): number {
 
 function isIgnoredWord(text: string): boolean {
   return ignoredWords.has(text.toLowerCase());
+}
+
+function isLikelyPriceWord(text: string): boolean {
+  if (!pricePattern.test(text.trim())) return false;
+  const amount = Number(text.trim().replace(/^\$/, ""));
+  return Number.isFinite(amount) && amount >= 5 && amount <= 400;
 }
 
 function lineText(words: TesseractWord[]): string {
@@ -64,17 +70,28 @@ function lineLooksLikeTitleContent(text: string): boolean {
 
 function lineLooksLikeInlineMenuRow(text: string): boolean {
   const match = text.match(inlineMenuPricePattern);
-  if (!match) return false;
+  if (match) {
+    const priceBlob = match[0] ?? "";
+    const slashCount = (priceBlob.match(/\//g) ?? []).length;
+    const isMultiPriceRow = slashCount >= 2 || /\bNA\b/i.test(priceBlob);
+    if (!isMultiPriceRow) return false;
 
-  const priceBlob = match[0] ?? "";
-  const slashCount = (priceBlob.match(/\//g) ?? []).length;
-  const isMultiPriceRow = slashCount >= 2 || /\bNA\b/i.test(priceBlob);
-  if (!isMultiPriceRow) return false;
+    const title = text.replace(inlineMenuPricePattern, "").trim().replace(/[:\s]+$/, "");
+    if (!title || !/[A-Za-z]/.test(title)) return false;
 
-  const title = text.replace(inlineMenuPricePattern, "").trim().replace(/[:\s]+$/, "");
-  if (!title || !/[A-Za-z]/.test(title)) return false;
+    return title.includes(",") || title.includes(":");
+  }
 
-  return title.includes(",") || title.includes(":");
+  const barePriceMatch = text.match(/^(.*\S)\s+(\d{1,3}(?:\.\d{2})?)\s*$/);
+  if (!barePriceMatch || !isLikelyPriceWord(barePriceMatch[2] ?? "")) {
+    return false;
+  }
+
+  const title = barePriceMatch[1]?.trim().replace(/[:\s]+$/g, "") ?? "";
+  const alphaWords = title.match(/[A-Za-z]{2,}/g) ?? [];
+  if (alphaWords.length < 2) return false;
+
+  return true;
 }
 
 function lineLooksLikeMenuSection(text: string): boolean {
@@ -85,7 +102,10 @@ function shouldPreferPlainText(lines: LayoutLine[]): boolean {
   const texts = lines.map((line) => lineText(line.words));
   const menuRows = texts.filter((text) => lineLooksLikeInlineMenuRow(text)).length;
   const sections = texts.filter((text) => lineLooksLikeMenuSection(text)).length;
-  return menuRows >= 4 && sections >= 1;
+  if (menuRows >= 2 && sections === 0) {
+    return true;
+  }
+  return menuRows >= 4;
 }
 
 function findColumnIndex(word: TesseractWord, columnStarts: number[]): number {
@@ -122,13 +142,13 @@ export function buildLayoutAwareTextFromTsv(tsv: string): string {
 
     const bandIndexes = [index];
     const firstLine = lines[index]!;
-    let totalPrices = firstLine.words.filter((word) => pricePattern.test(word.text)).length;
+    let totalPrices = firstLine.words.filter((word) => isLikelyPriceWord(word.text)).length;
     let cursor = index + 1;
 
     while (cursor < lines.length) {
       const previous = lines[cursor - 1]!;
       const next = lines[cursor]!;
-      const nextPrices = next.words.filter((word) => pricePattern.test(word.text)).length;
+      const nextPrices = next.words.filter((word) => isLikelyPriceWord(word.text)).length;
       if (nextPrices === 0 || next.top - previous.bottom > 85) {
         break;
       }
@@ -143,10 +163,10 @@ export function buildLayoutAwareTextFromTsv(tsv: string): string {
     }
 
     const bandLines = bandIndexes.map((bandIndex) => lines[bandIndex]!);
-    const priceWords = bandLines
-      .flatMap((line) => line.words)
-      .filter((word) => pricePattern.test(word.text))
-      .sort((left, right) => left.left - right.left);
+      const priceWords = bandLines
+        .flatMap((line) => line.words)
+        .filter((word) => isLikelyPriceWord(word.text))
+        .sort((left, right) => left.left - right.left);
 
     if (priceWords.length < 2) {
       continue;
@@ -183,7 +203,7 @@ export function buildLayoutAwareTextFromTsv(tsv: string): string {
     for (const lineIndex of sourceLineIndexes) {
       const wordsByColumn = priceWords.map(() => [] as TesseractWord[]);
       for (const word of lines[lineIndex]!.words) {
-        if (pricePattern.test(word.text) || isIgnoredWord(word.text)) {
+        if (isLikelyPriceWord(word.text) || isIgnoredWord(word.text)) {
           continue;
         }
 
@@ -228,7 +248,7 @@ function groupLinesFromTsv(tsv: string): LayoutLine[] {
     if (level !== "5" || !text) continue;
 
     const conf = parseInteger(columns[10] ?? "");
-    if (conf < 20 && !pricePattern.test(text)) continue;
+    if (conf < 20 && !isLikelyPriceWord(text)) continue;
 
     const lineKey = [columns[1], columns[2], columns[3], columns[4]].join(":");
     const word: TesseractWord = {

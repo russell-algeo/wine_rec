@@ -1401,6 +1401,14 @@ h1 {
   background: rgba(250, 248, 245, 0.92);
 }
 
+.result-card.is-unmatched {
+  border-style: dashed;
+  border-color: rgba(12, 105, 154, 0.26);
+  background:
+    linear-gradient(180deg, rgba(12, 105, 154, 0.04), rgba(255, 255, 255, 0.96)),
+    var(--card);
+}
+
 .result-card-media {
   display: flex;
   align-items: center;
@@ -1431,6 +1439,50 @@ h1 {
   margin: 0.85rem 0 0;
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.parsed-entry-block {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(12, 105, 154, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(12, 105, 154, 0.05);
+}
+
+.parsed-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.7rem;
+}
+
+.parsed-entry-item {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.parsed-entry-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.parsed-entry-value {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.96rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.parsed-entry-notes {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.94rem;
+  line-height: 1.5;
 }
 
 /* ── Tasting notes ── */

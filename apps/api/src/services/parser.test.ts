@@ -220,6 +220,120 @@ describe("wine parser", () => {
     expect(candidates[19]?.color).toBe("sparkling");
   });
 
+  it("parses photographed menu rows with bare numeric bottle prices", () => {
+    const extractedText = [
+      "ORANGE",
+      "wonderwerk - montepulciano 'marinara' 2023 74",
+      "Contra Costa County, California",
+      "",
+      "karatta 'griffin' sparkling shiraz 75",
+      "South Australia",
+      "",
+      "heinrich 'naked white' 72",
+      "Burgenland, Austria",
+    ].join("\n");
+
+    const candidates = parseWineCandidates(extractedText);
+    const normalized = candidates.map((candidate) => ({
+      rawText: canonicalizeText(candidate.rawText),
+      price: candidate.price,
+    }));
+
+    expect(normalized).toEqual([
+      {
+        rawText: canonicalizeText("wonderwerk - montepulciano 'marinara' 2023, contra costa county, california"),
+        price: "$74",
+      },
+      {
+        rawText: canonicalizeText("karatta 'griffin' sparkling shiraz, south australia"),
+        price: "$75",
+      },
+      {
+        rawText: canonicalizeText("heinrich 'naked white', burgenland, austria"),
+        price: "$72",
+      },
+    ]);
+  });
+
+  it("keeps anonymous style-region listings separate and ignores serving metadata rows", () => {
+    const extractedText = [
+      "glass 13 / carafe",
+      "red - saint-chinian, france",
+      "jammy, earthy, dark fruits",
+      "",
+      "chilled red - languedoc-roussillon, france",
+      "bright, herbal",
+      "",
+      "orange - willamette valley, oregon",
+      "aromatic, tannic, structured",
+      "",
+      "white - rhône valley, france",
+      "refreshing, crisp, minerality",
+    ].join("\n");
+
+    const candidates = parseWineCandidates(extractedText);
+
+    expect(candidates.map((candidate) => canonicalizeText(candidate.rawText))).toEqual([
+      canonicalizeText("red - saint-chinian, france"),
+      canonicalizeText("chilled red - languedoc-roussillon, france"),
+      canonicalizeText("orange - willamette valley, oregon"),
+      canonicalizeText("white - rhône valley, france"),
+    ]);
+    expect(candidates[0]?.notes).toContain("jammy");
+    expect(candidates[1]?.notes).toContain("bright");
+    expect(candidates[2]?.notes).toContain("structured");
+    expect(candidates[3]?.notes).toContain("minerality");
+  });
+
+  it("promotes vintage and region continuation lines into the preceding named wine", () => {
+    const extractedText = [
+      "wonderwerk - montepulciano 'marinara'",
+      "2023 contra costa county, california",
+      "",
+      "karatta 'griffin' - sparkling shiraz",
+      "South Australia",
+      "",
+      "heinrich 'naked white'",
+      "Burgenland, Austria",
+    ].join("\n");
+
+    const candidates = parseWineCandidates(extractedText);
+    expect(candidates).toHaveLength(3);
+
+    expect(canonicalizeText(candidates[0]?.rawText ?? "")).toContain(canonicalizeText("wonderwerk"));
+    expect(candidates[0]?.vintage).toBe(2023);
+    expect(canonicalizeText(candidates[0]?.region ?? "")).toBe(canonicalizeText("contra costa county, california"));
+
+    expect(canonicalizeText(candidates[1]?.rawText ?? "")).toContain(canonicalizeText("karatta griffin"));
+    expect(canonicalizeText(candidates[1]?.region ?? "")).toBe(canonicalizeText("south australia"));
+
+    expect(canonicalizeText(candidates[2]?.rawText ?? "")).toContain(canonicalizeText("heinrich naked white"));
+    expect(canonicalizeText(candidates[2]?.region ?? "")).toBe(canonicalizeText("burgenland, austria"));
+  });
+
+  it("drops OCR garbage blocks while keeping plausible photographed menu items", () => {
+    const extractedText = [
+      "fed ed",
+      "% % ices i eo i",
+      "a ea 4",
+      "Karatta ‘griffin’ : grit sparkling shiraz 75",
+      "South australia",
+      "heinrich ‘naked white’ 72",
+      "Burgenland, austria",
+      "NS ano ‘marinara’ SN",
+      "contra costa county, california",
+    ].join("\n");
+
+    const candidates = parseWineCandidates(extractedText);
+    const normalizedNames = candidates.map((candidate) => canonicalizeText(candidate.rawText));
+
+    expect(normalizedNames).not.toContain(canonicalizeText("fed ed"));
+    expect(normalizedNames).not.toContain(canonicalizeText("a ea 4"));
+    expect(normalizedNames.some((name) => name.includes(canonicalizeText("Karatta griffin grit sparkling shiraz")))).toBe(true);
+    expect(normalizedNames.some((name) => name.includes(canonicalizeText("heinrich naked white")))).toBe(true);
+    expect(normalizedNames.some((name) => name.includes(canonicalizeText("marinara")))).toBe(true);
+  });
+
   const integration = hasTesseract ? it : it.skip;
 
   integration("parses the real red-menu screenshot into three wines", async () => {

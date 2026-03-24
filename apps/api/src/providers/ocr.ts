@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import type { Worker as TesseractWorker } from "tesseract.js";
 
 import { appConfig } from "../config.js";
+import { parseWineCandidates } from "../services/parser.js";
+import { prepareImageVariantsForOcr, type OcrImageVariant } from "./image-preprocessing.js";
 import { buildLayoutAwareTextFromTsv } from "./tesseract-layout.js";
 
 export interface OcrProvider {
@@ -63,6 +65,53 @@ function inferTempInputExtension(filename: string, mimeType: string): string {
   return ".png";
 }
 
+function countLikelyPriceSignals(text: string): number {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => /(?:^|[\s:/])\$?\d{1,3}(?:\.\d{2})?\s*$/.test(line)).length;
+}
+
+function lineLooksLikeNoise(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return true;
+  const alphaTokens = trimmed.match(/[A-Za-z]{2,}/g) ?? [];
+  if (alphaTokens.length === 0) return true;
+  const vowelishTokens = alphaTokens.filter((token) => /[aeiouy]/i.test(token));
+  return alphaTokens.length >= 2 && vowelishTokens.length === 0;
+}
+
+function scoreExtractedTextQuality(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return Number.NEGATIVE_INFINITY;
+  const candidates = parseWineCandidates(trimmed);
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const confidenceSum = candidates.reduce((sum, candidate) => sum + candidate.extractionConfidence, 0);
+  const noisePenalty = lines.filter((line) => lineLooksLikeNoise(line)).length * 0.18;
+  const priceSignals = countLikelyPriceSignals(trimmed) * 0.2;
+  return confidenceSum + candidates.length * 0.35 + priceSignals - noisePenalty;
+}
+
+async function buildImageVariants(input: {
+  buffer: Buffer;
+  filename: string;
+  mimeType: string;
+}): Promise<OcrImageVariant[]> {
+  if (input.filename.toLowerCase().endsWith(".txt") || input.mimeType === "application/pdf") {
+    return [
+      {
+        label: "original",
+        buffer: input.buffer,
+        cropped: false,
+        thresholded: false,
+      },
+    ];
+  }
+
+  return prepareImageVariantsForOcr(input.buffer);
+}
+
 class MockOcrProvider implements OcrProvider {
   name = "mock";
   isEnabled = true;
@@ -96,14 +145,23 @@ class OcrSpaceProvider implements OcrProvider {
     }
 
     const bytes = await readInputBuffer(input);
+    const variants = await buildImageVariants({
+      buffer: bytes,
+      filename: input.filename,
+      mimeType: input.mimeType,
+    });
+    const preferredVariant =
+      variants.find((variant) => variant.cropped && !variant.thresholded) ??
+      variants.find((variant) => !variant.thresholded) ??
+      variants[0]!;
     const formData = new FormData();
-    const fileBytes = new Uint8Array(bytes);
+    const fileBytes = new Uint8Array(preferredVariant.buffer);
     formData.set("apikey", appConfig.ocrSpaceApiKey);
     formData.set("language", "eng");
     formData.set("OCREngine", "2");
     formData.set("scale", "true");
     formData.set("isOverlayRequired", "false");
-    formData.set("file", new File([fileBytes], input.filename, { type: input.mimeType }));
+    formData.set("file", new File([fileBytes], input.filename.replace(/\.[^.]+$/, ".png"), { type: "image/png" }));
 
     const response = await fetch("https://api.ocr.space/parse/image", {
       method: "POST",
@@ -156,20 +214,36 @@ class TesseractOcrProvider implements OcrProvider {
       throw new Error("Local Tesseract OCR currently supports image uploads, not PDFs");
     }
 
+    const bytes = await readInputBuffer(input);
+    const variants = await buildImageVariants({
+      buffer: bytes,
+      filename: input.filename,
+      mimeType: input.mimeType,
+    });
     const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), "wine-rec-ocr-"));
-    const outputBase = path.join(outputDir, "ocr-result");
-    const inputPath = input.buffer
-      ? path.join(outputDir, `ocr-input${inferTempInputExtension(input.filename, input.mimeType)}`)
-      : input.storagePath;
 
     try {
-      if (input.buffer) {
-        await fs.writeFile(inputPath, input.buffer);
+      let best:
+        | {
+            score: number;
+            text: string;
+          }
+        | null = null;
+
+      for (const [index, variant] of variants.entries()) {
+        const inputPath = path.join(outputDir, `ocr-input-${index}${inferTempInputExtension(input.filename, input.mimeType)}`);
+        const outputBase = path.join(outputDir, `ocr-result-${index}`);
+        await fs.writeFile(inputPath, variant.buffer);
+        await execFileAsync("tesseract", [inputPath, outputBase, "-l", "eng", "--psm", "6", "tsv"]);
+        const tsv = await fs.readFile(`${outputBase}.tsv`, "utf8");
+        const text = buildLayoutAwareTextFromTsv(tsv).trim();
+        const score = scoreExtractedTextQuality(text);
+        if (!best || score > best.score) {
+          best = { score, text };
+        }
       }
 
-      await execFileAsync("tesseract", [inputPath, outputBase, "-l", "eng", "--psm", "6", "tsv"]);
-      const tsv = await fs.readFile(`${outputBase}.tsv`, "utf8");
-      return buildLayoutAwareTextFromTsv(tsv).trim();
+      return best?.text ?? "";
     } finally {
       await fs.rm(outputDir, { recursive: true, force: true }).catch(() => null);
     }
@@ -218,9 +292,29 @@ class TesseractJsOcrProvider implements OcrProvider {
     }
 
     const bytes = await readInputBuffer(input);
+    const variants = await buildImageVariants({
+      buffer: bytes,
+      filename: input.filename,
+      mimeType: input.mimeType,
+    });
     const worker = await getTesseractJsWorker();
-    const { data } = await worker.recognize(bytes, {}, { tsv: true });
-    return buildLayoutAwareTextFromTsv(data.tsv ?? "").trim();
+    let best:
+      | {
+          score: number;
+          text: string;
+        }
+      | null = null;
+
+    for (const variant of variants) {
+      const { data } = await worker.recognize(variant.buffer, {}, { tsv: true });
+      const text = buildLayoutAwareTextFromTsv(data.tsv ?? "").trim();
+      const score = scoreExtractedTextQuality(text);
+      if (!best || score > best.score) {
+        best = { score, text };
+      }
+    }
+
+    return best?.text ?? "";
   }
 }
 

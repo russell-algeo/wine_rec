@@ -57,6 +57,62 @@ const regionHints = [
   "champagne",
   "mosel",
 ];
+const geographicTailHints = [
+  "france",
+  "italy",
+  "spain",
+  "germany",
+  "austria",
+  "oregon",
+  "california",
+  "australia",
+  "japan",
+  "georgia",
+  "portugal",
+  "argentina",
+  "chile",
+  "new zealand",
+  "south africa",
+  "england",
+  "greece",
+];
+const tastingDescriptorHints = [
+  "jammy",
+  "earthy",
+  "dark",
+  "fruit",
+  "fruits",
+  "citrus",
+  "aromatic",
+  "tannic",
+  "structured",
+  "refreshing",
+  "crisp",
+  "minerality",
+  "mineral",
+  "peach",
+  "skin",
+  "salty",
+  "dry",
+  "hibiscus",
+  "berry",
+  "berries",
+  "cherry",
+  "watermelon",
+  "tangerine",
+  "herbal",
+  "floral",
+];
+const servingMetadataHints = new Set([
+  "glass",
+  "glasses",
+  "carafe",
+  "carafes",
+  "bottle",
+  "bottles",
+  "split",
+  "splits",
+]);
 const sectionColors = new Set(sectionHeaderHints);
 const nonWineHints = [
   "martini",
@@ -86,12 +142,17 @@ const inlinePricePattern =
   /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?(?:\s+[A-Za-z0-9]+)?)\s*$/;
 const inlineMenuPricePattern =
   /^(.*?)(?::\s*|\s+)((?:NA|\$?\d+(?:\.\d{2})?)(?:\s*\/\s*(?:NA|\$?\d+(?:\.\d{2})?)){1,2})\s*$/i;
+const standaloneStyleRegionPattern = /^(chilled\s+red|red|white|orange|sparkling|rose|rosé)\s*[-—:]\s*(.+)$/i;
 const ocrCorrections: Array<[RegExp, string]> = [
   [/\bRhone\b/g, "Rhône"],
   [/\bSchaztel\b/g, "Schäztel"],
   [/Tradicién/g, "Tradición"],
   [/Vino de\}\s+Volta/g, "Vino del Volta"],
 ];
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function detectHint(line: string, hints: string[]): string | null {
   const normalized = line.toLowerCase();
@@ -116,12 +177,159 @@ function sanitizeOcrLine(line: string): string {
   return applyOcrCorrections(withoutSingleLetterBullet);
 }
 
+function dedupeRepeatedSegments(value: string): string {
+  const normalized = value
+    .replace(/[>]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return normalized;
+
+  const duplicatePhraseMatch = normalized.match(/^(.+?)(?:\s*[,;/]\s*|\s+)\1$/i);
+  if (duplicatePhraseMatch) {
+    return duplicatePhraseMatch[1]!.trim();
+  }
+
+  const segments = normalized
+    .split(/\s*,\s*/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length < 2) return normalized;
+
+  const deduped: string[] = [];
+  for (const segment of segments) {
+    if (deduped[deduped.length - 1]?.toLowerCase() === segment.toLowerCase()) {
+      continue;
+    }
+    deduped.push(segment);
+  }
+
+  return deduped.join(", ");
+}
+
 /**
  * Strips trailing annotation markers (*, †, etc.) from a string.
  * These appear on wine menus to flag organic, vegan, natural items.
  */
 function stripAnnotationMarkers(text: string): string {
   return text.replace(/\s*[*†‡§¶#]+\s*$/, "").trim();
+}
+
+function cleanRegionText(value: string): string {
+  let cleaned = dedupeRepeatedSegments(stripAnnotationMarkers(applyOcrCorrections(value)))
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return cleaned;
+
+  const geographicTailPattern = new RegExp(
+    `^(.*?\\b(?:${geographicTailHints.map(escapeRegex).join("|")}))(?:\\b.*)?$`,
+    "i",
+  );
+  const geographicTailMatch = cleaned.match(geographicTailPattern);
+  if (geographicTailMatch?.[1]) {
+    cleaned = geographicTailMatch[1].trim();
+  }
+
+  return cleaned.replace(/[,:;/-]+$/g, "").trim();
+}
+
+function canonicalizeStyleListingColor(style: string): string {
+  const normalized = style.trim().toLowerCase();
+  if (normalized.includes("red")) return "red";
+  if (normalized.includes("white")) return "white";
+  if (normalized.includes("orange")) return "orange";
+  if (normalized.includes("sparkling")) return "sparkling";
+  if (normalized.includes("rose")) return "rose";
+  if (normalized.includes("rosé")) return "rosé";
+  return normalized;
+}
+
+function parseStandaloneStyleRegionLine(
+  line: string,
+): { style: string; color: string; region: string } | null {
+  const normalizedLine = applyOcrCorrections(stripAnnotationMarkers(line))
+    .replace(/[>]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const match = normalizedLine.match(standaloneStyleRegionPattern);
+  if (!match) return null;
+
+  const style = match[1]?.trim().toLowerCase() ?? "";
+  const region = cleanRegionText(match[2] ?? "");
+  if (!style || !region || !/[A-Za-z]/.test(region)) return null;
+
+  return {
+    style,
+    color: canonicalizeStyleListingColor(style),
+    region,
+  };
+}
+
+function looksLikeServingMetadataLine(line: string): boolean {
+  const normalized = normalizeQualityText(line).toLowerCase();
+  if (!normalized) return false;
+  if (parseStandaloneStyleRegionLine(line)) return false;
+  if (/[‘'“"]/.test(line) || vintagePattern.test(line) || /\s+-\s+/.test(line)) return false;
+
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (!tokens.some((token) => servingMetadataHints.has(token))) return false;
+
+  const nonServingTokens = tokens.filter(
+    (token) => !servingMetadataHints.has(token) && !/^\d{1,3}(?:\.\d{2})?$/.test(token),
+  );
+  return nonServingTokens.length <= 1;
+}
+
+function extractStructuredContinuation(
+  line: string,
+): { vintage: number | null; region: string | null } | null {
+  const normalizedLine = applyOcrCorrections(stripAnnotationMarkers(line))
+    .replace(/[>]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalizedLine) return null;
+  if (parseStandaloneStyleRegionLine(normalizedLine) || looksLikeServingMetadataLine(normalizedLine)) {
+    return null;
+  }
+  if (/[‘'“"][^’'"”]+[’'"”]/.test(normalizedLine) || /\s+-\s+/.test(normalizedLine)) {
+    return null;
+  }
+  if (/\/\s*\$?\d+(?:\.\d{2})?\b/.test(normalizedLine)) {
+    return null;
+  }
+
+  let remainder = normalizedLine;
+  let vintage: number | null = null;
+  const leadingVintageMatch = remainder.match(/^(19|20)\d{2}\b/);
+  if (leadingVintageMatch?.[0]) {
+    vintage = Number(leadingVintageMatch[0]);
+    remainder = remainder.slice(leadingVintageMatch[0].length).trim().replace(/^[-,:]\s*/, "");
+  }
+
+  const normalizedRemainder = normalizeQualityText(remainder).toLowerCase();
+  const alphaTokens = extractAlphaTokens(normalizedRemainder);
+  if (alphaTokens.length < 2 || alphaTokens.length > 10) return null;
+
+  const descriptorHits = tastingDescriptorHints.filter((hint) => normalizedRemainder.includes(hint)).length;
+  const hasGeographicTail = geographicTailHints.some((hint) =>
+    new RegExp(`\\b${escapeRegex(hint)}\\b`, "i").test(normalizedRemainder),
+  );
+  const looksDelimitedLikeRegion = normalizedLine.includes(",");
+  if (!vintage && !hasGeographicTail) return null;
+  const titleLikeWords = normalizedLine
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((word) => /^\p{Lu}[\p{L}'’.-]+$/u.test(normalizeTitleWord(word))).length;
+  if (!vintage && alphaTokens.length >= 4 && titleLikeWords >= 3 && !looksDelimitedLikeRegion) return null;
+  if (descriptorHits >= 2 && !hasGeographicTail) return null;
+
+  const region = cleanRegionText(remainder);
+  if (!region && vintage === null) return null;
+
+  return {
+    vintage,
+    region: region || null,
+  };
 }
 
 /**
@@ -193,15 +401,192 @@ function applyOcrCorrections(line: string): string {
   }, line);
 }
 
+function clampUnitInterval(value: number): number {
+  return Math.max(0, Math.min(0.99, Number(value.toFixed(2))));
+}
+
+function normalizeQualityText(value: string | null | undefined): string {
+  return (value ?? "")
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .replace(/[‘’'“”"]/g, " ")
+    .replace(/[^A-Za-z0-9\s,.:/&+-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractAlphaTokens(value: string | null | undefined): string[] {
+  return normalizeQualityText(value)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => /[a-z]/.test(token));
+}
+
+function hasLikelyPriceToken(value: string): boolean {
+  const normalized = value.trim().replace(/^\$/, "");
+  if (!/^\d{1,3}(?:\.\d{2})?$/.test(normalized)) return false;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) && amount >= 5 && amount <= 400;
+}
+
+function formatPriceToken(value: string): string {
+  const normalized = value.trim().replace(/^\$/, "");
+  if (!/^\d+(?:\.\d{2})?$/.test(normalized)) {
+    return value.startsWith("$") ? value : `$${value}`;
+  }
+
+  const amount = Number(normalized);
+  if (!Number.isFinite(amount)) {
+    return value.startsWith("$") ? value : `$${value}`;
+  }
+
+  return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
+}
+
+function endsWithBarePrice(value: string): boolean {
+  const match = value.match(/(\d{1,3}(?:\.\d{2})?)\s*$/);
+  return hasLikelyPriceToken(match?.[1] ?? "");
+}
+
+function scoreTextQuality(value: string | null | undefined): number {
+  const normalized = normalizeQualityText(value);
+  if (!normalized) return 0;
+
+  const compact = normalized.replace(/\s+/g, "");
+  const alphaChars = (normalized.match(/[A-Za-z]/g) ?? []).length;
+  const tokens = extractAlphaTokens(normalized);
+  if (tokens.length === 0) return 0;
+
+  const strongTokens = tokens.filter((token) => token.length >= 3);
+  const longTokens = tokens.filter((token) => token.length >= 5);
+  const vowelishTokens = tokens.filter((token) => /[aeiouy]/.test(token));
+  const shortTokens = tokens.filter((token) => token.length <= 2);
+  const repeatedTokens = tokens.filter((token) => /^(.)\1+$/u.test(token));
+  const consonantNoiseTokens = tokens.filter((token) => !/[aeiouy]/.test(token) && token.length <= 3);
+
+  let score = (alphaChars / Math.max(1, compact.length)) * 0.35;
+  score += strongTokens.length >= 2 ? 0.25 : strongTokens.length === 1 ? 0.12 : 0;
+  score += longTokens.length > 0 ? 0.08 : 0;
+  score += vowelishTokens.length >= Math.min(2, tokens.length) ? 0.12 : 0;
+  score += /[‘’'“”"]/.test(value ?? "") ? 0.08 : 0;
+  score += /,| - |:/.test(value ?? "") ? 0.05 : 0;
+
+  if (shortTokens.length > 0) {
+    score -= Math.min(0.14, (shortTokens.length / tokens.length) * 0.14);
+  }
+  if (repeatedTokens.length > 0) {
+    score -= Math.min(0.14, (repeatedTokens.length / tokens.length) * 0.14);
+  }
+  if (consonantNoiseTokens.length > 0 && vowelishTokens.length === 0) {
+    score -= 0.18;
+  }
+
+  return clampUnitInterval(score);
+}
+
+function scoreNotesQuality(value: string | null | undefined): number {
+  const normalized = normalizeQualityText(value).toLowerCase();
+  if (!normalized) return 0;
+
+  let score = scoreTextQuality(normalized) * 0.8;
+  if (normalized.includes(",")) score += 0.05;
+  if (detectHint(normalized, varietalHints)) score += 0.08;
+  if (detectHint(normalized, regionHints)) score += 0.08;
+  if (colorHints.some((hint) => normalized.includes(hint))) score += 0.05;
+  if (vintagePattern.test(normalized)) score += 0.04;
+  return clampUnitInterval(score);
+}
+
+function computeExtractionConfidence(input: {
+  title: string;
+  label: string | null;
+  region: string | null;
+  price: string | null;
+  varietal: string | null;
+  notes: string | null;
+  color: string | null;
+  vintage: number | null;
+}): number {
+  const titleQuality = scoreTextQuality(input.title);
+  const labelQuality = scoreTextQuality(input.label);
+  const regionQuality = scoreTextQuality(input.region);
+  const notesQuality = scoreNotesQuality(input.notes);
+  const signalCount = [
+    labelQuality >= 0.4,
+    regionQuality >= 0.4,
+    Boolean(input.price),
+    Boolean(input.varietal),
+    Boolean(input.color),
+    Boolean(input.vintage),
+    notesQuality >= 0.45,
+  ].filter(Boolean).length;
+
+  let score =
+    titleQuality * 0.42 +
+    labelQuality * 0.12 +
+    regionQuality * 0.1 +
+    notesQuality * 0.18 +
+    Math.min(signalCount, 4) * 0.05;
+
+  if (input.price) score += 0.08;
+  if (input.varietal) score += 0.06;
+  if (input.vintage) score += 0.05;
+  if (input.color) score += 0.03;
+
+  if (titleQuality < 0.32 && notesQuality < 0.28 && signalCount < 2) {
+    score -= 0.25;
+  }
+
+  return clampUnitInterval(score);
+}
+
+function shouldRejectCandidate(input: {
+  title: string;
+  notes: string | null;
+  confidence: number;
+  label: string | null;
+  region: string | null;
+  price: string | null;
+  varietal: string | null;
+  color: string | null;
+  vintage: number | null;
+}): boolean {
+  const titleQuality = scoreTextQuality(input.title);
+  const notesQuality = scoreNotesQuality(input.notes);
+  const signalCount = [
+    scoreTextQuality(input.label) >= 0.4,
+    scoreTextQuality(input.region) >= 0.4,
+    Boolean(input.price),
+    Boolean(input.varietal),
+    Boolean(input.color),
+    Boolean(input.vintage),
+    notesQuality >= 0.45,
+  ].filter(Boolean).length;
+
+  if (titleQuality < 0.28 && notesQuality < 0.3 && signalCount < 2) {
+    return true;
+  }
+
+  return input.confidence < 0.55;
+}
+
 function extractInlinePrice(line: string): { title: string; price: string | null } {
   const match = line.match(inlinePricePattern);
   if (!match) {
-    return { title: line.trim(), price: null };
+    const barePriceMatch = line.match(/^(.*\S)\s+(\d{1,3}(?:\.\d{2})?)\s*$/);
+    if (!barePriceMatch || !hasLikelyPriceToken(barePriceMatch[2] ?? "")) {
+      return { title: line.trim(), price: null };
+    }
+
+    return {
+      title: barePriceMatch[1]?.trim() ?? line.trim(),
+      price: formatPriceToken(barePriceMatch[2] ?? ""),
+    };
   }
 
   return {
     title: match[1]?.trim() ?? line.trim(),
-    price: `$${match[2]}`,
+    price: formatPriceToken(match[2] ?? ""),
   };
 }
 
@@ -218,7 +603,21 @@ function extractInlineMenuPrice(line: string): { title: string; price: string | 
     return null;
   }
   if (!usesExplicitMenuSeparator) {
-    return null;
+    const barePriceMatch = line.match(/^(.*\S)\s+(\d{1,3}(?:\.\d{2})?)\s*$/);
+    if (!barePriceMatch || !hasLikelyPriceToken(barePriceMatch[2] ?? "")) {
+      return null;
+    }
+
+    const bareTitle = barePriceMatch[1]?.trim().replace(/[:\s]+$/g, "") ?? "";
+    const alphaTokens = extractAlphaTokens(bareTitle).filter((token) => token.length >= 2);
+    if (alphaTokens.length < 2) {
+      return null;
+    }
+
+    return {
+      title: bareTitle,
+      price: formatPriceToken(barePriceMatch[2] ?? ""),
+    };
   }
 
   const numericPrices = priceBlob
@@ -230,13 +629,14 @@ function extractInlineMenuPrice(line: string): { title: string; price: string | 
 
   return {
     title,
-    price: numericPrices.length > 0 ? `$${Math.max(...numericPrices)}` : null,
+    price: numericPrices.length > 0 ? formatPriceToken(String(Math.max(...numericPrices))) : null,
   };
 }
 
 export function isNonWineLine(line: string): boolean {
   // Single-letter / single-letter column headers like "G / B" (glass/bottle indicators)
   if (/^[A-Za-z]\s*\/\s*[A-Za-z]$/.test(line.trim())) return true;
+  if (looksLikeServingMetadataLine(line)) return true;
   const normalized = line
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -322,7 +722,11 @@ function isSectionHeader(line: string): boolean {
 }
 
 function isPriceLine(line: string): boolean {
-  return /^\$\d+(?:\.\d{2})?$/.test(line) || /^\d+\s*\/\s*\d+$/.test(line);
+  return (
+    /^\$\d+(?:\.\d{2})?$/.test(line) ||
+    /^\d+\s*\/\s*\d+$/.test(line) ||
+    hasLikelyPriceToken(line)
+  );
 }
 
 function normalizePriceLine(line: string): string {
@@ -330,6 +734,7 @@ function normalizePriceLine(line: string): string {
   // "18 / 72" glass/bottle — take the bottle (larger) price
   const parts = line.match(/^(\d+)\s*\/\s*(\d+)$/);
   if (parts) return `$${parts[2]}`;
+  if (hasLikelyPriceToken(line)) return formatPriceToken(line);
   return line;
 }
 
@@ -356,6 +761,8 @@ function looksLikeVarietalFragment(line: string): boolean {
 }
 
 function looksLikeTitleContinuation(line: string): boolean {
+  if (parseStandaloneStyleRegionLine(line)) return false;
+  if (extractStructuredContinuation(line)) return false;
   if (vintagePattern.test(line)) return false;
   if (/^(NV|N\.V\.)\b/i.test(line)) return false;
   if (/[‘'“"][^’'"”]+[’'"”]/.test(line)) return false;
@@ -389,6 +796,13 @@ function looksLikeTitleContinuation(line: string): boolean {
 }
 
 export function looksLikeTitleLine(line: string): boolean {
+  if (looksLikeServingMetadataLine(line)) return false;
+  if (extractStructuredContinuation(line)) return false;
+  const barePriceMatch = line.match(/^(.*\S)\s+(\d{1,3}(?:\.\d{2})?)\s*$/);
+  if (barePriceMatch && hasLikelyPriceToken(barePriceMatch[2] ?? "")) {
+    const alphaWords = extractAlphaTokens(barePriceMatch[1]).filter((token) => token.length >= 2);
+    if (alphaWords.length >= 2) return true;
+  }
   if (vintagePattern.test(line)) return true;
   if (abbreviatedVintagePattern.test(line)) return true;
   if (/^(NV|N\.V\.)\b/i.test(line)) return true;
@@ -417,6 +831,10 @@ export function parseBlock(
   while (lines[noteStartIndex]) {
     const nextLine = lines[noteStartIndex]!;
     const currentTitle = titleLines[titleLines.length - 1] ?? "";
+
+    if (endsWithBarePrice(currentTitle)) {
+      break;
+    }
 
     if ((currentTitle.endsWith("-") || currentTitle.endsWith("—")) && looksLikeRegionLine(nextLine)) {
       titleLines.push(nextLine);
@@ -447,9 +865,10 @@ export function parseBlock(
     applyOcrCorrections((inlineMenuPrice?.title ?? titleForParsing).replace(/\s+-\s+/, " - ")),
   );
   const normalizedTitle = priceStrippedTitle;
+  const styleRegionListing = parseStandaloneStyleRegionLine(normalizedTitle);
   const vintageMatch = normalizedTitle.match(vintagePattern);
   const abbrVintageMatch = !vintageMatch ? normalizedTitle.match(abbreviatedVintagePattern) : null;
-  const vintage = vintageMatch
+  let vintage = vintageMatch
     ? Number(vintageMatch[0])
     : abbrVintageMatch
       ? (() => {
@@ -460,7 +879,20 @@ export function parseBlock(
   const splitTitle = normalizedTitle.split(/\s+-\s+/);
   const leftTitle = splitTitle[0] ?? normalizedTitle;
   const rightTitle = splitTitle[1]?.trim() ?? null;
-  const { producer, label } = inferProducerAndLabel(leftTitle, vintage);
+  const rightTitleLooksLikeLabel = Boolean(
+    rightTitle &&
+      (/[‘'“"][^’'"”]+[’'"”]/.test(rightTitle) ||
+        vintagePattern.test(rightTitle) ||
+        abbreviatedVintagePattern.test(rightTitle) ||
+        detectHint(rightTitle, varietalHints)),
+  );
+  const titleForIdentity = rightTitleLooksLikeLabel ? `${leftTitle} ${rightTitle}`.trim() : leftTitle;
+  const identity =
+    styleRegionListing
+      ? { producer: null, label: styleRegionListing.style }
+      : inferProducerAndLabel(titleForIdentity, vintage);
+  const producer = identity.producer;
+  const label = identity.label;
 
   // When pipeData is null, OCR may have delivered the pipe-delimited segments as separate
   // lines (trailing "|" stripped by sanitizeOcrLine). Detect "Varietal" + "Region Price"
@@ -468,6 +900,7 @@ export function parseBlock(
   let syntheticVarietal: string | null = null;
   let syntheticRegion: string | null = null;
   let syntheticPrice: string | null = null;
+  let promotedRegion: string | null = null;
   let adjustedNoteStart = noteStartIndex;
 
   if (!pipeData && lines.length > noteStartIndex) {
@@ -489,8 +922,38 @@ export function parseBlock(
     }
   }
 
+  if (!pipeData && !styleRegionListing) {
+    while (lines[adjustedNoteStart]) {
+      const structuredContinuation = extractStructuredContinuation(lines[adjustedNoteStart]!);
+      if (!structuredContinuation) {
+        break;
+      }
+
+      let consumed = false;
+      if (structuredContinuation.vintage != null && vintage == null) {
+        vintage = structuredContinuation.vintage;
+        consumed = true;
+      }
+      if (structuredContinuation.region && !syntheticRegion && !promotedRegion) {
+        promotedRegion = structuredContinuation.region;
+        consumed = true;
+      }
+
+      if (!consumed) {
+        break;
+      }
+
+      adjustedNoteStart += 1;
+    }
+  }
+
   const effectiveVarietal = pipeData?.varietal ?? syntheticVarietal;
-  const effectiveRegion = pipeData?.region ?? syntheticRegion ?? rightTitle;
+  const effectiveRegion =
+    styleRegionListing?.region ??
+    pipeData?.region ??
+    syntheticRegion ??
+    promotedRegion ??
+    (rightTitleLooksLikeLabel ? null : rightTitle);
   const effectivePrice = pipeData?.price ?? syntheticPrice ?? inlineMenuPrice?.price;
 
   const varietal = effectiveVarietal?.toLowerCase() ?? detectHint(`${normalizedTitle} ${lines.slice(noteStartIndex).join(" ")}`, varietalHints);
@@ -505,7 +968,37 @@ export function parseBlock(
     effectiveVarietal,
     effectiveRegion,
   ].filter(Boolean);
-  const rawText = rawTextParts.length > 1 ? rawTextParts.join(", ") : (pipeData ? pipeData.name : normalizedTitle);
+  const rawText = styleRegionListing
+    ? `${styleRegionListing.style} - ${styleRegionListing.region}`
+    : rawTextParts.length > 1
+      ? rawTextParts.join(", ")
+      : (pipeData ? pipeData.name : normalizedTitle);
+  const extractionConfidence = computeExtractionConfidence({
+    title: normalizedTitle,
+    label,
+    region,
+    price: price ?? effectivePrice ?? inlinePrice,
+    varietal,
+    notes,
+    color: styleRegionListing?.color ?? color,
+    vintage,
+  });
+
+  if (
+    shouldRejectCandidate({
+      title: normalizedTitle,
+      notes,
+      confidence: extractionConfidence,
+      label,
+      region,
+      price: price ?? effectivePrice ?? inlinePrice,
+      varietal,
+      color: styleRegionListing?.color ?? color,
+      vintage,
+    })
+  ) {
+    return null;
+  }
 
   return {
     id: nanoid(),
@@ -517,11 +1010,11 @@ export function parseBlock(
     producer,
     label,
     vintage,
-    color,
+    color: styleRegionListing?.color ?? color,
     varietal,
     region,
     notes,
-    extractionConfidence: region || label ? 0.88 : 0.72,
+    extractionConfidence,
   } satisfies WineCandidate;
 }
 
@@ -624,7 +1117,7 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
   });
 
   flushBlock();
-  return candidates.filter((candidate) => candidate.extractionConfidence >= 0.5);
+  return candidates.filter((candidate) => candidate.extractionConfidence >= 0.55);
 }
 
 export function buildCandidateFromItem(item: {

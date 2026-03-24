@@ -9,6 +9,7 @@ import {
   pickVivinoAggregateRating,
 } from "./vivino-browser.js";
 import {
+  buildVivinoSearchQueries,
   createWineProfileProviders,
   extractVivinoImageUrlFromHtml,
   extractTastingNoteGroups,
@@ -94,6 +95,57 @@ describe("wine profile providers", () => {
     expect(result?.profile.taste.acidity).toBeLessThanOrEqual(5);
     expect(result?.profile.taste.tannin).toBeLessThanOrEqual(5);
     expect(result?.profile.taste.sweetness).toBeLessThanOrEqual(5);
+  });
+
+  it("skips rule-based inference for low-confidence OCR candidates", async () => {
+    const provider = createWineProfileProviders().find((entry) => entry.name === "rule-based");
+    if (!provider) {
+      throw new Error("rule-based provider is not registered");
+    }
+
+    const candidate: WineCandidate = {
+      id: "candidate-low-quality",
+      rawText: "fed ed",
+      price: null,
+      menuTab: null,
+      menuSection: null,
+      lineNumber: 0,
+      producer: "fed ed",
+      label: null,
+      vintage: null,
+      color: null,
+      varietal: null,
+      region: null,
+      notes: "% % ices i eo i",
+      extractionConfidence: 0.42,
+    };
+
+    await expect(provider.lookup(candidate)).resolves.toBeNull();
+  });
+
+  it("builds cleaned Vivino search variants for noisy photographed-menu candidates", () => {
+    const queries = buildVivinoSearchQueries({
+      id: "candidate-marinara",
+      rawText: "NS ano 'marinara' SN",
+      price: "$74",
+      menuTab: null,
+      menuSection: null,
+      lineNumber: 0,
+      producer: "NS ano",
+      label: "marinara SN",
+      vintage: 2023,
+      color: "orange",
+      varietal: "montepulciano",
+      region: null,
+      notes: "contra costa county california fresh red fruit",
+      extractionConfidence: 0.82,
+    });
+
+    expect(queries.length).toBeGreaterThan(0);
+    expect(queries.some((query) => query.includes("marinara"))).toBe(true);
+    expect(queries.some((query) => query.includes("contra costa"))).toBe(true);
+    expect(queries.some((query) => query.includes("75"))).toBe(false);
+    expect(queries.some((query) => /\bsn\b/.test(query))).toBe(false);
   });
 
   it("uses the /reviews endpoint for the top-level rating before falling back to page scraping", async () => {

@@ -380,6 +380,8 @@ export function App() {
   const sortedRecommendations = analysis
     ? sortRecommendations(baseRecommendations, analysis.candidates, resultSortOrder)
     : [];
+  const fallbackRecommendationCount = sortedRecommendations.filter(isFallbackProfileRecommendation).length;
+  const parsedOnlyRecommendationCount = sortedRecommendations.filter((recommendation) => !recommendation.profile).length;
   const inferredRecommendationCount = sortedRecommendations.filter(isInferredRecommendation).length;
   const priceFilterBounds = getPriceFilterBounds(analysis?.candidates ?? []);
   const effectiveMaxPrice = priceFilterBounds ? (maxPriceFilter ?? priceFilterBounds.max) : null;
@@ -1212,10 +1214,10 @@ export function App() {
                         </div>
                       </div>
                     ) : null}
-                    {inferredRecommendationCount ? (
+                    {fallbackRecommendationCount ? (
                       <div className="result-control-group">
                         <span>Taste data</span>
-                        <div aria-label="Filter inferred taste profiles" className="sort-toggle" role="group">
+                        <div aria-label="Filter inferred and unmatched results" className="sort-toggle" role="group">
                           <button
                             className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
                             onClick={() => setResultProfileFilter("all")}
@@ -1233,17 +1235,17 @@ export function App() {
                         </div>
                       </div>
                     ) : null}
-                    {analysis && inferredRecommendationCount ? (
+                    {analysis && fallbackRecommendationCount ? (
                       <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
                         <p className="result-filter-notice-title">
                           {resultProfileFilter === "exclude-inferred"
-                            ? `${inferredRecommendationCount} inferred ${inferredRecommendationCount === 1 ? "profile" : "profiles"} hidden`
-                            : `${inferredRecommendationCount} ${inferredRecommendationCount === 1 ? "wine uses" : "wines use"} estimated taste data`}
+                            ? `${fallbackRecommendationCount} inferred or unmatched ${fallbackRecommendationCount === 1 ? "entry" : "entries"} hidden`
+                            : `${fallbackRecommendationCount} ${fallbackRecommendationCount === 1 ? "entry uses" : "entries use"} estimated or missing profile data`}
                         </p>
                         <p className="helper">
                           {resultProfileFilter === "exclude-inferred"
-                            ? "These wines are excluded because Vivino did not return a reliable match."
-                            : "When we cannot confirm a Vivino match, we infer the taste profile from the extracted wine details and show it with muted bars."}
+                            ? "These rows are excluded because we either could not confirm a reliable Vivino match or could not build a bottle profile at all."
+                            : "When we cannot confirm a reliable Vivino match, we either infer the taste profile from the extracted wine details or show the parsed menu entry without a profile."}
                         </p>
                       </div>
                     ) : null}
@@ -1272,6 +1274,17 @@ export function App() {
                 <p className="helper">
                   {hiddenByPriceCount} wine{hiddenByPriceCount === 1 ? "" : "s"} hidden by the current budget
                   settings.
+                </p>
+              </div>
+            ) : null}
+            {analysis && parsedOnlyRecommendationCount && resultProfileFilter === "all" ? (
+              <div className="result-filter-notice">
+                <p className="result-filter-notice-title">
+                  {parsedOnlyRecommendationCount} parsed menu {parsedOnlyRecommendationCount === 1 ? "entry needs" : "entries need"} review
+                </p>
+                <p className="helper">
+                  These rows are shown below even though no reliable bottle match or taste profile was found.
+                  Use them to assess the OCR/parsing quality and spot entries that still need better extraction.
                 </p>
               </div>
             ) : null}
@@ -1577,7 +1590,89 @@ function AnalysisProgressPanel(props: {
   );
 }
 
+function ParsedMenuEntryCard(props: {
+  recommendation: ResultRecommendation;
+  candidate: ResultCandidate | undefined;
+}) {
+  const { candidate } = props;
+  const menuTitle = candidate?.rawText ?? "Parsed menu entry";
+  const menuContext = formatMenuContext(candidate?.menuTab, candidate?.menuSection);
+  const parseConfidence = candidate ? Math.round(candidate.extractionConfidence * 100) : null;
+  const parsedFields = [
+    ["Type", candidate?.label],
+    ["Producer", candidate?.producer],
+    ["Vintage", candidate?.vintage != null ? String(candidate.vintage) : null],
+    ["Region", candidate?.region],
+    ["Varietal", candidate?.varietal],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  return (
+    <article className="result-card is-unmatched">
+      <div className="result-card-content">
+        <div className="result-head">
+          <div className="result-copy">
+            <div className="wine-name-block">
+              {menuContext ? <p className="menu-context">{menuContext}</p> : null}
+              <h3 className="wine-title">{menuTitle}</h3>
+            </div>
+            <p className="wine-subtitle">Parsed from the menu, but not matched to a bottle</p>
+            <p className="wine-uncertainty">
+              No reliable bottle match or taste profile was found. This entry is still shown so
+              you can review how the menu was parsed.
+            </p>
+          </div>
+          <div className="result-summary">
+            <p className={`price-tag${candidate?.price ? "" : " is-missing"}`}>
+              {candidate?.price ?? "Price unavailable"}
+            </p>
+            <div className="score-badge">
+              <span>Parse</span>
+              <strong>{parseConfidence ?? "?"}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="parsed-entry-block">
+        <div className="taste-profile-heading">
+          <div className="taste-profile-copy">
+            <p className="taste-profile-title">What we parsed from the menu</p>
+          </div>
+          <p className="taste-profile-note">Needs review</p>
+        </div>
+        {parsedFields.length > 0 ? (
+          <div className="parsed-entry-grid">
+            {parsedFields.map(([label, value]) => (
+              <div className="parsed-entry-item" key={label}>
+                <p className="parsed-entry-label">{label}</p>
+                <p className="parsed-entry-value">{value}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {candidate?.notes ? (
+          <p className="parsed-entry-notes">
+            {candidate.notes}
+          </p>
+        ) : parsedFields.length === 0 ? (
+          <p className="parsed-entry-notes">No additional parsed details were recovered.</p>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 function ResultCard(props: {
+  recommendation: ResultRecommendation;
+  candidate: ResultCandidate | undefined;
+}) {
+  if (!props.recommendation.profile) {
+    return <ParsedMenuEntryCard candidate={props.candidate} recommendation={props.recommendation} />;
+  }
+
+  return <MatchedResultCard candidate={props.candidate} recommendation={props.recommendation} />;
+}
+
+function MatchedResultCard(props: {
   recommendation: ResultRecommendation;
   candidate: ResultCandidate | undefined;
 }) {
@@ -1916,6 +2011,10 @@ function isInferredRecommendation(recommendation: ResultRecommendation): boolean
   return recommendation.profile?.taste.sourceMode === "inferred";
 }
 
+function isFallbackProfileRecommendation(recommendation: ResultRecommendation): boolean {
+  return !recommendation.profile || isInferredRecommendation(recommendation);
+}
+
 function filterRecommendationsByProfileSource(
   recommendations: ResultRecommendation[],
   filter: ResultProfileFilter,
@@ -1924,7 +2023,7 @@ function filterRecommendationsByProfileSource(
     return recommendations;
   }
 
-  return recommendations.filter((recommendation) => !isInferredRecommendation(recommendation));
+  return recommendations.filter((recommendation) => !isFallbackProfileRecommendation(recommendation));
 }
 
 function filterRecommendationsByPrice(
