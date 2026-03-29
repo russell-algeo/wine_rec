@@ -20,26 +20,26 @@ rewrites it to the build machine's path, which is wrong in production.
 
 ## Step 1 — Download `eng.traineddata`
 
-Download the tessdata_fast English model (LSTM-only, ~10 MB) into a `tessdata/` directory at the
-repo root. Run this once locally:
+Download the tessdata_fast English model (LSTM-only, ~10 MB) into `main/tessdata/`. Run this once
+locally:
 
 ```bash
-mkdir -p tessdata
+mkdir -p main/tessdata
 curl -L https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata \
-  -o tessdata/eng.traineddata
+  -o main/tessdata/eng.traineddata
 ```
 
-Commit `tessdata/eng.traineddata` to the repo. It is a binary asset that Vercel must bundle with
-the function. Do **not** add it to `.gitignore`.
+Commit `main/tessdata/eng.traineddata` to the repo. It is a binary asset that Vercel must bundle
+with the function. Do **not** add it to `.gitignore`.
 
 ---
 
 ## Step 2 — Install `tesseract.js`
 
-Install into the `@wine-rec/api` workspace (it will be hoisted to the root `node_modules/` by npm):
+Install into the `wine-rec-main` project root:
 
 ```bash
-npm install tesseract.js --workspace @wine-rec/api
+cd main && npm install tesseract.js
 ```
 
 No separate `tesseract.js-core` install is needed — it is a peer dependency that `tesseract.js`
@@ -47,7 +47,7 @@ installs automatically.
 
 ---
 
-## Step 3 — Add `TesseractJsOcrProvider` to `apps/api/src/providers/ocr.ts`
+## Step 3 — Add `TesseractJsOcrProvider` to `main/src/providers/ocr.ts`
 
 Add the following to `ocr.ts`, alongside the existing providers. Key design decisions:
 
@@ -144,7 +144,7 @@ enough but 2048 gives safe headroom for large images.
 ```json
 {
   "buildCommand": "npm run build",
-  "outputDirectory": "apps/web/dist",
+  "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": null,
   "functions": {
@@ -165,7 +165,7 @@ The brace expansion glob includes:
 
 ---
 
-## Step 5 — Update `appConfig` in `apps/api/src/config.ts`
+## Step 5 — Update `appConfig` in `main/src/config.ts`
 
 The `ocrProvider` key already exists as a plain string. No structural change is required — just
 document the new valid value:

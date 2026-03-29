@@ -2,36 +2,39 @@
 
 Wine Rec is an upload-first wine recommendation MVP with:
 
-- a local TypeScript API and worker,
-- a local React web client for debugging and desktop use,
-- an iPhone-first SwiftUI client scaffold.
+- a `main/` project for the API, web client, tests, and deployment bundle,
+- a `worker/` project for chunk-worker deployment,
+- an `ios/` project for the iPhone app,
+- a `shared/` directory for local-only backend state, fixtures, and helper scripts.
 
 The system accepts screenshots, photos, and PDFs, extracts wine candidates, enriches them through pluggable providers, normalizes taste vectors, and ranks wines against user preferences.
 
 ## Workspace
 
 ```text
-apps/
-  api/   Fastify API, worker, SQLite persistence, provider adapters
-  web/   Vite + React local client
-  ios/   SwiftUI source scaffold for the iPhone app
-packages/
-  contracts/ Shared API/domain schemas
-  core/      Matching, inference, and recommendation logic
+main/    Main web + API project and deploy bundle
+worker/  Worker project and deploy bundle
+ios/     SwiftUI source scaffold for the iPhone app
+shared/  Local-only data, uploads, fixtures, and helper scripts
 ```
 
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and add API keys only if you want real OCR.
-2. Install dependencies with `npm install`.
-3. Install the Playwright browser bundle once with `npx playwright install chromium`.
-4. Run `npm run dev`.
+2. Install dependencies in the deploy roots:
+   `cd main && npm install`
+   `cd ../worker && npm install`
+3. Install the Playwright browser bundle once from `main/`:
+   `cd main && npx playwright install chromium`
+4. Start the local services from their project roots:
+   `cd main && npm run dev:api:watch`
+   `cd main && npm run dev:web`
+   `cd worker && npm run worker:watch`
 5. Open the web client at `http://localhost:5173`.
 
+The root `.env` file is shared by both `main/` and `worker/`.
 The default `.env.example` uses mock OCR so the pipeline can run without external services.
 If `tesseract` is installed locally, set `OCR_PROVIDER=tesseract` in `.env` to run real OCR on image uploads.
-`npm run dev` starts the API, web client, and worker together and watches for code changes.
-If you need the old non-watch behavior, use `npm run dev:once`.
 
 ## Running Locally
 
@@ -45,12 +48,12 @@ If you need the old non-watch behavior, use `npm run dev:once`.
 2. Switch the active developer directory:
    `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`
 3. Launch Xcode once and accept the license if prompted.
-4. Open [apps/ios/project.yml](/Users/russellalgeo/Desktop/Side%20Job/wine_rec/apps/ios/project.yml).
+4. Open [ios/project.yml](/Users/russellalgeo/Desktop/Side%20Job/wine_rec/ios/project.yml).
 5. Install `xcodegen` if needed: `brew install xcodegen`
-6. Generate the project: `cd apps/ios && xcodegen generate`
+6. Generate the project: `cd ios && xcodegen generate`
 7. Open `WineRec.xcodeproj` in Xcode and run the `WineRec` scheme.
 
-If you do not want to install `xcodegen`, you can also create a new iOS app in Xcode named `WineRec` and then add the files under [apps/ios/WineRec](/Users/russellalgeo/Desktop/Side%20Job/wine_rec/apps/ios/WineRec).
+If you do not want to install `xcodegen`, you can also create a new iOS app in Xcode named `WineRec` and then add the files under [ios/WineRec](/Users/russellalgeo/Desktop/Side%20Job/wine_rec/ios/WineRec).
 
 ## Provider Strategy
 

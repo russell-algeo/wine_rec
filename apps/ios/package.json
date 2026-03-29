@@ -1,9 +1,0 @@
-{
-  "name": "@wine-rec/ios",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "printf 'Open apps/ios in Xcode after installing full Xcode.\\n'",
-    "typecheck": "printf 'SwiftUI source is scaffolded but cannot be typechecked here without full Xcode.\\n'"
-  }
-}

@@ -1,0 +1,18 @@
+{
+  "framework": null,
+  "installCommand": "npm install",
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/coordinator.ts": {
+      "maxDuration": 300,
+      "includeFiles": "{node_modules/tesseract.js,node_modules/tesseract.js-core,tessdata}/**"
+    },
+    "api/worker-failure.ts": {
+      "maxDuration": 60
+    },
+    "api/**/*.ts": {
+      "maxDuration": 60
+    }
+  }
+}
