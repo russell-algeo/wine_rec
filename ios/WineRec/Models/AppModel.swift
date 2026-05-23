@@ -1,5 +1,7 @@
 import Foundation
 import Observation
+import UniformTypeIdentifiers
+import UIKit
 
 struct AnalysisState {
     let analysisId: String
@@ -10,6 +12,8 @@ struct AnalysisState {
 @Observable
 final class AppModel {
     private static let preferencesStorageKey = "wine-rec-preferences"
+    private static let analysisPollingIntervalSeconds: Double = 1
+    private static let analysisPollingStaleAfterSeconds: TimeInterval = 75
 
     var preferences = UserTastePreference.default
     var loadedPreferences = UserTastePreference.default
@@ -18,15 +22,23 @@ final class AppModel {
     var selectedFileURL: URL?
     var selectedFileName: String?
     var selectedFilePreviewData: Data?
+    var selectedRecognizedText: String?
+    var selectedVisionLineCount: Int?
     var sourceURLText = ""
     var pendingURL: String?
     var urlPreview: URLPreview?
     var providerHealth: [ProviderHealth] = []
     var errorMessage: String?
     var isBusy = false
+    var isRunningVisionOCR = false
+    var pollingPaused = false
+    var pollingStatusMessage: String?
 
     @ObservationIgnored
     private let apiClient = APIClient()
+
+    @ObservationIgnored
+    private let visionOCRService = VisionOCRService()
 
     @ObservationIgnored
     private var pollingTask: Task<Void, Never>?
@@ -35,7 +47,14 @@ final class AppModel {
     private let userDefaults = UserDefaults.standard
 
     var hasPendingSource: Bool {
-        selectedFileURL != nil || pendingURL != nil
+        selectedFileURL != nil || selectedRecognizedText != nil || pendingURL != nil
+    }
+
+    var hasActiveAnalysis: Bool {
+        guard let status = analysis?.status ?? analysisState?.status else {
+            return false
+        }
+        return !status.isTerminal
     }
 
     var isLiveReranking: Bool {
@@ -44,6 +63,26 @@ final class AppModel {
 
     var isFirstTimeUser: Bool {
         preferencesEqual(loadedPreferences, .default)
+    }
+
+    var selectedSourceSubtitle: String {
+        if let selectedRecognizedText, !selectedRecognizedText.isEmpty {
+            let lineCount = selectedVisionLineCount ?? selectedRecognizedText.split(whereSeparator: \.isNewline).count
+            return "Apple Vision OCR ready - \(lineCount) recognized line\(lineCount == 1 ? "" : "s")"
+        }
+
+        return "Ready to analyze"
+    }
+
+    var providerHealthNotice: String? {
+        let degraded = providerHealth.filter { !$0.enabled || $0.availability != .enabled }
+        guard !degraded.isEmpty else {
+            return nil
+        }
+
+        return degraded
+            .map { "\($0.name): \($0.detail)" }
+            .joined(separator: "\n")
     }
 
     deinit {
@@ -67,20 +106,44 @@ final class AppModel {
         }
     }
 
-    func setSelectedPhotoData(_ data: Data) {
+    func importImageData(_ data: Data, filename: String) async {
         do {
+            guard let image = UIImage(data: data) else {
+                errorMessage = "The selected image could not be read."
+                return
+            }
+
+            isBusy = true
+            isRunningVisionOCR = true
+            errorMessage = nil
+
+            let result = try await visionOCRService.recognizeText(in: image)
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString)
                 .appendingPathExtension("jpg")
             try data.write(to: url, options: .atomic)
             clearPendingURL()
             selectedFileURL = url
-            selectedFileName = "Selected photo.jpg"
+            selectedFileName = filename
             selectedFilePreviewData = data
+            selectedRecognizedText = result.recognizedText
+            selectedVisionLineCount = result.lineCount
             errorMessage = nil
         } catch {
-            errorMessage = "Failed to prepare the selected photo."
+            errorMessage = error.localizedDescription
         }
+
+        isRunningVisionOCR = false
+        isBusy = false
+    }
+
+    func importCapturedImage(_ image: UIImage) async {
+        guard let data = image.jpegData(compressionQuality: 0.92) else {
+            errorMessage = "The captured image could not be prepared."
+            return
+        }
+
+        await importImageData(data, filename: "Camera wine list.jpg")
     }
 
     func importDocument(from externalURL: URL) async {
@@ -102,10 +165,18 @@ final class AppModel {
             }
 
             try FileManager.default.copyItem(at: externalURL, to: destination)
+
+            if Self.isImageFile(destination), let data = try? Data(contentsOf: destination) {
+                await importImageData(data, filename: externalURL.lastPathComponent)
+                return
+            }
+
             clearPendingURL()
             selectedFileURL = destination
             selectedFileName = externalURL.lastPathComponent
             selectedFilePreviewData = Self.previewData(for: destination)
+            selectedRecognizedText = nil
+            selectedVisionLineCount = nil
             errorMessage = nil
         } catch {
             errorMessage = "Failed to import the selected file."
@@ -116,6 +187,8 @@ final class AppModel {
         selectedFileURL = nil
         selectedFileName = nil
         selectedFilePreviewData = nil
+        selectedRecognizedText = nil
+        selectedVisionLineCount = nil
     }
 
     func confirmURL() async {
@@ -171,7 +244,12 @@ final class AppModel {
             commitPreferencesForAnalysis()
 
             let created: CreateAnalysisResponse
-            if let selectedFileURL {
+            if let selectedRecognizedText, let selectedFileName {
+                created = try await apiClient.createAnalysis(
+                    fromRecognizedText: selectedRecognizedText,
+                    sourceFilename: selectedFileName
+                )
+            } else if let selectedFileURL {
                 created = try await apiClient.upload(fileURL: selectedFileURL)
             } else if let pendingURL {
                 created = try await apiClient.createAnalysis(fromURL: pendingURL)
@@ -186,6 +264,41 @@ final class AppModel {
         }
     }
 
+    func cancelCurrentAnalysis() async {
+        guard let analysisId = analysis?.id ?? analysisState?.analysisId else {
+            return
+        }
+
+        isBusy = true
+        errorMessage = nil
+
+        defer {
+            isBusy = false
+        }
+
+        do {
+            let canceled = try await apiClient.cancelAnalysis(id: analysisId)
+            analysis = canceled
+            analysisState = AnalysisState(analysisId: canceled.id, status: canceled.status)
+            pollingTask?.cancel()
+            pollingTask = nil
+            pollingPaused = false
+            pollingStatusMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func resumePolling() {
+        guard let analysisId = analysis?.id ?? analysisState?.analysisId else {
+            return
+        }
+
+        pollingPaused = false
+        pollingStatusMessage = nil
+        startPolling(id: analysisId)
+    }
+
     private func commitPreferencesForAnalysis() {
         storePreferences(preferences)
         loadedPreferences = preferences
@@ -195,6 +308,8 @@ final class AppModel {
         let refreshed = try await apiClient.fetchAnalysis(id: created.analysisId)
         analysis = refreshed
         analysisState = AnalysisState(analysisId: refreshed.id, status: refreshed.status)
+        pollingPaused = false
+        pollingStatusMessage = nil
         startPolling(id: refreshed.id)
     }
 
@@ -207,11 +322,16 @@ final class AppModel {
     }
 
     private func pollAnalysis(id: String) async {
+        var lastSuccessfulRefresh = Date()
+
         while !Task.isCancelled {
             do {
                 let refreshed = try await apiClient.fetchAnalysis(id: id)
                 analysis = refreshed
                 analysisState = AnalysisState(analysisId: refreshed.id, status: refreshed.status)
+                lastSuccessfulRefresh = Date()
+                pollingPaused = false
+                pollingStatusMessage = nil
                 errorMessage = nil
 
                 if refreshed.status.isTerminal {
@@ -220,12 +340,19 @@ final class AppModel {
                 }
             } catch {
                 if !Task.isCancelled {
-                    errorMessage = "Refreshing analysis failed. Retrying automatically."
+                    if Date().timeIntervalSince(lastSuccessfulRefresh) >= Self.analysisPollingStaleAfterSeconds {
+                        pollingPaused = true
+                        pollingStatusMessage = "Live updates paused after repeated refresh failures."
+                        pollingTask = nil
+                        return
+                    }
+
+                    pollingStatusMessage = "Refreshing analysis failed. Retrying automatically."
                 }
             }
 
             do {
-                try await Task.sleep(for: .seconds(1))
+                try await Task.sleep(for: .milliseconds(Int(Self.analysisPollingIntervalSeconds * 1000)))
             } catch {
                 pollingTask = nil
                 return
@@ -241,6 +368,14 @@ final class AppModel {
         }
 
         return try? Data(contentsOf: fileURL)
+    }
+
+    private static func isImageFile(_ fileURL: URL) -> Bool {
+        guard let type = UTType(filenameExtension: fileURL.pathExtension) else {
+            return false
+        }
+
+        return type.conforms(to: .image)
     }
 
     private func loadStoredPreferences() -> UserTastePreference {

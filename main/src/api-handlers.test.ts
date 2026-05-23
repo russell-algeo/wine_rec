@@ -4,7 +4,7 @@ import type { Recommendation, WineCandidate } from "@wine-rec/contracts";
 
 type MockJob = {
   id: string;
-  sourceType: "url-html";
+  sourceType: "url-html" | "client-ocr-text";
   sourceFilename: string;
   status: "queued" | "processing" | "completed" | "failed" | "canceled";
   queueMessageId: string | null;
@@ -409,7 +409,12 @@ vi.mock("./store/job-store.js", () => ({
 }));
 
 import { AnalysisRetryableError } from "./services/pipeline.js";
-import { createUrlAnalysis, processWorkerFailure, processWorkerJob } from "./api-handlers.js";
+import {
+  createClientOcrAnalysis,
+  createUrlAnalysis,
+  processWorkerFailure,
+  processWorkerJob,
+} from "./api-handlers.js";
 
 const originalQstashToken = process.env.QSTASH_TOKEN;
 const originalQstashUrl = process.env.QSTASH_URL;
@@ -715,6 +720,81 @@ describe("serverless worker orchestration", () => {
         },
       }),
     );
+  });
+
+  it("publishes client OCR text as a coordinator job", async () => {
+    process.env.VERCEL_URL = "main.wine-rec.example.com";
+    process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "main-bypass";
+    publishJSONMock.mockResolvedValue({ messageId: "msg-client-ocr" });
+
+    const created = await createClientOcrAnalysis({
+      sourceFilename: "camera-menu.jpg",
+      recognizedText: "Domaine Test Pinot Noir 2022",
+    });
+
+    expect(created.status).toBe("queued");
+    expect(created.analysisId).toEqual(expect.any(String));
+    expect(createJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "client-ocr-text",
+        sourceFilename: "camera-menu.jpg",
+      }),
+    );
+    expect(publishJSONMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://main.wine-rec.example.com/api/coordinator",
+        body: expect.objectContaining({
+          mode: "coordinator",
+          sourceType: "client-ocr-text",
+          sourceFilename: "camera-menu.jpg",
+          recognizedText: "Domaine Test Pinot Noir 2022",
+        }),
+        failureCallback: "https://main.wine-rec.example.com/api/worker-failure",
+        headers: {
+          "x-vercel-protection-bypass": "main-bypass",
+        },
+      }),
+    );
+  });
+
+  it("parses client OCR text in the coordinator before launching workers", async () => {
+    const candidates = [buildCandidate("candidate-1")];
+    seedJobState(
+      buildJob({
+        sourceType: "client-ocr-text",
+        sourceFilename: "camera-menu.jpg",
+        extractedText: null,
+        candidates: [],
+        recommendations: [],
+        workerCount: 0,
+      }),
+      [],
+      [],
+    );
+
+    parseWineCandidatesMock.mockReturnValue(candidates);
+    publishJSONMock.mockResolvedValue({ messageId: "msg-0" });
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
+    await processWorkerJob({
+      mode: "coordinator",
+      jobId: "analysis-1",
+      sourceType: "client-ocr-text",
+      sourceFilename: "camera-menu.jpg",
+      recognizedText: "Domaine Test Pinot Noir 2022",
+    });
+
+    expect(parseWineCandidatesMock).toHaveBeenCalledWith("Domaine Test Pinot Noir 2022");
+    expect(extractSourceTextMock).not.toHaveBeenCalled();
+    expect(extractCandidatesFromUrlMock).not.toHaveBeenCalled();
+    expect(updateJobMock).toHaveBeenCalledWith(
+      "analysis-1",
+      expect.objectContaining({
+        extractedText: "Domaine Test Pinot Noir 2022",
+        candidates,
+      }),
+    );
+    expect(createJobCandidateWorkMock).toHaveBeenCalledWith("analysis-1", candidates);
   });
 
   it("keeps claiming candidates until the worker drains available work", async () => {

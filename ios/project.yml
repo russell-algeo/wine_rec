@@ -12,6 +12,9 @@ settings:
     INFOPLIST_KEY_UILaunchScreen_Generation: YES
     INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
     INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+    INFOPLIST_KEY_WineRecAPIBaseURL: $(WINE_REC_API_BASE_URL)
+    INFOPLIST_KEY_WINE_REC_API_BASE_URL: $(WINE_REC_API_BASE_URL)
+    WINE_REC_API_BASE_URL: https://wine-rec.vercel.app
 targets:
   WineRec:
     type: application
@@ -20,9 +23,12 @@ targets:
       - path: WineRec
     settings:
       base:
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: WineRec/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: WineRec
         INFOPLIST_KEY_LSRequiresIPhoneOS: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: Wine Rec uses the camera to capture wine lists and read them on-device with Apple Vision OCR.
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Wine Rec uses selected photos so Apple Vision can read wine-list text on-device.
         INFOPLIST_KEY_UIRequiredDeviceCapabilities:
           - armv7
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone:
@@ -30,4 +36,19 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
     scheme:
-      testTargets: []
+      testTargets:
+        - WineRecUITests
+  WineRecUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: WineRecUITests
+    dependencies:
+      - target: WineRec
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.russellalgeo.WineRecUITests
+        TEST_TARGET_NAME: WineRec
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""

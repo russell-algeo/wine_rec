@@ -35,6 +35,7 @@ const coordinatorWorkerJobPayloadSchema = z.object({
   fileBlobUrl: z.string().url().optional(),
   fileBase64: z.string().optional(), // kept for backward compat with in-flight messages
   sourceUrl: z.string().url().optional(),
+  recognizedText: z.string().optional(),
 });
 
 const jobWorkerJobPayloadSchema = z.object({
@@ -415,6 +416,48 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
   return toCreateAnalysisResponse(analysisRunSchema.parse(job));
 }
 
+export async function createClientOcrAnalysis(input: {
+  sourceFilename: string;
+  recognizedText: string;
+}): Promise<CreateAnalysisResponse> {
+  const recognizedText = input.recognizedText.trim();
+  if (!recognizedText) {
+    throw new RequestError("Recognized text is required", 400);
+  }
+
+  const id = createId();
+  const { createJob, updateJob } = await loadJobStore();
+  const job = await createJob({
+    id,
+    sourceType: "client-ocr-text",
+    sourceFilename: input.sourceFilename.trim() || "iOS Vision OCR",
+  });
+
+  try {
+    const { messageId } = await publishWorkerJob(
+      {
+        mode: "coordinator",
+        jobId: id,
+        sourceType: "client-ocr-text",
+        sourceFilename: job.sourceFilename,
+        recognizedText,
+      },
+      getCoordinatorPublishOptions(),
+    );
+    await updateJob(id, { queueMessageId: messageId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to enqueue analysis";
+    await updateJob(id, {
+      status: "failed",
+      queueMessageId: null,
+      errorMessage: message,
+    });
+    throw error;
+  }
+
+  return toCreateAnalysisResponse(analysisRunSchema.parse(job));
+}
+
 export async function getAnalysisRun(id: string): Promise<AnalysisRun | null> {
   const store = await loadJobStore();
   const job = await store.getJob(id);
@@ -657,7 +700,10 @@ async function extractAndPersistJobState(
   let extractedText = "";
   let candidates: WineCandidate[];
 
-  if (payload.sourceUrl) {
+  if (payload.recognizedText !== undefined) {
+    extractedText = payload.recognizedText;
+    candidates = parseWineCandidates(extractedText);
+  } else if (payload.sourceUrl) {
     candidates = await extractCandidatesFromUrl(payload.sourceUrl);
   } else {
     let fileBuffer: Buffer | undefined;

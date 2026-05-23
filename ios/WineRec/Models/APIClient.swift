@@ -48,8 +48,25 @@ struct APIClient {
         )
     }
 
+    func createAnalysis(fromRecognizedText recognizedText: String, sourceFilename: String) async throws -> CreateAnalysisResponse {
+        try await requestJSON(
+            path: "/api/client-ocr",
+            method: "POST",
+            body: try JSONEncoder().encode(ClientOCRRequest(
+                sourceFilename: sourceFilename,
+                recognizedText: recognizedText
+            )),
+            contentType: "application/json",
+            as: CreateAnalysisResponse.self
+        )
+    }
+
     func fetchAnalysis(id: String) async throws -> AnalysisRun {
         try await requestJSON(path: "/api/analyses/\(id)", as: AnalysisRun.self)
+    }
+
+    func cancelAnalysis(id: String) async throws -> AnalysisRun {
+        try await requestJSON(path: "/api/analyses/\(id)/cancel", method: "POST", as: AnalysisRun.self)
     }
 
     private func requestJSON<T: Decodable>(
@@ -116,8 +133,31 @@ struct APIClient {
             return url
         }
 
+        if
+            let configured = Bundle.main.object(forInfoDictionaryKey: "WineRecAPIBaseURL") as? String,
+            let url = URL(string: configured),
+            url.scheme?.isEmpty == false,
+            url.host?.isEmpty == false
+        {
+            return url
+        }
+
+        if
+            let configured = Bundle.main.object(forInfoDictionaryKey: "WINE_REC_API_BASE_URL") as? String,
+            let url = URL(string: configured),
+            url.scheme?.isEmpty == false,
+            url.host?.isEmpty == false
+        {
+            return url
+        }
+
         return URL(string: "https://wine-rec.vercel.app")!
     }
+}
+
+private struct ClientOCRRequest: Encodable {
+    let sourceFilename: String
+    let recognizedText: String
 }
 
 private struct APIErrorEnvelope: Decodable {

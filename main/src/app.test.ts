@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   bootstrapDatabaseMock,
   createAnalysisMock,
+  createClientOcrAnalysisHandlerMock,
   createUploadAnalysisHandlerMock,
   createOcrProviderMock,
   createWineProfileProvidersMock,
@@ -21,6 +22,7 @@ const {
 } = vi.hoisted(() => ({
   bootstrapDatabaseMock: vi.fn(),
   createAnalysisMock: vi.fn(),
+  createClientOcrAnalysisHandlerMock: vi.fn(),
   createUploadAnalysisHandlerMock: vi.fn(),
   createOcrProviderMock: vi.fn(),
   createWineProfileProvidersMock: vi.fn(),
@@ -82,6 +84,7 @@ vi.mock("./services/url-preview.js", () => ({
 vi.mock("./api-handlers.js", () => ({
   RequestError: RequestErrorMock,
   cancelAnalysis: vi.fn(),
+  createClientOcrAnalysis: createClientOcrAnalysisHandlerMock,
   createUploadAnalysis: createUploadAnalysisHandlerMock,
   createUrlAnalysis: vi.fn(),
   getAnalysisRun: vi.fn(),
@@ -184,6 +187,34 @@ describe("app upload route", () => {
       buffer: expect.any(Buffer),
       filename: "menu.png",
       mimeType: "image/png",
+    });
+  });
+
+  it("accepts client OCR text submissions", async () => {
+    createClientOcrAnalysisHandlerMock.mockResolvedValue({
+      analysisId: "analysis-client-ocr",
+      status: "queued",
+    });
+
+    app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/client-ocr",
+      payload: {
+        sourceFilename: "camera-menu.jpg",
+        recognizedText: "Domaine Test Pinot Noir 2022",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      analysisId: "analysis-client-ocr",
+      status: "queued",
+    });
+    expect(createClientOcrAnalysisHandlerMock).toHaveBeenCalledWith({
+      sourceFilename: "camera-menu.jpg",
+      recognizedText: "Domaine Test Pinot Noir 2022",
     });
   });
 });

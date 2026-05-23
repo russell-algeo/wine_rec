@@ -3,6 +3,7 @@ import { z } from "zod";
 export const sourceTypeSchema = z.enum([
   "upload-image",
   "upload-pdf",
+  "client-ocr-text",
   "url-html",
   "url-pdf",
   "site-crawl",
@@ -134,6 +135,12 @@ export const createAnalysisFromUrlRequestSchema = z.object({
   url: z.string().url(),
 });
 
+export const createAnalysisFromClientOcrRequestSchema = z.object({
+  sourceFilename: z.string().trim().min(1).max(512),
+  recognizedText: z.string().trim().min(1),
+  recognitionMetadata: z.record(z.unknown()).optional(),
+});
+
 export const createAnalysisResponseSchema = z.object({
   analysisId: z.string(),
   status: analysisStatusSchema,
@@ -159,4 +166,5 @@ export type Recommendation = z.infer<typeof recommendationSchema>;
 export type AnalysisRun = z.infer<typeof analysisRunSchema>;
 export type ProviderHealth = z.infer<typeof providerHealthSchema>;
 export type CreateAnalysisFromUrlRequest = z.infer<typeof createAnalysisFromUrlRequestSchema>;
+export type CreateAnalysisFromClientOcrRequest = z.infer<typeof createAnalysisFromClientOcrRequestSchema>;
 export type CreateAnalysisResponse = z.infer<typeof createAnalysisResponseSchema>;

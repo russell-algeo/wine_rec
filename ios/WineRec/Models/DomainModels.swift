@@ -3,6 +3,7 @@ import Foundation
 enum SourceType: String, Codable, Equatable {
     case uploadImage = "upload-image"
     case uploadPDF = "upload-pdf"
+    case clientOCRText = "client-ocr-text"
     case urlHTML = "url-html"
     case urlPDF = "url-pdf"
     case siteCrawl = "site-crawl"

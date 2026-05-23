@@ -9,26 +9,44 @@ private enum AppArtwork {
     static let shelfBreak = "StoryShelf"
 }
 
+private enum AppLayout {
+    static let navHeight: CGFloat = 56
+    static let horizontalInset: CGFloat = 16
+    static let resultsHorizontalInset: CGFloat = 8
+    static let mobileContentWidth: CGFloat = 640
+    static let panelRadius: CGFloat = 20
+    static let controlRadius: CGFloat = 8
+}
+
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showingImporter = false
+    @State private var showingCamera = false
+    @State private var showingPhotoPicker = false
+    @State private var showingSourceOptions = false
     @State private var showingTastePanel = false
     @State private var showingResultsTastePanel = false
+    @State private var resultFiltersOpen = false
+    @State private var sectionBrowserOpen = false
     @State private var resultSortOrder = ResultSortOrder.recommended
     @State private var resultProfileFilter = ResultProfileFilter.excludeInferred
     @State private var selectedResultSectionId = allResultSectionsId
+    @State private var activePageSection = 0
     @State private var maxPriceFilter: Double?
     @State private var includePriceUnavailable = true
 
     private var heroHeight: CGFloat {
-        min(max(UIScreen.main.bounds.height * 0.56, 430), 580)
+        UIScreen.main.bounds.height + 90
     }
 
     private var shouldStackPrimaryControls: Bool {
         horizontalSizeClass == .compact && UIScreen.main.bounds.width < 430
+    }
+
+    private var sectionTopPadding: CGFloat {
+        126
     }
 
     private func confirmPendingURL() {
@@ -45,12 +63,11 @@ struct ContentView: View {
                         AppBackground()
 
                         ScrollView(.vertical, showsIndicators: false) {
-                            VStack(spacing: 28) {
+                            VStack(spacing: 0) {
                                 heroSection(proxy: proxy)
                                     .id("hero")
 
                                 ingestSection
-                                    .padding(.horizontal, 20)
                                     .id("ingest")
 
                                 StoryImageBreakCard(
@@ -59,8 +76,9 @@ struct ContentView: View {
                                     isLeading: true
                                 )
 
-                                resultsSection
-                                    .padding(.horizontal, 20)
+                                resultsSection(width: max(0, geometry.size.width - (AppLayout.resultsHorizontalInset * 2)))
+                                    .padding(.top, sectionTopPadding)
+                                    .padding(.bottom, 48)
                                     .id("results")
 
                                 StoryImageBreakCard(
@@ -73,17 +91,18 @@ struct ContentView: View {
                             .padding(.bottom, 40)
                         }
 
-                        topBar
+                        topBar(proxy: proxy, topInset: geometry.safeAreaInsets.top)
 
                         if showingTastePanel {
                             tasteDrawer
-                                .padding(.horizontal, 20)
-                                .padding(.top, 72)
-                                .transition(.move(edge: .top).combined(with: .opacity))
+                                .padding(.top, AppLayout.navHeight + geometry.safeAreaInsets.top)
+                                .transition(.opacity)
                         }
                     }
+                    .ignoresSafeArea(.container, edges: .top)
                 }
                 .toolbar(.hidden, for: .navigationBar)
+                .statusBarHidden(true)
                 .task {
                     await model.load()
                 }
@@ -100,18 +119,47 @@ struct ContentView: View {
                         await model.importDocument(from: url)
                     }
                 }
-                .onChange(of: selectedPhotoItem) { _, newValue in
-                    guard let newValue else { return }
-                    Task {
-                        if let data = try? await newValue.loadTransferable(type: Data.self) {
-                            model.setSelectedPhotoData(data)
+                .sheet(isPresented: $showingCamera) {
+                    CameraCaptureView { image in
+                        Task {
+                            await model.importCapturedImage(image)
                         }
                     }
+                    .ignoresSafeArea()
+                }
+                .sheet(isPresented: $showingPhotoPicker) {
+                    PhotoLibraryPickerView { data in
+                        Task {
+                            await model.importImageData(data, filename: "Selected photo.jpg")
+                        }
+                    }
+                }
+                .confirmationDialog("Import a wine list", isPresented: $showingSourceOptions, titleVisibility: .visible) {
+                    Button("Camera") {
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            showingCamera = true
+                        } else {
+                            showingPhotoPicker = true
+                        }
+                    }
+                    .accessibilityIdentifier("camera-button")
+
+                    Button("Photos") {
+                        showingPhotoPicker = true
+                    }
+                    .accessibilityIdentifier("photos-button")
+
+                    Button("Files") {
+                        showingImporter = true
+                    }
+                    .accessibilityIdentifier("files-button")
                 }
                 .onChange(of: model.analysis?.id) { _, _ in
                     maxPriceFilter = nil
                     includePriceUnavailable = true
                     selectedResultSectionId = allResultSectionsId
+                    resultFiltersOpen = false
+                    sectionBrowserOpen = false
                 }
                 .onChange(of: model.analysisState?.analysisId) { _, newValue in
                     guard newValue != nil else { return }
@@ -123,26 +171,38 @@ struct ContentView: View {
         }
     }
 
-    private var topBar: some View {
+    private func topBar(proxy: ScrollViewProxy, topInset: CGFloat) -> some View {
         HStack(spacing: 14) {
+            SectionNavigationDots(activeIndex: activePageSection) { index in
+                let sectionID = ["hero", "ingest", "results"][index]
+                activePageSection = index
+
+                withAnimation(.spring(response: 0.52, dampingFraction: 0.9)) {
+                    proxy.scrollTo(sectionID, anchor: .top)
+                }
+            }
+
             Text("Wine Rec")
-                .font(AppTypography.display(size: 22))
-                .tracking(-0.65)
+                .font(AppTypography.display(size: 21))
+                .tracking(-0.63)
                 .foregroundStyle(AppPalette.ink)
 
             Spacer()
 
             Button(showingTastePanel ? "Close" : "My Taste") {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                withAnimation(.easeInOut(duration: 0.12)) {
                     showingTastePanel.toggle()
                 }
             }
+            .accessibilityIdentifier("top-my-taste-button")
             .buttonStyle(NavToggleButtonStyle())
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, AppLayout.horizontalInset)
         .frame(maxWidth: .infinity)
-        .background(AppPalette.background.opacity(0.88))
+        .frame(height: AppLayout.navHeight)
+        .padding(.top, topInset)
+        .frame(height: AppLayout.navHeight + topInset, alignment: .top)
+        .background(AppPalette.background.opacity(0.85))
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(AppPalette.line)
@@ -152,33 +212,41 @@ struct ContentView: View {
     }
 
     private var tasteDrawer: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 10) {
                 Text("How should your wine taste?")
-                    .font(AppTypography.display(size: 22))
-                    .tracking(-0.44)
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(AppPalette.ink)
 
-                VStack(spacing: 16) {
+                VStack(spacing: 0) {
                     interactiveTasteScale(for: .body)
                     interactiveTasteScale(for: .tannin)
                     interactiveTasteScale(for: .sweetness)
                     interactiveTasteScale(for: .acidity)
                 }
 
-                Text("Preferences apply automatically on your next analysis.")
+                Text("Adjust your preferences to automatically re-rank wines.")
                     .font(.footnote)
                     .foregroundStyle(AppPalette.muted)
             }
-        }
-        .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
+            .frame(maxWidth: AppLayout.mobileContentWidth, alignment: .leading)
+            .padding(.horizontal, AppLayout.horizontalInset)
+            .padding(.top, 16)
+            .padding(.bottom, 17)
+            .frame(maxWidth: .infinity)
+            .background(AppPalette.background.opacity(0.96))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(AppPalette.line)
+                    .frame(height: 1)
+            }
+            .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
     }
 
     private func heroSection(proxy: ScrollViewProxy) -> some View {
         GeometryReader { geometry in
-            let horizontalInset: CGFloat = 16
+            let horizontalInset = AppLayout.horizontalInset
             let copyWidth = max(geometry.size.width - (horizontalInset * 2), 0)
-            let titleSize: CGFloat = geometry.size.width < 360 ? 44 : 48
+            let titleSize: CGFloat = geometry.size.width < 360 ? 46 : 50
 
             ZStack(alignment: .bottomLeading) {
                 Image(AppArtwork.hero)
@@ -188,9 +256,9 @@ struct ContentView: View {
                     .overlay {
                         LinearGradient(
                             colors: [
-                                Color.black.opacity(0.08),
-                                Color.black.opacity(0.16),
-                                Color.black.opacity(0.62)
+                                Color.black.opacity(0.02),
+                                Color.black.opacity(0.15),
+                                Color.black.opacity(0.58)
                             ],
                             startPoint: .top,
                             endPoint: .bottom
@@ -198,7 +266,7 @@ struct ContentView: View {
                     }
 
                 LinearGradient(
-                    colors: [Color.black.opacity(0.18), .clear],
+                    colors: [Color.black.opacity(0.14), .clear],
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -224,11 +292,12 @@ struct ContentView: View {
                             proxy.scrollTo("ingest", anchor: .top)
                         }
                     }
+                    .accessibilityIdentifier("get-started-button")
                     .buttonStyle(PrimaryActionButtonStyle())
                 }
                 .frame(width: copyWidth, alignment: .leading)
                 .padding(.leading, horizontalInset)
-                .padding(.bottom, 30)
+                .padding(.bottom, 172)
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottomLeading)
             .clipped()
@@ -237,98 +306,14 @@ struct ContentView: View {
     }
 
     private var ingestSection: some View {
-        SurfaceCard {
-            VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("What's on the list?")
-                        .font(AppTypography.display(size: 28))
-                        .tracking(-0.56)
-                        .foregroundStyle(AppPalette.ink)
-                    Text("Paste a link or bring in a photo, screenshot, or PDF of any wine list.")
-                        .font(.body)
-                        .foregroundStyle(AppPalette.muted)
-                }
-
-                urlInputControls
-                .padding(5)
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(AppPalette.line, lineWidth: 1.2)
-                        .allowsHitTesting(false)
-                )
-
-                if let urlPreview = model.urlPreview {
-                    URLPreviewCard(preview: urlPreview, urlString: model.pendingURL ?? model.sourceURLText)
-                }
-
-                DividerLabel(text: "OR")
-
-                SourceChooserCard {
-                    VStack(spacing: 16) {
-                        VStack(spacing: 8) {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(AppPalette.accentBlue)
-
-                            Text("Bring in a photo, screenshot, or PDF")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(AppPalette.ink)
-                                .multilineTextAlignment(.center)
-
-                            Text("Choose from Photos or Files")
-                                .font(.footnote)
-                                .foregroundStyle(AppPalette.muted)
-                        }
-
-                        sourceSelectionControls
-                    }
-                }
-
-                if model.selectedFileURL != nil {
-                    SelectedSourceCard(
-                        title: model.selectedFileName ?? "Selected file",
-                        subtitle: "Ready to analyze",
-                        previewData: model.selectedFilePreviewData
-                    ) {
-                        model.clearSelectedFile()
-                    }
-                }
+        VStack(spacing: 0) {
+            VStack(alignment: .center, spacing: 20) {
+                OnboardingDots(currentStep: model.hasPendingSource ? 2 : 1)
 
                 if model.hasPendingSource {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text(model.isFirstTimeUser ? "How do you like your wine?" : "Your preferences are saved.")
-                            .font(AppTypography.display(size: 20, weight: .heavy))
-                            .tracking(-0.4)
-                            .foregroundStyle(AppPalette.ink)
-
-                        Text(model.isFirstTimeUser
-                             ? "Set your preferences now. Results will be ranked to match."
-                             : "Adjust if needed, then start the analysis.")
-                            .font(.subheadline)
-                            .foregroundStyle(AppPalette.muted)
-
-                        VStack(spacing: 16) {
-                            interactiveTasteScale(for: .body)
-                            interactiveTasteScale(for: .tannin)
-                            interactiveTasteScale(for: .sweetness)
-                            interactiveTasteScale(for: .acidity)
-                        }
-
-                        Button(model.isBusy ? "Starting..." : "Analyze") {
-                            Task {
-                                await model.analyzePendingSource()
-                            }
-                        }
-                        .buttonStyle(PrimaryActionButtonStyle(fullWidth: true))
-                        .disabled(model.isBusy)
-                    }
-                    .padding(20)
-                    .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(AppPalette.line, lineWidth: 1)
-                    )
+                    preferenceStep
+                } else {
+                    sourceStep
                 }
 
                 if let errorMessage = model.errorMessage {
@@ -339,15 +324,123 @@ struct ContentView: View {
                         stroke: AppPalette.accentRed.opacity(0.24)
                     )
                 }
-
-                if let analysisState = model.analysisState {
-                    Text("Analysis \(analysisState.analysisId.prefix(8)) · \(analysisState.status.rawValue)")
-                        .font(.caption.weight(.bold))
-                        .textCase(.uppercase)
-                        .tracking(0.8)
-                        .foregroundStyle(AppPalette.muted)
-                }
             }
+            .frame(maxWidth: AppLayout.mobileContentWidth)
+            .padding(.horizontal, AppLayout.horizontalInset)
+                    .padding(.top, sectionTopPadding)
+                    .padding(.bottom, 64)
+            .frame(maxWidth: .infinity)
+        }
+        .background(AppPalette.background)
+    }
+
+    private var sourceStep: some View {
+        VStack(alignment: .center, spacing: 20) {
+            VStack(spacing: 10) {
+                Text("What's on the list?")
+                    .font(AppTypography.display(size: 30))
+                    .tracking(-0.6)
+                    .foregroundStyle(AppPalette.ink)
+                    .multilineTextAlignment(.center)
+                Text("Paste a link or snap a photo of any wine list.")
+                    .font(AppTypography.body(size: 18))
+                    .foregroundStyle(AppPalette.muted)
+                    .multilineTextAlignment(.center)
+            }
+
+            if let providerHealthNotice = model.providerHealthNotice {
+                StatusNotice(
+                    title: "Provider status",
+                    message: providerHealthNotice,
+                    tint: AppPalette.accentBlue.opacity(0.08),
+                    stroke: AppPalette.accentBlue.opacity(0.16)
+                )
+            }
+
+            urlTextField
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(AppPalette.line, lineWidth: 1.5)
+                        .allowsHitTesting(false)
+                )
+
+            if let urlPreview = model.urlPreview {
+                URLPreviewCard(preview: urlPreview, urlString: model.pendingURL ?? model.sourceURLText)
+            }
+
+            DividerLabel(text: "OR")
+
+            SourceDropZone(isReading: model.isRunningVisionOCR) {
+                showingSourceOptions = true
+            }
+
+            HStack {
+                Spacer()
+                nextButton(fullWidth: false)
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private var preferenceStep: some View {
+        VStack(alignment: .center, spacing: 24) {
+            VStack(spacing: 10) {
+                Text("Confirm your preferences")
+                    .font(AppTypography.display(size: 30))
+                    .tracking(-0.6)
+                    .foregroundStyle(AppPalette.ink)
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.82)
+                Text("Adjust if you'd like, then analyze.")
+                    .font(AppTypography.body(size: 18))
+                    .foregroundStyle(AppPalette.muted)
+                    .multilineTextAlignment(.center)
+            }
+
+            if model.selectedFileURL != nil {
+                SelectedSourceCard(
+                    title: model.selectedFileName ?? "Selected file",
+                    subtitle: "",
+                    previewData: model.selectedFilePreviewData
+                ) {
+                    model.clearSelectedFile()
+                }
+            } else if let urlPreview = model.urlPreview {
+                URLPreviewCard(preview: urlPreview, urlString: model.pendingURL ?? model.sourceURLText)
+            }
+
+            VStack(spacing: 0) {
+                interactiveTasteScale(for: .body)
+                interactiveTasteScale(for: .tannin)
+                interactiveTasteScale(for: .sweetness)
+                interactiveTasteScale(for: .acidity)
+            }
+
+            HStack {
+                Button {
+                    model.clearSelectedFile()
+                    model.clearPendingURL()
+                } label: {
+                    Label("Back", systemImage: "arrow.left")
+                        .labelStyle(.titleAndIcon)
+                }
+                .font(AppTypography.body(size: 17, weight: .medium))
+                .foregroundStyle(AppPalette.muted)
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button(model.isBusy ? "Starting..." : "Analyze ->") {
+                    Task {
+                        await model.analyzePendingSource()
+                    }
+                }
+                .accessibilityIdentifier("analyze-button")
+                .buttonStyle(PrimaryActionButtonStyle(fullWidth: false))
+                .disabled(model.isBusy)
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -383,10 +476,12 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 15)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("wine-list-url-field")
     }
 
     private func nextButton(fullWidth: Bool) -> some View {
-        Button(model.isBusy ? "Loading..." : "Next", action: confirmPendingURL)
+        Button(model.isBusy ? "Loading..." : "Next ->", action: confirmPendingURL)
+            .accessibilityIdentifier("url-next-button")
             .buttonStyle(CompactPrimaryActionButtonStyle(fullWidth: fullWidth))
             .disabled(model.isBusy)
     }
@@ -395,11 +490,13 @@ struct ContentView: View {
         Group {
             if shouldStackPrimaryControls {
                 VStack(spacing: 12) {
+                    cameraButton
                     photoPickerButton
                     filePickerButton
                 }
             } else {
                 HStack(spacing: 12) {
+                    cameraButton
                     photoPickerButton
                     filePickerButton
                 }
@@ -407,12 +504,32 @@ struct ContentView: View {
         }
     }
 
+    private var cameraButton: some View {
+        Button {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                showingCamera = true
+            } else {
+                showingPhotoPicker = true
+            }
+        } label: {
+            Label("Camera", systemImage: "camera")
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("camera-button")
+        .buttonStyle(OutlineActionButtonStyle())
+        .disabled(model.isBusy)
+    }
+
     private var photoPickerButton: some View {
-        PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+        Button {
+            showingPhotoPicker = true
+        } label: {
             Label("Photos", systemImage: "photo")
                 .frame(maxWidth: .infinity)
         }
+        .accessibilityIdentifier("photos-button")
         .buttonStyle(OutlineActionButtonStyle())
+        .disabled(model.isBusy)
     }
 
     private var filePickerButton: some View {
@@ -422,10 +539,12 @@ struct ContentView: View {
             Label("Files", systemImage: "doc.badge.plus")
                 .frame(maxWidth: .infinity)
         }
+        .accessibilityIdentifier("files-button")
         .buttonStyle(OutlineActionButtonStyle())
+        .disabled(model.isBusy)
     }
 
-    private var resultsSection: some View {
+    private func resultsSection(width: CGFloat) -> some View {
         let analysis = model.analysis
         let baseRecommendations = rerankedRecommendations(analysis: analysis, preferences: model.preferences, useLiveReranking: model.isLiveReranking)
         let sortedRecommendations = sortRecommendations(
@@ -465,42 +584,40 @@ struct ContentView: View {
             includeUnavailable: includePriceUnavailable
         )
 
-        return SurfaceCard {
-            VStack(alignment: .leading, spacing: 22) {
+        return SurfaceCard(width: width) {
+            VStack(alignment: .leading, spacing: 18) {
                 if analysis != nil {
-                    Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
-                            showingResultsTastePanel.toggle()
-                        }
-                    } label: {
-                        HStack(spacing: 10) {
-                            Text("My Taste Preferences")
-                                .font(.headline.weight(.semibold))
-
-                            if model.isLiveReranking {
-                                Text("Updated")
-                                    .font(.caption.weight(.bold))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(AppPalette.accentBlue.opacity(0.12), in: Capsule())
-                                    .foregroundStyle(AppPalette.accentBlue)
+                    HStack(spacing: 10) {
+                        Button("Adjust Preferences") {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
+                                showingResultsTastePanel.toggle()
                             }
-
-                            Spacer()
-
-                            Image(systemName: showingResultsTastePanel ? "chevron.down" : "chevron.right")
-                                .font(.caption.weight(.bold))
                         }
-                        .foregroundStyle(AppPalette.ink)
+                        .buttonStyle(ResultsActionButtonStyle(minWidth: 122))
+
+                        Spacer(minLength: 14)
+
+                        if model.hasActiveAnalysis {
+                            Button(model.isBusy ? "Stopping..." : "Stop Analysis") {
+                                Task {
+                                    await model.cancelCurrentAnalysis()
+                                }
+                            }
+                            .accessibilityIdentifier("stop-analysis-button")
+                            .buttonStyle(ResultsActionButtonStyle(minWidth: 106))
+                            .disabled(model.isBusy)
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
 
                     if showingResultsTastePanel {
-                        VStack(alignment: .leading, spacing: 16) {
-                            interactiveTasteScale(for: .body)
-                            interactiveTasteScale(for: .tannin)
-                            interactiveTasteScale(for: .sweetness)
-                            interactiveTasteScale(for: .acidity)
+                        VStack(alignment: .leading, spacing: 9) {
+                            VStack(spacing: 0) {
+                                interactiveTasteScale(for: .body)
+                                interactiveTasteScale(for: .tannin)
+                                interactiveTasteScale(for: .sweetness)
+                                interactiveTasteScale(for: .acidity)
+                            }
 
                             Text(model.isLiveReranking
                                  ? "Results are re-ranked to match your updated preferences."
@@ -508,8 +625,8 @@ struct ContentView: View {
                                 .font(.footnote)
                                 .foregroundStyle(AppPalette.muted)
                         }
-                        .padding(18)
-                        .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .padding(14)
+                        .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 }
 
@@ -530,11 +647,23 @@ struct ContentView: View {
 
                 if let analysisProgress, analysisProgress.status != .completed {
                     AnalysisProgressCard(
-                        progress: analysisProgress
+                        progress: analysisProgress,
+                        isActive: model.hasActiveAnalysis,
+                        isBusy: model.isBusy,
+                        pollingPaused: model.pollingPaused,
+                        pollingStatusMessage: model.pollingStatusMessage,
+                        onCancel: {
+                            Task {
+                                await model.cancelCurrentAnalysis()
+                            }
+                        },
+                        onResume: {
+                            model.resumePolling()
+                        }
                     )
                 }
 
-                if isPriceFilterActive, let _ = priceBounds {
+                if resultFiltersOpen, isPriceFilterActive, let _ = priceBounds {
                     StatusNotice(
                         title: "Budget filter active",
                         message: "\(hiddenByPriceCount) wine\(hiddenByPriceCount == 1 ? "" : "s") hidden by the current budget settings.",
@@ -543,7 +672,7 @@ struct ContentView: View {
                     )
                 }
 
-                if inferredRecommendationCount > 0 {
+                if resultFiltersOpen, inferredRecommendationCount > 0 {
                     StatusNotice(
                         title: resultProfileFilter == .excludeInferred
                             ? "\(inferredRecommendationCount) inferred \(inferredRecommendationCount == 1 ? "profile hidden" : "profiles hidden")"
@@ -582,7 +711,7 @@ struct ContentView: View {
                 }
 
                 ForEach(visibleResultSections) { section in
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 12) {
                         if hasStructuredResults {
                             HStack(alignment: .bottom) {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -604,7 +733,7 @@ struct ContentView: View {
                             }
                         }
 
-                        VStack(spacing: 16) {
+                        VStack(spacing: 12) {
                             ForEach(section.recommendations) { recommendation in
                                 ResultCard(
                                     recommendation: recommendation,
@@ -633,15 +762,16 @@ struct ContentView: View {
         priceBounds: PriceFilterBounds?,
         effectiveMaxPrice: Double?
     ) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             controlGroup(title: "Sort by") {
-                HStack(spacing: 10) {
+                HStack(spacing: 0) {
                     chipButton(
                         title: ResultSortOrder.recommended.label,
                         isSelected: resultSortOrder == .recommended
                     ) {
                         resultSortOrder = .recommended
                     }
+                    .accessibilityIdentifier("sort-most-recommended")
 
                     chipButton(
                         title: ResultSortOrder.discovered.label,
@@ -649,64 +779,91 @@ struct ContentView: View {
                     ) {
                         resultSortOrder = .discovered
                     }
+                    .accessibilityIdentifier("sort-image-order")
                 }
+                .padding(3)
+                .background(Color.white, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(AppPalette.line, lineWidth: 1)
+                )
             }
 
-            if inferredRecommendationCount > 0 {
-                controlGroup(title: "Taste data") {
-                    HStack(spacing: 10) {
-                        chipButton(
-                            title: "All profiles",
-                            isSelected: resultProfileFilter == .all
-                        ) {
-                            resultProfileFilter = .all
-                        }
+            Button {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    resultFiltersOpen.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text("Filters")
+                    Image(systemName: resultFiltersOpen ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.bold))
+                }
+                .font(AppTypography.body(size: 16, weight: .medium))
+                .foregroundStyle(AppPalette.muted)
+            }
+            .buttonStyle(.plain)
 
-                        chipButton(
-                            title: "Hide inferred",
-                            isSelected: resultProfileFilter == .excludeInferred
-                        ) {
-                            resultProfileFilter = .excludeInferred
+            if resultFiltersOpen {
+                if inferredRecommendationCount > 0 {
+                    controlGroup(title: "Taste data") {
+                        HStack(spacing: 8) {
+                            chipButton(
+                                title: "All profiles",
+                                isSelected: resultProfileFilter == .all
+                            ) {
+                                resultProfileFilter = .all
+                            }
+                            .accessibilityIdentifier("filter-all-profiles")
+
+                            chipButton(
+                                title: "Hide inferred",
+                                isSelected: resultProfileFilter == .excludeInferred
+                            ) {
+                                resultProfileFilter = .excludeInferred
+                            }
+                            .accessibilityIdentifier("filter-hide-inferred")
                         }
                     }
                 }
-            }
 
-            if let priceBounds, let effectiveMaxPrice {
-                controlGroup(title: "Budget") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .top) {
-                            Text(effectiveMaxPrice < priceBounds.max
-                                 ? "\(formatPriceValue(effectiveMaxPrice)) and under"
-                                 : "Any price")
-                                .font(.headline.weight(.semibold))
+                if let priceBounds, let effectiveMaxPrice {
+                    controlGroup(title: "Budget") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(alignment: .top) {
+                                Text(effectiveMaxPrice < priceBounds.max
+                                     ? "\(formatPriceValue(effectiveMaxPrice)) and under"
+                                     : "Any price")
+                                    .font(.headline.weight(.semibold))
 
-                            Spacer()
+                                Spacer()
 
-                            Text("\(formatPriceValue(priceBounds.min)) to \(formatPriceValue(priceBounds.max))")
-                                .font(.footnote)
-                                .foregroundStyle(AppPalette.muted)
+                                Text("\(formatPriceValue(priceBounds.min)) to \(formatPriceValue(priceBounds.max))")
+                                    .font(.footnote)
+                                    .foregroundStyle(AppPalette.muted)
+                            }
+
+                            Slider(
+                                value: Binding(
+                                    get: { effectiveMaxPrice },
+                                    set: { maxPriceFilter = $0 }
+                                ),
+                                in: priceBounds.min...priceBounds.max,
+                                step: 1
+                            )
+                            .tint(AppPalette.accentRed)
+
+                            Toggle(
+                                "Include wines without price\(priceBounds.missingCount > 0 ? " (\(priceBounds.missingCount))" : "")",
+                                isOn: $includePriceUnavailable
+                            )
+                            .accessibilityIdentifier("include-unpriced-toggle")
+                            .font(.footnote)
+                            .tint(AppPalette.accentRed)
                         }
-
-                        Slider(
-                            value: Binding(
-                                get: { effectiveMaxPrice },
-                                set: { maxPriceFilter = $0 }
-                            ),
-                            in: priceBounds.min...priceBounds.max,
-                            step: 1
-                        )
-                        .tint(AppPalette.accentRed)
-
-                        Toggle(
-                            "Include wines without price\(priceBounds.missingCount > 0 ? " (\(priceBounds.missingCount))" : "")",
-                            isOn: $includePriceUnavailable
-                        )
-                        .font(.footnote)
-                        .tint(AppPalette.accentRed)
+                        .padding(14)
+                        .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
-                    .padding(16)
-                    .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
             }
         }
@@ -714,16 +871,30 @@ struct ContentView: View {
 
     private func sectionBrowser(sections: [ResultSection], totalCount: Int) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Browse by menu section")
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(AppPalette.ink)
+            Button {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    sectionBrowserOpen.toggle()
+                }
+            } label: {
+                HStack {
+                    Text("Browse by menu section")
+                        .font(.caption.weight(.black))
+                        .tracking(1.0)
+                        .textCase(.uppercase)
+                    Spacer()
+                    Image(systemName: sectionBrowserOpen ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.bold))
+                }
+                .foregroundStyle(AppPalette.accentBlue)
+            }
+            .buttonStyle(.plain)
 
-            Text("Jump between source tabs and sections without losing the current ranking.")
-                .font(.footnote)
-                .foregroundStyle(AppPalette.muted)
+            if sectionBrowserOpen {
+                Text("Jump between source tabs and sections without losing the current ranking.")
+                    .font(.footnote)
+                    .foregroundStyle(AppPalette.muted)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                VStack(spacing: 8) {
                     chipButton(
                         title: "All sections",
                         subtitle: "\(totalCount)",
@@ -742,9 +913,14 @@ struct ContentView: View {
                         }
                     }
                 }
-                .padding(.vertical, 2)
             }
         }
+        .padding(14)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(AppPalette.line.opacity(0.95), lineWidth: 1.2)
+            )
     }
 
     private func controlGroup<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -768,6 +944,7 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 Text(title)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.78)
 
                 if let subtitle {
                     Text(subtitle)
@@ -776,13 +953,14 @@ struct ContentView: View {
                 }
             }
             .font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(isSelected ? AppPalette.ink : AppPalette.cardSecondary, in: Capsule())
+            .background(isSelected ? AppPalette.accentBlue : Color.clear, in: Capsule())
             .foregroundStyle(isSelected ? Color.white : AppPalette.ink)
             .overlay(
                 Capsule()
-                    .stroke(isSelected ? Color.clear : AppPalette.line, lineWidth: 1)
+                    .stroke(isSelected ? Color.clear : AppPalette.line.opacity(0.7), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -857,83 +1035,97 @@ private struct ResultCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 16) {
-                ResultImageView(imageURL: recommendation.profile?.imageUrl)
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack(alignment: .topTrailing) {
+                HStack(alignment: .top, spacing: 10) {
+                    ResultImageView(imageURL: recommendation.profile?.imageUrl)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    if let menuContext {
-                        Text(menuContext)
-                            .font(.caption.weight(.bold))
-                            .textCase(.uppercase)
-                            .foregroundStyle(AppPalette.muted)
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                if let menuContext {
+                                    Text(menuContext)
+                                        .font(.system(size: 10, weight: .bold))
+                                        .textCase(.uppercase)
+                                        .foregroundStyle(AppPalette.muted)
+                                        .lineLimit(1)
+                                }
+
+                                Text(menuTitle)
+                                    .font(AppTypography.display(size: 17, weight: .heavy))
+                                    .tracking(-0.2)
+                                    .foregroundStyle(AppPalette.ink)
+                                    .lineLimit(4)
+                            }
+                            .padding(.trailing, 58)
+
+                            if let matchedTitle {
+                                Text("Matched to \(matchedTitle)")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(AppPalette.muted)
+                                    .lineLimit(3)
+                            }
+
+                            if isInferred {
+                                Text("No reliable Vivino match was found, so this taste profile is inferred from the extracted wine details.")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(AppPalette.muted)
+                                    .lineLimit(3)
+                            }
+                        }
+
+                        Spacer(minLength: 0)
+
+                        HStack(alignment: .bottom, spacing: 8) {
+                            if showRating, let rating, let ratingCount {
+                                VivinoRatingBlock(
+                                    rating: rating,
+                                    ratingCount: ratingCount,
+                                    ratingSource: recommendation.profile?.ratingSource
+                                )
+                                .layoutPriority(2)
+                            }
+
+                            Spacer(minLength: 4)
+
+                            Text(candidate?.price ?? "Price unavailable")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(candidate?.price == nil ? AppPalette.muted : AppPalette.ink)
+                                .lineLimit(candidate?.price == nil ? 2 : 1)
+                                .multilineTextAlignment(.center)
+                                .minimumScaleFactor(0.78)
+                                .frame(minWidth: candidate?.price == nil ? 78 : 50, maxWidth: candidate?.price == nil ? 84 : 66)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .background(Color.white, in: Capsule())
+                                .overlay(Capsule().stroke(AppPalette.line, lineWidth: 1))
+                                .layoutPriority(1)
+                        }
                     }
-
-                    Text(menuTitle)
-                        .font(AppTypography.display(size: 22, weight: .heavy))
-                        .tracking(-0.44)
-                        .foregroundStyle(AppPalette.ink)
-
-                    if let matchedTitle {
-                        Text("Matched to \(matchedTitle)")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(AppPalette.muted)
-                    }
-
-                    Text(isInferred
-                         ? "Estimated from menu data"
-                         : recommendation.profile?.provenanceLabel ?? recommendation.status.label)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(isInferred ? AppPalette.accentRed : AppPalette.accentBlue)
-
-                    if isInferred {
-                        Text("No reliable Vivino match was found, so this taste profile is inferred from the extracted wine details.")
-                            .font(.footnote)
-                            .foregroundStyle(AppPalette.muted)
-                    }
-
-                    if showRating, let rating, let ratingCount {
-                        VivinoRatingBlock(
-                            rating: rating,
-                            ratingCount: ratingCount,
-                            ratingSource: recommendation.profile?.ratingSource
-                        )
-                    }
+                    .frame(minHeight: 150, alignment: .top)
                 }
 
-                Spacer(minLength: 0)
-
-                VStack(alignment: .trailing, spacing: 10) {
-                    Text(candidate?.price ?? "Price unavailable")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(candidate?.price == nil ? AppPalette.muted : AppPalette.ink)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(AppPalette.cardSecondary, in: Capsule())
-
-                    VStack(spacing: 4) {
-                        Text("Fit")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(AppPalette.muted)
-                        Text("\(Int(recommendation.fitScore.rounded()))")
-                            .font(.title3.weight(.black))
-                            .foregroundStyle(AppPalette.ink)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(AppPalette.accentRed.opacity(0.12), in: Capsule())
+                VStack(spacing: 2) {
+                    Text("Fit")
+                        .font(.system(size: 10, weight: .bold))
+                        .textCase(.uppercase)
+                    Text("\(Int(recommendation.fitScore.rounded()))")
+                        .font(.system(size: 24, weight: .black))
                 }
+                .foregroundStyle(AppPalette.accentBlue)
+                .frame(width: 50, height: 56)
+                .background(AppPalette.accentBlue.opacity(0.10), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
 
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack {
                     Text("What does this wine taste like?")
-                        .font(.headline.weight(.semibold))
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(AppPalette.ink)
                     Spacer()
                     if isInferred {
                         Text("Estimated profile")
-                            .font(.caption.weight(.bold))
+                            .font(.system(size: 10, weight: .bold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(AppPalette.accentRed.opacity(0.10), in: Capsule())
@@ -941,7 +1133,7 @@ private struct ResultCard: View {
                     }
                 }
 
-                VStack(spacing: 12) {
+                VStack(spacing: 1) {
                     ForEach(TasteDimension.allCases) { dimension in
                         TasteScaleRow(
                             dimension: dimension,
@@ -953,12 +1145,17 @@ private struct ResultCard: View {
 
                 if let reviewCount = recommendation.profile?.tasteReviewCount, reviewCount > 0 {
                     Text("Based on \(formatCount(reviewCount)) user review\(reviewCount == 1 ? "" : "s")")
-                        .font(.footnote)
+                        .font(.system(size: 13))
                         .foregroundStyle(AppPalette.muted)
                 }
             }
-            .padding(16)
-            .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(AppPalette.line.opacity(0.95), lineWidth: 1.2)
+            )
 
             DisclosureGroup(isExpanded: $isDetailsExpanded) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -1016,21 +1213,114 @@ private struct ResultCard: View {
             } label: {
                 HStack {
                     Text("Tasting notes & details")
-                        .font(.headline.weight(.semibold))
+                        .font(.system(size: 15, weight: .bold))
                     Spacer()
                 }
                 .foregroundStyle(AppPalette.ink)
             }
             .tint(AppPalette.ink)
         }
-        .padding(18)
-        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(10)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(AppPalette.line, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(AppPalette.line.opacity(0.95), lineWidth: 1.35)
                 .allowsHitTesting(false)
         )
-        .shadow(color: .black.opacity(0.05), radius: 14, y: 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("result-card-\(recommendation.candidateId)")
+    }
+}
+
+private struct CameraCaptureView: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
+
+    let onImageCaptured: (UIImage) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: CameraCaptureView
+
+        init(parent: CameraCaptureView) {
+            self.parent = parent
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onImageCaptured(image)
+            }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
+    }
+}
+
+private struct PhotoLibraryPickerView: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
+
+    let onImageDataSelected: (Data) -> Void
+
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = 1
+        configuration.preferredAssetRepresentationMode = .compatible
+
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        let parent: PhotoLibraryPickerView
+
+        init(parent: PhotoLibraryPickerView) {
+            self.parent = parent
+        }
+
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            parent.dismiss()
+            guard let provider = results.first?.itemProvider else {
+                return
+            }
+
+            if provider.canLoadObject(ofClass: UIImage.self) {
+                provider.loadObject(ofClass: UIImage.self) { [parent] object, _ in
+                    guard let image = object as? UIImage, let data = image.jpegData(compressionQuality: 0.92) else {
+                        return
+                    }
+
+                    DispatchQueue.main.async {
+                        parent.onImageDataSelected(data)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1039,7 +1329,7 @@ private struct ResultImageView: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [AppPalette.cardSecondary, AppPalette.background],
@@ -1055,20 +1345,25 @@ private struct ResultImageView: View {
                         image
                             .resizable()
                             .scaledToFit()
-                            .padding(12)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 6)
                     default:
                         Image(systemName: "wineglass.fill")
-                            .font(.system(size: 28))
+                            .font(.system(size: 22))
                             .foregroundStyle(AppPalette.accentBlue)
                     }
                 }
             } else {
                 Image(systemName: "wineglass.fill")
-                    .font(.system(size: 28))
+                    .font(.system(size: 22))
                     .foregroundStyle(AppPalette.accentBlue)
             }
         }
-        .frame(width: 110, height: 140)
+        .frame(width: 88, height: 150)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AppPalette.line, lineWidth: 1)
+        )
     }
 }
 
@@ -1150,28 +1445,32 @@ private struct VivinoRatingBlock: View {
     let ratingSource: WineRatingSource?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Text(String(format: "%.1f", max(0, min(5, rating))))
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(AppPalette.ink)
+        HStack(alignment: .bottom, spacing: 6) {
+            Text(String(format: "%.1f", max(0, min(5, rating))))
+                .font(.system(size: 20, weight: .black))
+                .foregroundStyle(AppPalette.ink)
+                .fontDesign(.default)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
 
-                HStack(spacing: 2) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 1) {
                     ForEach(0..<5, id: \.self) { index in
                         Image(systemName: starSymbol(for: index))
                             .foregroundStyle(AppPalette.accentRed)
-                            .font(.caption.weight(.bold))
+                            .font(.system(size: 11, weight: .bold))
                     }
                 }
-            }
+                .fixedSize(horizontal: true, vertical: false)
 
-            Text("\(formatCount(ratingCount)) rating\(ratingCount == 1 ? "" : "s")\(ratingSource == .wine ? " - all vintages" : "")")
-                .font(.footnote)
-                .foregroundStyle(AppPalette.muted)
+                Text("\(formatCount(ratingCount)) rating\(ratingCount == 1 ? "" : "s")\(ratingSource == .wine ? " - all vintages" : "")")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppPalette.muted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func starSymbol(for index: Int) -> String {
@@ -1190,44 +1489,73 @@ private struct VivinoRatingBlock: View {
 
 private struct AnalysisProgressCard: View {
     let progress: AnalysisProgressState
+    let isActive: Bool
+    let isBusy: Bool
+    let pollingPaused: Bool
+    let pollingStatusMessage: String?
+    let onCancel: () -> Void
+    let onResume: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(progress.title)
-                        .font(.caption.weight(.black))
+                        .font(.system(size: 13, weight: .black))
                         .textCase(.uppercase)
-                        .tracking(1.3)
+                        .tracking(1.2)
                         .foregroundStyle(progress.tint)
                     Text(progress.detail)
-                        .font(.subheadline)
+                        .font(.system(size: 16))
                         .foregroundStyle(AppPalette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer()
 
                 Text(progress.countLabel)
-                    .font(.headline.weight(.black))
+                    .font(.system(size: 22, weight: .black))
                     .foregroundStyle(progress.tint)
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 9)
                     .background(progress.tint.opacity(0.12), in: Capsule())
             }
 
-            if let fraction = progress.fraction {
-                ProgressView(value: fraction)
-                    .tint(progress.tint)
-            } else {
-                ProgressView()
-                    .tint(progress.tint)
+            GeometryReader { geometry in
+                let fraction = progress.fraction ?? 0.30
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(progress.tint.opacity(0.10))
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [progress.tint, progress.tint.opacity(0.72)],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(progress.processed > 0 ? 18 : 0, geometry.size.width * CGFloat(fraction)))
+                }
+            }
+            .frame(height: 14)
+
+            if let pollingStatusMessage {
+                Text(pollingStatusMessage)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(pollingPaused ? AppPalette.accentRed : AppPalette.muted)
+            }
+
+            if isActive, pollingPaused {
+                Button("Resume Updates", action: onResume)
+                    .accessibilityIdentifier("resume-updates-button")
+                    .buttonStyle(OutlineActionButtonStyle())
             }
         }
-        .padding(18)
-        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(16)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(progress.tint.opacity(0.18), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(progress.tint.opacity(0.24), lineWidth: 1.35)
                 .allowsHitTesting(false)
         )
     }
@@ -1313,9 +1641,11 @@ private struct SelectedSourceCard: View {
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(AppPalette.ink)
                     .lineLimit(2)
-                Text(subtitle)
-                    .font(.footnote)
-                    .foregroundStyle(AppPalette.muted)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(AppPalette.muted)
+                }
             }
 
             Spacer()
@@ -1362,26 +1692,112 @@ private struct StatusNotice: View {
     }
 }
 
+private struct OnboardingDots: View {
+    let currentStep: Int
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Capsule()
+                .fill(currentStep == 1 ? AppPalette.accentBlue : AppPalette.accentBlue.opacity(0.42))
+                .frame(width: currentStep == 1 ? 20 : 7, height: 7)
+            Capsule()
+                .fill(currentStep == 2 ? AppPalette.accentBlue : AppPalette.track)
+                .frame(width: currentStep == 2 ? 20 : 7, height: 7)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SectionNavigationDots: View {
+    let activeIndex: Int
+    let onSelect: (Int) -> Void
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { index in
+                Button {
+                    onSelect(index)
+                } label: {
+                    if index == activeIndex {
+                        Capsule()
+                            .fill(AppPalette.accentBlue)
+                            .frame(width: 7, height: 20)
+                    } else {
+                        Circle()
+                            .fill(AppPalette.line)
+                            .frame(width: 7, height: 7)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(sectionLabel(for: index))
+            }
+        }
+        .frame(width: 18)
+    }
+
+    private func sectionLabel(for index: Int) -> String {
+        switch index {
+        case 0:
+            return "Go to intro"
+        case 1:
+            return "Go to source"
+        default:
+            return "Go to results"
+        }
+    }
+}
+
 private struct SurfaceCard<Content: View>: View {
+    let width: CGFloat?
     let content: Content
 
-    init(@ViewBuilder content: () -> Content) {
+    init(width: CGFloat? = nil, @ViewBuilder content: () -> Content) {
+        self.width = width
         self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            content
+        let panelPadding: CGFloat = 14
+
+        if let width {
+            let innerWidth = max(0, width - (panelPadding * 2))
+
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+            .frame(width: innerWidth, alignment: .leading)
+            .padding(panelPadding)
+            .frame(width: width, alignment: .leading)
+            .background(Color.white.opacity(0.96), in: RoundedRectangle(cornerRadius: AppLayout.panelRadius, style: .continuous))
+            .overlay(ResultsPanelBorder())
+            .shadow(color: .black.opacity(0.10), radius: 26, y: 14)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(panelPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.96), in: RoundedRectangle(cornerRadius: AppLayout.panelRadius, style: .continuous))
+            .overlay(ResultsPanelBorder())
+            .shadow(color: .black.opacity(0.10), radius: 26, y: 14)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(AppPalette.line, lineWidth: 1)
-                .allowsHitTesting(false)
-        )
-        .shadow(color: .black.opacity(0.05), radius: 12, y: 6)
+    }
+}
+
+private struct ResultsPanelBorder: View {
+    var body: some View {
+        let warmEdge = Color(red: 0.78, green: 0.75, blue: 0.68).opacity(0.42)
+
+        ZStack {
+            RoundedRectangle(cornerRadius: AppLayout.panelRadius, style: .continuous)
+                .stroke(Color.white.opacity(0.86), lineWidth: 2)
+            RoundedRectangle(cornerRadius: AppLayout.panelRadius, style: .continuous)
+                .inset(by: 0.5)
+                .stroke(warmEdge, lineWidth: 0.75)
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -1404,13 +1820,61 @@ private struct DividerLabel: View {
     }
 }
 
+private struct SourceDropZone: View {
+    let isReading: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 12) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 29, weight: .semibold))
+                    .foregroundStyle(AppPalette.accentBlue)
+
+                VStack(spacing: 6) {
+                    Text("Drop a photo, screenshot, or PDF here")
+                        .font(AppTypography.body(size: 17, weight: .heavy))
+                        .foregroundStyle(AppPalette.ink)
+                        .multilineTextAlignment(.center)
+
+                    Text(isReading ? "Reading image with Apple Vision OCR..." : "or click to browse")
+                        .font(AppTypography.body(size: 15))
+                        .foregroundStyle(AppPalette.muted)
+                        .multilineTextAlignment(.center)
+                }
+
+                if isReading {
+                    ProgressView()
+                        .tint(AppPalette.accentBlue)
+                        .padding(.top, 2)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 142)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 20)
+            .background(Color.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(
+                        AppPalette.accentBlue.opacity(0.25),
+                        style: StrokeStyle(lineWidth: 2, dash: [5, 5])
+                    )
+                    .allowsHitTesting(false)
+            )
+        }
+        .accessibilityIdentifier("source-drop-zone")
+        .buttonStyle(.plain)
+    }
+}
+
 private struct StoryImageBreakCard: View {
     let title: String
     let imageName: String
     let isLeading: Bool
 
     var body: some View {
-        ZStack(alignment: isLeading ? .bottomLeading : .bottomTrailing) {
+        ZStack {
             Image(imageName)
                 .resizable()
                 .scaledToFill()
@@ -1418,25 +1882,23 @@ private struct StoryImageBreakCard: View {
 
             LinearGradient(
                 colors: [
-                    Color.black.opacity(0.12),
-                    Color.black.opacity(0.22),
-                    Color.black.opacity(0.55)
+                    Color.black.opacity(0.45),
+                    Color.black.opacity(0.45)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
 
             Text(title)
-                .font(AppTypography.display(size: 34))
-                .tracking(-1.02)
-                .multilineTextAlignment(isLeading ? .leading : .trailing)
+                .font(AppTypography.display(size: 30))
+                .tracking(-0.6)
+                .multilineTextAlignment(.center)
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, alignment: isLeading ? .leading : .trailing)
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 24)
-                .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 220)
+        .frame(height: max(360, UIScreen.main.bounds.height * 0.5))
         .clipped()
     }
 }
@@ -1480,55 +1942,72 @@ private struct TasteScaleRow: View {
     var onChange: ((Int) -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(dimension.label)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppPalette.ink)
-                Spacer()
-                if let value {
-                    Text("\(value)")
-                        .font(.footnote.weight(.bold))
-                        .foregroundStyle(tone == .uncertain ? AppPalette.muted : AppPalette.accentBlue)
-                }
-            }
+        let isInteractive = onChange != nil
+        let markerWidth: CGFloat = isInteractive ? 52 : 32
+        let trackHeight: CGFloat = isInteractive ? 10 : 8
+        let labelWidth: CGFloat = isInteractive ? 72 : 52
+        let labelSize: CGFloat = isInteractive ? 15 : 11
+        let rowSpacing: CGFloat = isInteractive ? 10 : 5
 
-            if let onChange {
-                Slider(
-                    value: Binding(
-                        get: { Double(value ?? 3) },
-                        set: { onChange(Int($0.rounded())) }
-                    ),
-                    in: 1...5,
-                    step: 1
-                )
-                .tint(tone == .uncertain ? AppPalette.muted : AppPalette.accentBlue)
-            } else {
+        HStack(spacing: rowSpacing) {
+            Text(dimension.lowLabel)
+                .font(.system(size: labelSize, weight: .semibold))
+                .foregroundStyle(AppPalette.ink)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(width: labelWidth, alignment: .leading)
+
+            ZStack {
                 GeometryReader { geometry in
+                    let trackWidth = geometry.size.width
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(tone == .uncertain ? AppPalette.trackMuted : AppPalette.track)
-                            .frame(height: 8)
+                            .frame(height: trackHeight)
 
                         if let value {
-                            Circle()
+                            Capsule()
                                 .fill(tone == .uncertain ? AppPalette.muted : AppPalette.accentBlue)
-                                .frame(width: 18, height: 18)
-                                .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
-                                .offset(x: tasteMarkerOffset(value: value, width: geometry.size.width))
+                                .frame(width: markerWidth, height: trackHeight)
+                                .shadow(color: (tone == .uncertain ? AppPalette.muted : AppPalette.accentBlue).opacity(isInteractive ? 0.22 : 0.16), radius: isInteractive ? 7 : 4, y: isInteractive ? 3 : 2)
+                                .offset(x: tasteMarkerOffset(value: value, width: trackWidth, markerWidth: markerWidth))
                         }
                     }
+                    .frame(height: geometry.size.height)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { gesture in
+                                guard let onChange else { return }
+                                let available = max(1, trackWidth - markerWidth)
+                                let clampedX = min(max(gesture.location.x - markerWidth / 2, 0), available)
+                                let next = Int((clampedX / available * 4).rounded()) + 1
+                                onChange(max(1, min(5, next)))
+                            }
+                    )
                 }
-                .frame(height: 18)
-            }
 
-            HStack {
-                Text(dimension.lowLabel)
-                Spacer()
-                Text(dimension.highLabel)
+                if let onChange {
+                    Slider(
+                        value: Binding(
+                            get: { Double(value ?? 3) },
+                            set: { onChange(Int($0.rounded())) }
+                        ),
+                        in: 1...5,
+                        step: 1
+                    )
+                    .accessibilityIdentifier("taste-\(dimension.testIdentifier)-slider")
+                    .opacity(0.02)
+                }
             }
-            .font(.caption)
-            .foregroundStyle(AppPalette.muted)
+            .frame(height: isInteractive ? 26 : 16)
+
+            Text(dimension.highLabel)
+                .font(.system(size: labelSize, weight: .semibold))
+                .foregroundStyle(AppPalette.ink)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(width: labelWidth, alignment: .trailing)
         }
     }
 }
@@ -1538,14 +2017,13 @@ private struct PrimaryActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(AppTypography.body(size: 18, weight: .heavy))
-            .tracking(0.18)
+            .font(AppTypography.body(size: 17, weight: .heavy))
             .foregroundStyle(.white)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.horizontal, 36)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 15)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous)
                     .fill(configuration.isPressed ? AppPalette.accentRed.opacity(0.84) : AppPalette.accentRed)
             )
             .shadow(color: AppPalette.accentRed.opacity(0.18), radius: configuration.isPressed ? 6 : 10, y: 4)
@@ -1558,13 +2036,36 @@ private struct CompactPrimaryActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(AppTypography.body(size: 14, weight: .bold))
+            .font(AppTypography.body(size: 15, weight: .bold))
             .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .frame(minHeight: 38)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous)
+                    .fill(configuration.isPressed ? AppPalette.accentRed.opacity(0.84) : AppPalette.accentRed)
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+    }
+}
+
+private struct ResultsActionButtonStyle: ButtonStyle {
+    var minWidth: CGFloat
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .heavy))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.86)
+            .frame(minWidth: minWidth)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous)
                     .fill(configuration.isPressed ? AppPalette.accentRed.opacity(0.84) : AppPalette.accentRed)
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
@@ -1572,10 +2073,12 @@ private struct CompactPrimaryActionButtonStyle: ButtonStyle {
 }
 
 private struct OutlineActionButtonStyle: ButtonStyle {
+    var tint = AppPalette.accentBlue
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(AppTypography.body(size: 14, weight: .bold))
-            .foregroundStyle(AppPalette.accentBlue)
+            .foregroundStyle(tint)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1592,12 +2095,14 @@ private struct NavToggleButtonStyle: ButtonStyle {
         configuration.label
             .font(AppTypography.body(size: 14, weight: .bold))
             .foregroundStyle(AppPalette.accentBlue)
+            .lineLimit(1)
+            .frame(width: 72)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(Color.clear, in: RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(AppPalette.line, lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous)
+                    .stroke(AppPalette.line.opacity(0.95), lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.84 : 1)
     }
@@ -1684,11 +2189,12 @@ private enum ResultSortOrder: CaseIterable, Identifiable, Equatable {
     var label: String {
         switch self {
         case .recommended:
-            return "Most recommended"
+            return "Best fit"
         case .discovered:
-            return "Image order"
+            return "Menu order"
         }
     }
+
 }
 
 private enum ResultProfileFilter: Equatable {
@@ -1708,6 +2214,19 @@ private enum TasteDimension: CaseIterable, Identifiable {
     case acidity
 
     var id: Self { self }
+
+    var testIdentifier: String {
+        switch self {
+        case .body:
+            return "body"
+        case .tannin:
+            return "tannin"
+        case .sweetness:
+            return "sweetness"
+        case .acidity:
+            return "acidity"
+        }
+    }
 
     var label: String {
         switch self {
@@ -2128,9 +2647,9 @@ private func formatCount(_ count: Int) -> String {
     return formatter.string(from: NSNumber(value: count)) ?? "\(count)"
 }
 
-private func tasteMarkerOffset(value: Int, width: CGFloat) -> CGFloat {
+private func tasteMarkerOffset(value: Int, width: CGFloat, markerWidth: CGFloat = 42) -> CGFloat {
     let normalized = CGFloat(max(1, min(5, value)) - 1) / 4
-    let available = max(0, width - 18)
+    let available = max(0, width - markerWidth)
     return normalized * available
 }
 

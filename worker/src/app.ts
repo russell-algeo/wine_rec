@@ -7,6 +7,7 @@ import Fastify from "fastify";
 import { z } from "zod";
 
 import {
+  createAnalysisFromClientOcrRequestSchema,
   createAnalysisResponseSchema,
 } from "@wine-rec/contracts";
 
@@ -14,6 +15,7 @@ import { appConfig } from "./config.js";
 import {
   RequestError,
   cancelAnalysis,
+  createClientOcrAnalysis,
   createUploadAnalysis,
   createUrlAnalysis,
   getAnalysisRun,
@@ -110,6 +112,24 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     try {
       return createAnalysisResponseSchema.parse(await createUrlAnalysis(parsed));
+    } catch (error) {
+      if (error instanceof RequestError) {
+        return reply.status(error.statusCode).send({ message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/api/client-ocr", async (request, reply) => {
+    const parsed = createAnalysisFromClientOcrRequestSchema.parse(request.body);
+
+    try {
+      return createAnalysisResponseSchema.parse(
+        await createClientOcrAnalysis({
+          sourceFilename: parsed.sourceFilename,
+          recognizedText: parsed.recognizedText,
+        }),
+      );
     } catch (error) {
       if (error instanceof RequestError) {
         return reply.status(error.statusCode).send({ message: error.message });
