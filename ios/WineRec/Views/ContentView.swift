@@ -10,7 +10,8 @@ private enum AppArtwork {
 }
 
 private enum AppLayout {
-    static let navHeight: CGFloat = 48
+    static let navHeight: CGFloat = 34
+    static let navBottomPadding: CGFloat = 10
     static let horizontalInset: CGFloat = 16
     static let resultsHorizontalInset: CGFloat = 16
     static let mobileContentWidth: CGFloat = 640
@@ -56,6 +57,10 @@ struct ContentView: View {
         topChromeHeight + 24
     }
 
+    private func topChromeHeight(topSafeInset: CGFloat) -> CGFloat {
+        max(AppLayout.navHeight + AppLayout.navBottomPadding, topSafeInset + AppLayout.navBottomPadding)
+    }
+
     private var resultsBottomPadding: CGFloat {
         32
     }
@@ -80,7 +85,7 @@ struct ContentView: View {
                 GeometryReader { geometry in
                     let topSafeInset = geometry.safeAreaInsets.top
                     let bottomSafeInset = geometry.safeAreaInsets.bottom
-                    let topChromeHeight = AppLayout.navHeight + topSafeInset
+                    let topChromeHeight = topChromeHeight(topSafeInset: topSafeInset)
 
                     ZStack(alignment: .top) {
                         AppBackground()
@@ -196,9 +201,12 @@ struct ContentView: View {
     }
 
     private func topBar(topInset: CGFloat) -> some View {
-        HStack(spacing: 8) {
+        let chromeHeight = topChromeHeight(topSafeInset: topInset)
+        let navTopOffset = max(8, topInset - AppLayout.navHeight)
+
+        return HStack(spacing: 8) {
             Text("Wine Rec")
-                .font(AppTypography.display(size: 20))
+                .font(AppTypography.display(size: 19))
                 .tracking(-0.5)
                 .foregroundStyle(AppPalette.ink)
                 .lineLimit(1)
@@ -217,8 +225,8 @@ struct ContentView: View {
         .padding(.horizontal, AppLayout.horizontalInset)
         .frame(maxWidth: .infinity)
         .frame(height: AppLayout.navHeight)
-        .padding(.top, topInset)
-        .frame(height: AppLayout.navHeight + topInset, alignment: .top)
+        .padding(.top, navTopOffset)
+        .frame(height: chromeHeight, alignment: .top)
         .background(AppPalette.background.opacity(0.85))
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -2122,8 +2130,8 @@ private struct NavToggleButtonStyle: ButtonStyle {
             .foregroundStyle(AppPalette.accentBlue)
             .lineLimit(1)
             .frame(width: 64)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
             .background(Color.clear, in: RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous)
