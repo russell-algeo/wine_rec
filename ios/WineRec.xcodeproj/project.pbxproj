@@ -7,18 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		03C8449348212C034350A070 /* VisionOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E402CE5448EBD8A6FF12F04C /* VisionOCRService.swift */; };
 		508601ED8080348D51DBFF63 /* WineRecApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDECCAA5D6ABBD39F86F8425 /* WineRecApp.swift */; };
+		5C4FA5F460DA5C11A71A87A3 /* WineRecUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AF75CE0EF5A731FB0A71F20 /* WineRecUITests.swift */; };
 		7143A0403CC72618146EA0A9 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51294050E7B50B77B65D1EC /* AppModel.swift */; };
 		80C3C7BF6E40BDA35A5F6200 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3444851063480FF269A86066 /* APIClient.swift */; };
 		861364942F4CCCAF85251D36 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6E4B2C678EBF6A1F363390DC /* Assets.xcassets */; };
-		9C6F02729B399A9F56B1D3E4 /* VisionOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3A2C317B82C9F3A6914F25 /* VisionOCRService.swift */; };
-		A10000000000000000000001 /* WineRecUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* WineRecUITests.swift */; };
 		D20F1C99E685B8DBA6B097E9 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17ACB3F753FBEC3CC7F7909E /* ContentView.swift */; };
 		FC50A08FA59C485456E4A6E3 /* DomainModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F8FF8812A5C4A405B97C78A /* DomainModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		A10000000000000000000010 /* PBXContainerItemProxy */ = {
+		36FF6267C8EF6EDC56E11DCE /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 79F8814FC06BA11190170AF5 /* Project object */;
 			proxyType = 1;
@@ -28,35 +28,25 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		0E3A2C317B82C9F3A6914F25 /* VisionOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionOCRService.swift; sourceTree = "<group>"; };
 		17ACB3F753FBEC3CC7F7909E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3444851063480FF269A86066 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5F8FF8812A5C4A405B97C78A /* DomainModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainModels.swift; sourceTree = "<group>"; };
 		6E4B2C678EBF6A1F363390DC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		A10000000000000000000002 /* WineRecUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WineRecUITests.swift; sourceTree = "<group>"; };
-		A10000000000000000000003 /* WineRecUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WineRecUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A10000000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A4A0E245FB24265153753AE6 /* WineRec.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WineRec.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7AF75CE0EF5A731FB0A71F20 /* WineRecUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WineRecUITests.swift; sourceTree = "<group>"; };
+		A4A0E245FB24265153753AE6 /* WineRec.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WineRec.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A93C929681741EE7AD88FFAA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B0F831C9F0F3BFCBACB33629 /* WineRecUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WineRecUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E402CE5448EBD8A6FF12F04C /* VisionOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionOCRService.swift; sourceTree = "<group>"; };
 		E51294050E7B50B77B65D1EC /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		FDECCAA5D6ABBD39F86F8425 /* WineRecApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WineRecApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
-
-/* Begin PBXFrameworksBuildPhase section */
-		A10000000000000000000006 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		154A287921F4B88D5BF447D7 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				A4A0E245FB24265153753AE6 /* WineRec.app */,
-				A10000000000000000000003 /* WineRecUITests.xctest */,
+				B0F831C9F0F3BFCBACB33629 /* WineRecUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -65,7 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				6E4B2C678EBF6A1F363390DC /* Assets.xcassets */,
-				A10000000000000000000014 /* Info.plist */,
+				A93C929681741EE7AD88FFAA /* Info.plist */,
 				FDECCAA5D6ABBD39F86F8425 /* WineRecApp.swift */,
 				F18D61C2D730D5B8EFEB48A0 /* Models */,
 				7106D062ED692CBECBAAD2E3 /* Views */,
@@ -85,15 +75,15 @@
 			isa = PBXGroup;
 			children = (
 				159BFF7A4FD924A3218F291F /* WineRec */,
-				A10000000000000000000004 /* WineRecUITests */,
+				A0319F92847DCAE98CD4C9D4 /* WineRecUITests */,
 				154A287921F4B88D5BF447D7 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		A10000000000000000000004 /* WineRecUITests */ = {
+		A0319F92847DCAE98CD4C9D4 /* WineRecUITests */ = {
 			isa = PBXGroup;
 			children = (
-				A10000000000000000000002 /* WineRecUITests.swift */,
+				7AF75CE0EF5A731FB0A71F20 /* WineRecUITests.swift */,
 			);
 			path = WineRecUITests;
 			sourceTree = "<group>";
@@ -104,7 +94,7 @@
 				3444851063480FF269A86066 /* APIClient.swift */,
 				E51294050E7B50B77B65D1EC /* AppModel.swift */,
 				5F8FF8812A5C4A405B97C78A /* DomainModels.swift */,
-				0E3A2C317B82C9F3A6914F25 /* VisionOCRService.swift */,
+				E402CE5448EBD8A6FF12F04C /* VisionOCRService.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -112,24 +102,22 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A10000000000000000000008 /* WineRecUITests */ = {
+		85AAF1A6B226B250E51BAACB /* WineRecUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A10000000000000000000013 /* Build configuration list for PBXNativeTarget "WineRecUITests" */;
+			buildConfigurationList = 853D0CE3B2AAFE1D011FAC90 /* Build configuration list for PBXNativeTarget "WineRecUITests" */;
 			buildPhases = (
-				A10000000000000000000005 /* Sources */,
-				A10000000000000000000006 /* Frameworks */,
-				A10000000000000000000007 /* Resources */,
+				CEFF318FEF04BDCCAFAD35CC /* Sources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				A10000000000000000000009 /* PBXTargetDependency */,
+				EA3D77E7A4757D99107DC417 /* PBXTargetDependency */,
 			);
 			name = WineRecUITests;
 			packageProductDependencies = (
 			);
 			productName = WineRecUITests;
-			productReference = A10000000000000000000003 /* WineRecUITests.xctest */;
+			productReference = B0F831C9F0F3BFCBACB33629 /* WineRecUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 		D071D05FC9984EDB5FB7EF4B /* WineRec */ = {
@@ -159,12 +147,13 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
-					A10000000000000000000008 = {
+					85AAF1A6B226B250E51BAACB = {
 						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 						TestTargetID = D071D05FC9984EDB5FB7EF4B;
 					};
 					D071D05FC9984EDB5FB7EF4B = {
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -184,7 +173,7 @@
 			projectRoot = "";
 			targets = (
 				D071D05FC9984EDB5FB7EF4B /* WineRec */,
-				A10000000000000000000008 /* WineRecUITests */,
+				85AAF1A6B226B250E51BAACB /* WineRecUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -195,13 +184,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				861364942F4CCCAF85251D36 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		A10000000000000000000007 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -216,26 +198,26 @@
 				7143A0403CC72618146EA0A9 /* AppModel.swift in Sources */,
 				D20F1C99E685B8DBA6B097E9 /* ContentView.swift in Sources */,
 				FC50A08FA59C485456E4A6E3 /* DomainModels.swift in Sources */,
-				9C6F02729B399A9F56B1D3E4 /* VisionOCRService.swift in Sources */,
+				03C8449348212C034350A070 /* VisionOCRService.swift in Sources */,
 				508601ED8080348D51DBFF63 /* WineRecApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A10000000000000000000005 /* Sources */ = {
+		CEFF318FEF04BDCCAFAD35CC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000000000000000000001 /* WineRecUITests.swift in Sources */,
+				5C4FA5F460DA5C11A71A87A3 /* WineRecUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		A10000000000000000000009 /* PBXTargetDependency */ = {
+		EA3D77E7A4757D99107DC417 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = D071D05FC9984EDB5FB7EF4B /* WineRec */;
-			targetProxy = A10000000000000000000010 /* PBXContainerItemProxy */;
+			targetProxy = 36FF6267C8EF6EDC56E11DCE /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -274,6 +256,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -294,7 +277,10 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_WINE_REC_API_BASE_URL = "$(WINE_REC_API_BASE_URL)";
+				INFOPLIST_KEY_WineRecAPIBaseURL = "$(WINE_REC_API_BASE_URL)";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -303,7 +289,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				SWIFT_VERSION = 5.10;
+				SWIFT_VERSION = 5.1;
 				TARGETED_DEVICE_FAMILY = 1;
 				WINE_REC_API_BASE_URL = "https://wine-rec.vercel.app";
 			};
@@ -315,24 +301,45 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = AVXWGPJT6Y;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WineRec/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WineRec;
 				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Wine Rec uses the camera to capture wine lists and read them on-device with Apple Vision OCR.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Wine Rec uses selected photos so Apple Vision can read wine-list text on-device.";
-				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
-				INFOPLIST_KEY_WINE_REC_API_BASE_URL = "$(WINE_REC_API_BASE_URL)";
-				INFOPLIST_KEY_WineRecAPIBaseURL = "$(WINE_REC_API_BASE_URL)";
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = (
+					armv7,
+				);
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = (
+					UIInterfaceOrientationPortrait,
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
-				WINE_REC_API_BASE_URL = "https://wine-rec.vercel.app";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		8A566C37562FC05CD87B3B8E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.russellalgeo.WineRecUITests;
+				PRODUCT_NAME = WineRecUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = WineRec;
 			};
 			name = Debug;
 		};
@@ -370,6 +377,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -384,7 +392,10 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_WINE_REC_API_BASE_URL = "$(WINE_REC_API_BASE_URL)";
+				INFOPLIST_KEY_WineRecAPIBaseURL = "$(WINE_REC_API_BASE_URL)";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.russellalgeo.WineRec;
@@ -392,58 +403,9 @@
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_VERSION = 5.10;
+				SWIFT_VERSION = 5.1;
 				TARGETED_DEVICE_FAMILY = 1;
 				WINE_REC_API_BASE_URL = "https://wine-rec.vercel.app";
-			};
-			name = Release;
-		};
-		A10000000000000000000011 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
-				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.russellalgeo.WineRecUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				SWIFT_VERSION = 5.10;
-				TARGETED_DEVICE_FAMILY = 1;
-				TEST_TARGET_NAME = WineRec;
-				WRAPPER_EXTENSION = xctest;
-			};
-			name = Debug;
-		};
-		A10000000000000000000012 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
-				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.russellalgeo.WineRecUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SWIFT_VERSION = 5.10;
-				TARGETED_DEVICE_FAMILY = 1;
-				TEST_TARGET_NAME = WineRec;
-				VALIDATE_PRODUCT = YES;
-				WRAPPER_EXTENSION = xctest;
 			};
 			name = Release;
 		};
@@ -453,35 +415,56 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = AVXWGPJT6Y;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WineRec/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WineRec;
 				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Wine Rec uses the camera to capture wine lists and read them on-device with Apple Vision OCR.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Wine Rec uses selected photos so Apple Vision can read wine-list text on-device.";
-				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
-				INFOPLIST_KEY_WINE_REC_API_BASE_URL = "$(WINE_REC_API_BASE_URL)";
-				INFOPLIST_KEY_WineRecAPIBaseURL = "$(WINE_REC_API_BASE_URL)";
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = (
+					armv7,
+				);
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = (
+					UIInterfaceOrientationPortrait,
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
-				WINE_REC_API_BASE_URL = "https://wine-rec.vercel.app";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		D5EFA83B0246F5E508C2BBC2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.russellalgeo.WineRecUITests;
+				PRODUCT_NAME = WineRecUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = WineRec;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A10000000000000000000013 /* Build configuration list for PBXNativeTarget "WineRecUITests" */ = {
+		853D0CE3B2AAFE1D011FAC90 /* Build configuration list for PBXNativeTarget "WineRecUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A10000000000000000000011 /* Debug */,
-				A10000000000000000000012 /* Release */,
+				8A566C37562FC05CD87B3B8E /* Debug */,
+				D5EFA83B0246F5E508C2BBC2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

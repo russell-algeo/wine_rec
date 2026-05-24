@@ -21,20 +21,6 @@
                ReferencedContainer = "container:WineRec.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "NO"
-            buildForProfiling = "NO"
-            buildForArchiving = "NO"
-            buildForAnalyzing = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A10000000000000000000008"
-               BuildableName = "WineRecUITests.xctest"
-               BlueprintName = "WineRecUITests"
-               ReferencedContainer = "container:WineRec.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -58,7 +44,7 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A10000000000000000000008"
+               BlueprintIdentifier = "85AAF1A6B226B250E51BAACB"
                BuildableName = "WineRecUITests.xctest"
                BlueprintName = "WineRecUITests"
                ReferencedContainer = "container:WineRec.xcodeproj">

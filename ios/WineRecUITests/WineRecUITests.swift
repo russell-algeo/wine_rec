@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 final class WineRecUITests: XCTestCase {
@@ -7,6 +8,12 @@ final class WineRecUITests: XCTestCase {
         continueAfterFailure = false
         app.launchArguments = ["-ui-testing-reset-state"]
         app.launchEnvironment["WINE_REC_API_BASE_URL"] = "https://wine-rec.vercel.app"
+        if name.contains("TasteGetStartedUrlAndCancelFlow") {
+            app.launchEnvironment["WINE_REC_UI_TEST_PREFILL_URL"] = "https://grahamwine.co/collections/pinot-noir"
+        }
+        if name.contains("PhotoLibraryVisionOcrSubmissionResultsAndFilters") || name.contains("CameraEntryPointUsesVisionOcrSubmissionPathInSimulator") {
+            app.launchEnvironment["WINE_REC_UI_TEST_FIXTURE_IMAGE_PATH"] = fixtureImagePath()
+        }
         app.launch()
     }
 
@@ -19,8 +26,6 @@ final class WineRecUITests: XCTestCase {
         tap(app.buttons["get-started-button"])
         let urlField = app.textFields["wine-list-url-field"]
         XCTAssertTrue(urlField.waitForExistence(timeout: 5))
-        urlField.tap()
-        urlField.typeText("https://grahamwine.co/collections/pinot-noir")
         tap(app.buttons["url-next-button"])
 
         XCTAssertTrue(app.buttons["analyze-button"].waitForExistence(timeout: 20))
@@ -34,8 +39,7 @@ final class WineRecUITests: XCTestCase {
 
     func testPhotoLibraryVisionOcrSubmissionResultsAndFilters() throws {
         tap(app.buttons["get-started-button"])
-        openImportOption("Photos")
-        selectFirstPhotoFromPresentedPicker()
+        importFixtureImageOrOpenPicker("Photos")
 
         XCTAssertTrue(app.staticTexts["Selected photo.jpg"].waitForExistence(timeout: 30))
         adjustSlider("taste-tannin-slider", to: 1.0)
@@ -47,13 +51,32 @@ final class WineRecUITests: XCTestCase {
 
     func testCameraEntryPointUsesVisionOcrSubmissionPathInSimulator() throws {
         tap(app.buttons["get-started-button"])
-        openImportOption("Camera")
-        selectFirstPhotoFromPresentedPicker()
+        importFixtureImageOrOpenPicker("Camera")
 
         XCTAssertTrue(app.staticTexts["Selected photo.jpg"].waitForExistence(timeout: 30))
         tap(app.buttons["analyze-button"])
 
         waitForCompletedResults()
+    }
+
+    func testCaptureVisualParityScreenshots() throws {
+        let screenshotDirectory = ProcessInfo.processInfo.environment["WINE_REC_SCREENSHOT_DIR"] ?? defaultScreenshotDirectory()
+
+        try captureScreenshot(named: "ios-ui-hero.png", in: screenshotDirectory)
+
+        tap(app.buttons["get-started-button"])
+        XCTAssertTrue(app.textFields["wine-list-url-field"].waitForExistence(timeout: 5))
+        sleep(1)
+        try captureScreenshot(named: "ios-ui-ingest.png", in: screenshotDirectory)
+
+        tap(app.buttons["section-nav-2"])
+        sleep(1)
+        try captureScreenshot(named: "ios-ui-results-empty.png", in: screenshotDirectory)
+
+        tap(app.buttons["section-nav-1"])
+        app.swipeUp(velocity: .slow)
+        sleep(1)
+        try captureScreenshot(named: "ios-ui-story-break.png", in: screenshotDirectory)
     }
 
     private func exerciseResultControls() {
@@ -86,6 +109,21 @@ final class WineRecUITests: XCTestCase {
     private func openImportOption(_ label: String) {
         tap(app.buttons["source-drop-zone"])
         tap(app.buttons[label].firstMatch)
+    }
+
+    private func importFixtureImageOrOpenPicker(_ label: String) {
+        if app.staticTexts["Selected photo.jpg"].waitForExistence(timeout: 2) || app.buttons["analyze-button"].exists {
+            return
+        }
+
+        let fixtureButton = app.buttons["ui-test-import-image-button"]
+        if fixtureButton.waitForExistence(timeout: 2) {
+            fixtureButton.tap()
+            return
+        }
+
+        openImportOption(label)
+        selectFirstPhotoFromPresentedPicker()
     }
 
     private func waitForCompletedResults() {
@@ -124,10 +162,11 @@ final class WineRecUITests: XCTestCase {
         ]
 
         for pickerApp in pickerApps {
-            let continueButton = pickerApp.buttons["Continue"]
-            if continueButton.waitForExistence(timeout: 2) {
-                continueButton.tap()
-            }
+            tapFirstExistingButton(
+                ["Continue", "Allow Full Access", "Allow Access to All Photos", "Select Photos…", "Select Photos..."],
+                in: pickerApp,
+                timeout: 2
+            )
 
             let allPhotos = pickerApp.buttons["All Photos"]
             if allPhotos.waitForExistence(timeout: 2) {
@@ -177,8 +216,66 @@ final class WineRecUITests: XCTestCase {
         slider.adjust(toNormalizedSliderPosition: normalizedPosition)
     }
 
+    private func enterText(_ text: String, into field: XCUIElement) {
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Missing text field \(field)")
+        field.tap()
+
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+
+        if app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            field.typeText(text)
+            return
+        }
+
+        UIPasteboard.general.string = text
+        field.press(forDuration: 0.8)
+        let paste = app.menuItems["Paste"]
+        XCTAssertTrue(paste.waitForExistence(timeout: 3), "Text field did not accept focus and Paste menu did not appear")
+        paste.tap()
+    }
+
     private func tap(_ element: XCUIElement, timeout: TimeInterval = 10) {
         XCTAssertTrue(element.waitForExistence(timeout: timeout), "Missing element \(element)")
         element.tap()
+    }
+
+    @discardableResult
+    private func tapFirstExistingButton(_ labels: [String], in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        for label in labels {
+            let button = app.buttons[label]
+            if button.waitForExistence(timeout: timeout) {
+                button.tap()
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func captureScreenshot(named name: String, in directory: String) throws {
+        let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let screenshot = XCUIScreen.main.screenshot()
+        try screenshot.pngRepresentation.write(to: directoryURL.appendingPathComponent(name))
+    }
+
+    private func defaultScreenshotDirectory() -> String {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("reports/wine-rec-parity", isDirectory: true)
+            .path
+    }
+
+    private func fixtureImagePath() -> String {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("main/web/public/images/bottle-shelf.jpg")
+            .path
     }
 }
