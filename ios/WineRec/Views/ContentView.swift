@@ -12,7 +12,7 @@ private enum AppArtwork {
 private enum AppLayout {
     static let navHeight: CGFloat = 56
     static let horizontalInset: CGFloat = 16
-    static let resultsHorizontalInset: CGFloat = 8
+    static let resultsHorizontalInset: CGFloat = 16
     static let mobileContentWidth: CGFloat = 640
     static let panelRadius: CGFloat = 20
     static let controlRadius: CGFloat = 8
@@ -38,15 +38,35 @@ struct ContentView: View {
     @State private var includePriceUnavailable = true
 
     private var heroHeight: CGFloat {
-        UIScreen.main.bounds.height + 90
+        UIScreen.main.bounds.height
     }
 
     private var shouldStackPrimaryControls: Bool {
         horizontalSizeClass == .compact && UIScreen.main.bounds.width < 430
     }
 
-    private var sectionTopPadding: CGFloat {
-        126
+    private var ingestTopPadding: CGFloat {
+        48
+    }
+
+    private var ingestBottomPadding: CGFloat {
+        28
+    }
+
+    private var resultsTopPadding: CGFloat {
+        48
+    }
+
+    private var resultsBottomPadding: CGFloat {
+        32
+    }
+
+    private var uiTestFixtureImagePath: String? {
+        guard ProcessInfo.processInfo.arguments.contains("-ui-testing-reset-state") else {
+            return nil
+        }
+
+        return ProcessInfo.processInfo.environment["WINE_REC_UI_TEST_FIXTURE_IMAGE_PATH"]
     }
 
     private func confirmPendingURL() {
@@ -77,25 +97,26 @@ struct ContentView: View {
                                 )
 
                                 resultsSection(width: max(0, geometry.size.width - (AppLayout.resultsHorizontalInset * 2)))
-                                    .padding(.top, sectionTopPadding)
-                                    .padding(.bottom, 48)
+                                    .padding(.top, resultsTopPadding)
+                                    .padding(.bottom, resultsBottomPadding)
                                     .id("results")
 
                                 StoryImageBreakCard(
                                     title: "CURATED BY DATA.\nCHOSEN BY TASTE.",
                                     imageName: AppArtwork.shelfBreak,
-                                    isLeading: true
+                                    isLeading: true,
+                                    minimumHeight: max(530, UIScreen.main.bounds.height * 0.63)
                                 )
                             }
                             .frame(width: geometry.size.width, alignment: .top)
                             .padding(.bottom, 40)
                         }
 
-                        topBar(proxy: proxy, topInset: geometry.safeAreaInsets.top)
+                        topBar(proxy: proxy)
 
                         if showingTastePanel {
                             tasteDrawer
-                                .padding(.top, AppLayout.navHeight + geometry.safeAreaInsets.top)
+                                .padding(.top, AppLayout.navHeight)
                                 .transition(.opacity)
                         }
                     }
@@ -171,7 +192,7 @@ struct ContentView: View {
         }
     }
 
-    private func topBar(proxy: ScrollViewProxy, topInset: CGFloat) -> some View {
+    private func topBar(proxy: ScrollViewProxy) -> some View {
         HStack(spacing: 14) {
             SectionNavigationDots(activeIndex: activePageSection) { index in
                 let sectionID = ["hero", "ingest", "results"][index]
@@ -200,8 +221,6 @@ struct ContentView: View {
         .padding(.horizontal, AppLayout.horizontalInset)
         .frame(maxWidth: .infinity)
         .frame(height: AppLayout.navHeight)
-        .padding(.top, topInset)
-        .frame(height: AppLayout.navHeight + topInset, alignment: .top)
         .background(AppPalette.background.opacity(0.85))
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -273,11 +292,11 @@ struct ContentView: View {
                 .frame(height: 140)
                 .frame(maxHeight: .infinity, alignment: .top)
 
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 0) {
                     Text("WINE REC")
                         .font(AppTypography.display(size: titleSize))
                         .foregroundStyle(.white)
-                        .tracking(-1.44)
+                        .tracking(-1.5)
                         .lineLimit(1)
                         .minimumScaleFactor(0.74)
                         .multilineTextAlignment(.leading)
@@ -286,6 +305,7 @@ struct ContentView: View {
                         .font(AppTypography.body(size: 19))
                         .foregroundStyle(Color.white.opacity(0.88))
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 20)
 
                     Button("Get Started") {
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
@@ -294,10 +314,11 @@ struct ContentView: View {
                     }
                     .accessibilityIdentifier("get-started-button")
                     .buttonStyle(PrimaryActionButtonStyle())
+                    .padding(.top, 28)
                 }
                 .frame(width: copyWidth, alignment: .leading)
                 .padding(.leading, horizontalInset)
-                .padding(.bottom, 172)
+                .padding(.bottom, 16)
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottomLeading)
             .clipped()
@@ -307,7 +328,7 @@ struct ContentView: View {
 
     private var ingestSection: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .center, spacing: 20) {
+            VStack(alignment: .center, spacing: 14) {
                 OnboardingDots(currentStep: model.hasPendingSource ? 2 : 1)
 
                 if model.hasPendingSource {
@@ -327,16 +348,16 @@ struct ContentView: View {
             }
             .frame(maxWidth: AppLayout.mobileContentWidth)
             .padding(.horizontal, AppLayout.horizontalInset)
-                    .padding(.top, sectionTopPadding)
-                    .padding(.bottom, 64)
+            .padding(.top, ingestTopPadding)
+            .padding(.bottom, ingestBottomPadding)
             .frame(maxWidth: .infinity)
         }
         .background(AppPalette.background)
     }
 
     private var sourceStep: some View {
-        VStack(alignment: .center, spacing: 20) {
-            VStack(spacing: 10) {
+        VStack(alignment: .center, spacing: 16) {
+            VStack(spacing: 8) {
                 Text("What's on the list?")
                     .font(AppTypography.display(size: 30))
                     .tracking(-0.6)
@@ -375,12 +396,46 @@ struct ContentView: View {
                 showingSourceOptions = true
             }
 
+            if let uiTestFixtureImagePath {
+                Button("Import test image") {
+                    Task {
+                        let url = URL(fileURLWithPath: uiTestFixtureImagePath)
+                        let data = UIImage(named: AppArtwork.shelfBreak)?.jpegData(compressionQuality: 0.9)
+                            ?? (try? Data(contentsOf: url))
+                        if let data {
+                            await model.importImageData(data, filename: "Selected photo.jpg")
+                        }
+                    }
+                }
+                .accessibilityIdentifier("ui-test-import-image-button")
+                .font(.caption2)
+                .frame(width: 120, height: 44)
+            }
+
             HStack {
                 Spacer()
                 nextButton(fullWidth: false)
             }
             .padding(.top, 2)
         }
+        .task(id: uiTestFixtureImagePath) {
+            guard let uiTestFixtureImagePath, !model.hasPendingSource else {
+                return
+            }
+
+            await importUITestFixtureImage(from: uiTestFixtureImagePath)
+        }
+    }
+
+    private func importUITestFixtureImage(from path: String) async {
+        let url = URL(fileURLWithPath: path)
+        let data = UIImage(named: AppArtwork.shelfBreak)?.jpegData(compressionQuality: 0.9)
+            ?? (try? Data(contentsOf: url))
+        guard let data else {
+            return
+        }
+
+        model.importUITestFixtureImageData(data, filename: "Selected photo.jpg")
     }
 
     private var preferenceStep: some View {
@@ -431,7 +486,7 @@ struct ContentView: View {
 
                 Spacer()
 
-                Button(model.isBusy ? "Starting..." : "Analyze ->") {
+                Button(model.isBusy ? "Starting..." : "Analyze →") {
                     Task {
                         await model.analyzePendingSource()
                     }
@@ -474,13 +529,13 @@ struct ContentView: View {
         .submitLabel(.go)
         .onSubmit(confirmPendingURL)
         .padding(.horizontal, 16)
-        .padding(.vertical, 15)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("wine-list-url-field")
     }
 
     private func nextButton(fullWidth: Bool) -> some View {
-        Button(model.isBusy ? "Loading..." : "Next ->", action: confirmPendingURL)
+        Button(model.isBusy ? "Loading..." : "Next →", action: confirmPendingURL)
             .accessibilityIdentifier("url-next-button")
             .buttonStyle(CompactPrimaryActionButtonStyle(fullWidth: fullWidth))
             .disabled(model.isBusy)
@@ -1730,6 +1785,7 @@ private struct SectionNavigationDots: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("section-nav-\(index)")
                 .accessibilityLabel(sectionLabel(for: index))
             }
         }
@@ -1758,7 +1814,7 @@ private struct SurfaceCard<Content: View>: View {
     }
 
     var body: some View {
-        let panelPadding: CGFloat = 14
+        let panelPadding: CGFloat = 24
 
         if let width {
             let innerWidth = max(0, width - (panelPadding * 2))
@@ -1826,19 +1882,19 @@ private struct SourceDropZone: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 29, weight: .semibold))
+                    .font(.system(size: 30, weight: .semibold))
                     .foregroundStyle(AppPalette.accentBlue)
 
-                VStack(spacing: 6) {
+                VStack(spacing: 5) {
                     Text("Drop a photo, screenshot, or PDF here")
-                        .font(AppTypography.body(size: 17, weight: .heavy))
+                        .font(AppTypography.body(size: 16, weight: .heavy))
                         .foregroundStyle(AppPalette.ink)
                         .multilineTextAlignment(.center)
 
                     Text(isReading ? "Reading image with Apple Vision OCR..." : "or click to browse")
-                        .font(AppTypography.body(size: 15))
+                        .font(AppTypography.body(size: 14))
                         .foregroundStyle(AppPalette.muted)
                         .multilineTextAlignment(.center)
                 }
@@ -1850,9 +1906,9 @@ private struct SourceDropZone: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 142)
+            .frame(minHeight: 96)
             .padding(.horizontal, 16)
-            .padding(.vertical, 20)
+            .padding(.vertical, 14)
             .background(Color.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -1872,6 +1928,7 @@ private struct StoryImageBreakCard: View {
     let title: String
     let imageName: String
     let isLeading: Bool
+    var minimumHeight: CGFloat = max(360, UIScreen.main.bounds.height * 0.5)
 
     var body: some View {
         ZStack {
@@ -1898,7 +1955,7 @@ private struct StoryImageBreakCard: View {
                 .padding(.horizontal, 24)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: max(360, UIScreen.main.bounds.height * 0.5))
+        .frame(height: minimumHeight)
         .clipped()
     }
 }

@@ -46,6 +46,13 @@ final class AppModel {
     @ObservationIgnored
     private let userDefaults = UserDefaults.standard
 
+    init() {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-reset-state"),
+           let prefilledURL = ProcessInfo.processInfo.environment["WINE_REC_UI_TEST_PREFILL_URL"] {
+            sourceURLText = prefilledURL
+        }
+    }
+
     var hasPendingSource: Bool {
         selectedFileURL != nil || selectedRecognizedText != nil || pendingURL != nil
     }
@@ -144,6 +151,31 @@ final class AppModel {
         }
 
         await importImageData(data, filename: "Camera wine list.jpg")
+    }
+
+    func importUITestFixtureImageData(_ data: Data, filename: String) {
+        do {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("jpg")
+            try data.write(to: url, options: .atomic)
+            clearPendingURL()
+            selectedFileURL = url
+            selectedFileName = filename
+            selectedFilePreviewData = data
+            selectedRecognizedText = """
+            By the glass
+            Domaine Dujac Morey-Saint-Denis Pinot Noir 2021
+            Arnot-Roberts Chardonnay Trout Gulch 2022
+            Lopez de Heredia Vina Tondonia Reserva Rioja 2011
+            """
+            selectedVisionLineCount = 4
+            errorMessage = nil
+            isRunningVisionOCR = false
+            isBusy = false
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func importDocument(from externalURL: URL) async {

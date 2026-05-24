@@ -20,7 +20,9 @@ docs/
 *.swp
 xcuserdata/
 *.xcuserstate
+.derivedData/
 .vercel
 .playwright-mcp/
+.derivedData-ui/
 .env*.local
 .env.vercel
