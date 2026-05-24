@@ -11,7 +11,10 @@ final class WineRecUITests: XCTestCase {
         if name.contains("TasteGetStartedUrlAndCancelFlow") {
             app.launchEnvironment["WINE_REC_UI_TEST_PREFILL_URL"] = "https://grahamwine.co/collections/pinot-noir"
         }
-        if name.contains("PhotoLibraryVisionOcrSubmissionResultsAndFilters") || name.contains("CameraEntryPointUsesVisionOcrSubmissionPathInSimulator") {
+        if name.contains("PhotoLibraryVisionOcrSubmissionResultsAndFilters")
+            || name.contains("CameraEntryPointUsesVisionOcrSubmissionPathInSimulator")
+            || name.contains("CaptureActualFlowScreenshots")
+        {
             app.launchEnvironment["WINE_REC_UI_TEST_FIXTURE_IMAGE_PATH"] = fixtureImagePath()
         }
         app.launch()
@@ -64,6 +67,11 @@ final class WineRecUITests: XCTestCase {
 
         try captureScreenshot(named: "ios-ui-hero.png", in: screenshotDirectory)
 
+        tap(app.buttons["top-my-taste-button"])
+        sleep(1)
+        try captureScreenshot(named: "ios-ui-hero-taste-open.png", in: screenshotDirectory)
+        tap(app.buttons["top-my-taste-button"])
+
         tap(app.buttons["get-started-button"])
         XCTAssertTrue(app.textFields["wine-list-url-field"].waitForExistence(timeout: 5))
         sleep(1)
@@ -77,6 +85,29 @@ final class WineRecUITests: XCTestCase {
         app.swipeUp(velocity: .slow)
         sleep(1)
         try captureScreenshot(named: "ios-ui-story-break.png", in: screenshotDirectory)
+    }
+
+    func testCaptureActualFlowScreenshots() throws {
+        let screenshotDirectory = ProcessInfo.processInfo.environment["WINE_REC_SCREENSHOT_DIR"] ?? defaultScreenshotDirectory()
+
+        tap(app.buttons["get-started-button"])
+        importFixtureImageOrOpenPicker("Photos")
+
+        XCTAssertTrue(app.staticTexts["Selected photo.jpg"].waitForExistence(timeout: 30))
+        sleep(1)
+        try captureScreenshot(named: "ios-ui-confirm-preferences.png", in: screenshotDirectory)
+
+        tap(app.buttons["analyze-button"])
+        waitForCompletedResults()
+        sleep(1)
+        try captureScreenshot(named: "ios-ui-results-completed.png", in: screenshotDirectory)
+
+        let filtersButton = app.buttons["Filters"].firstMatch
+        if filtersButton.waitForExistence(timeout: 5) {
+            tap(filtersButton)
+            sleep(1)
+            try captureScreenshot(named: "ios-ui-results-filters-open.png", in: screenshotDirectory)
+        }
     }
 
     private func exerciseResultControls() {
@@ -262,7 +293,7 @@ final class WineRecUITests: XCTestCase {
     }
 
     private func defaultScreenshotDirectory() -> String {
-        URL(fileURLWithPath: #filePath)
+        return URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -271,7 +302,11 @@ final class WineRecUITests: XCTestCase {
     }
 
     private func fixtureImagePath() -> String {
-        URL(fileURLWithPath: #filePath)
+        if let externalImagePath = ProcessInfo.processInfo.environment["WINE_REC_EXTERNAL_TEST_IMAGE_PATH"] {
+            return externalImagePath
+        }
+
+        return URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()

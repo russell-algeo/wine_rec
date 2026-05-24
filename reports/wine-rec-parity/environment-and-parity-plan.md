@@ -263,3 +263,32 @@ Next signing steps:
 4. Archive with Xcode.
 5. Create or connect the App Store Connect app record.
 6. Upload the archive and use TestFlight for external testers.
+
+## Real Device Visual Polish - 2026-05-24 00:35 EDT
+
+Russell reported real iPhone clipping and visual issues after pulling the first parity branch. Follow-up fixes now applied:
+
+- Top nav and the taste drawer respect the top safe area, so `Wine Rec`, `My Taste`, and `Close` no longer collide with the Dynamic Island.
+- Hero copy and `Get Started` are raised above the home-indicator area.
+- Ingest and results scroll destinations include fixed-header landing padding so auto-scroll does not place section headers under the nav.
+- Results action buttons use a fixed minimum height so `Adjust Preferences` and `Stop Analysis` are visually consistent.
+- Missing price labels use compact `No price` copy to avoid overlapping the rating block.
+- Budget filter controls force dark foreground text over the tan card background.
+- UI-test fixture import now prefers an externally supplied image path before falling back to bundled art, so real menu screenshots can be rendered in captured previews when the files are available.
+
+Additional comparison artifacts:
+
+- `reports/wine-rec-parity/comparison-viewport-latest-taste-drawer-open.jpg`
+- `reports/wine-rec-parity/comparison-viewport-latest-upload-source-step.jpg`
+- `reports/wine-rec-parity/comparison-viewport-latest-selected-menu-image.jpg`
+- `reports/wine-rec-parity/comparison-viewport-latest-confirm-preferences.jpg`
+- `reports/wine-rec-parity/comparison-viewport-latest-completed-results.jpg`
+- `reports/wine-rec-parity/comparison-viewport-latest-results-filters-open.jpg`
+
+Verification passed after these changes:
+
+- iPhone 16 targeted visual screenshot UI test: passed
+- iPhone 16 targeted actual-flow screenshot UI test: passed
+- Full iPhone 16 UI suite: 5 tests, 0 failures
+
+Note: Russell attached three menu photos for additional visual checks. The inbound files were visible briefly under `/Users/hal/.openclaw/media/inbound` but disappeared before they could be copied into the project/report directory, so true attached-image visual validation still needs those photos reattached or copied to a durable local path.

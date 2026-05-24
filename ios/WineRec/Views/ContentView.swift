@@ -45,16 +45,16 @@ struct ContentView: View {
         horizontalSizeClass == .compact && UIScreen.main.bounds.width < 430
     }
 
-    private var ingestTopPadding: CGFloat {
-        48
-    }
-
     private var ingestBottomPadding: CGFloat {
         28
     }
 
-    private var resultsTopPadding: CGFloat {
-        48
+    private func ingestTopPadding(topChromeHeight: CGFloat) -> CGFloat {
+        topChromeHeight + 24
+    }
+
+    private func resultsTopPadding(topChromeHeight: CGFloat) -> CGFloat {
+        topChromeHeight + 24
     }
 
     private var resultsBottomPadding: CGFloat {
@@ -79,15 +79,19 @@ struct ContentView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 GeometryReader { geometry in
+                    let topSafeInset = geometry.safeAreaInsets.top
+                    let bottomSafeInset = geometry.safeAreaInsets.bottom
+                    let topChromeHeight = AppLayout.navHeight + topSafeInset
+
                     ZStack(alignment: .top) {
                         AppBackground()
 
                         ScrollView(.vertical, showsIndicators: false) {
                             VStack(spacing: 0) {
-                                heroSection(proxy: proxy)
+                                heroSection(proxy: proxy, bottomInset: bottomSafeInset)
                                     .id("hero")
 
-                                ingestSection
+                                ingestSection(topChromeHeight: topChromeHeight)
                                     .id("ingest")
 
                                 StoryImageBreakCard(
@@ -97,7 +101,7 @@ struct ContentView: View {
                                 )
 
                                 resultsSection(width: max(0, geometry.size.width - (AppLayout.resultsHorizontalInset * 2)))
-                                    .padding(.top, resultsTopPadding)
+                                    .padding(.top, resultsTopPadding(topChromeHeight: topChromeHeight))
                                     .padding(.bottom, resultsBottomPadding)
                                     .id("results")
 
@@ -112,11 +116,11 @@ struct ContentView: View {
                             .padding(.bottom, 40)
                         }
 
-                        topBar(proxy: proxy)
+                        topBar(proxy: proxy, topInset: topSafeInset)
 
                         if showingTastePanel {
                             tasteDrawer
-                                .padding(.top, AppLayout.navHeight)
+                                .padding(.top, topChromeHeight)
                                 .transition(.opacity)
                         }
                     }
@@ -192,7 +196,7 @@ struct ContentView: View {
         }
     }
 
-    private func topBar(proxy: ScrollViewProxy) -> some View {
+    private func topBar(proxy: ScrollViewProxy, topInset: CGFloat) -> some View {
         HStack(spacing: 14) {
             SectionNavigationDots(activeIndex: activePageSection) { index in
                 let sectionID = ["hero", "ingest", "results"][index]
@@ -221,6 +225,8 @@ struct ContentView: View {
         .padding(.horizontal, AppLayout.horizontalInset)
         .frame(maxWidth: .infinity)
         .frame(height: AppLayout.navHeight)
+        .padding(.top, topInset)
+        .frame(height: AppLayout.navHeight + topInset, alignment: .top)
         .background(AppPalette.background.opacity(0.85))
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -261,7 +267,7 @@ struct ContentView: View {
             .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
     }
 
-    private func heroSection(proxy: ScrollViewProxy) -> some View {
+    private func heroSection(proxy: ScrollViewProxy, bottomInset: CGFloat) -> some View {
         GeometryReader { geometry in
             let horizontalInset = AppLayout.horizontalInset
             let copyWidth = max(geometry.size.width - (horizontalInset * 2), 0)
@@ -318,7 +324,7 @@ struct ContentView: View {
                 }
                 .frame(width: copyWidth, alignment: .leading)
                 .padding(.leading, horizontalInset)
-                .padding(.bottom, 16)
+                .padding(.bottom, max(56, bottomInset + 42))
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .bottomLeading)
             .clipped()
@@ -326,7 +332,7 @@ struct ContentView: View {
         .frame(height: heroHeight)
     }
 
-    private var ingestSection: some View {
+    private func ingestSection(topChromeHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
             VStack(alignment: .center, spacing: 14) {
                 OnboardingDots(currentStep: model.hasPendingSource ? 2 : 1)
@@ -348,7 +354,7 @@ struct ContentView: View {
             }
             .frame(maxWidth: AppLayout.mobileContentWidth)
             .padding(.horizontal, AppLayout.horizontalInset)
-            .padding(.top, ingestTopPadding)
+            .padding(.top, ingestTopPadding(topChromeHeight: topChromeHeight))
             .padding(.bottom, ingestBottomPadding)
             .frame(maxWidth: .infinity)
         }
@@ -400,8 +406,8 @@ struct ContentView: View {
                 Button("Import test image") {
                     Task {
                         let url = URL(fileURLWithPath: uiTestFixtureImagePath)
-                        let data = UIImage(named: AppArtwork.shelfBreak)?.jpegData(compressionQuality: 0.9)
-                            ?? (try? Data(contentsOf: url))
+                        let data = (try? Data(contentsOf: url))
+                            ?? UIImage(named: AppArtwork.shelfBreak)?.jpegData(compressionQuality: 0.9)
                         if let data {
                             await model.importImageData(data, filename: "Selected photo.jpg")
                         }
@@ -429,8 +435,8 @@ struct ContentView: View {
 
     private func importUITestFixtureImage(from path: String) async {
         let url = URL(fileURLWithPath: path)
-        let data = UIImage(named: AppArtwork.shelfBreak)?.jpegData(compressionQuality: 0.9)
-            ?? (try? Data(contentsOf: url))
+        let data = (try? Data(contentsOf: url))
+            ?? UIImage(named: AppArtwork.shelfBreak)?.jpegData(compressionQuality: 0.9)
         guard let data else {
             return
         }
@@ -890,6 +896,7 @@ struct ContentView: View {
                                      ? "\(formatPriceValue(effectiveMaxPrice)) and under"
                                      : "Any price")
                                     .font(.headline.weight(.semibold))
+                                    .foregroundStyle(AppPalette.ink)
 
                                 Spacer()
 
@@ -914,9 +921,11 @@ struct ContentView: View {
                             )
                             .accessibilityIdentifier("include-unpriced-toggle")
                             .font(.footnote)
+                            .foregroundStyle(AppPalette.ink)
                             .tint(AppPalette.accentRed)
                         }
                         .padding(14)
+                        .foregroundStyle(AppPalette.ink)
                         .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 }
@@ -1143,14 +1152,14 @@ private struct ResultCard: View {
 
                             Spacer(minLength: 4)
 
-                            Text(candidate?.price ?? "Price unavailable")
+                            Text(candidate?.price ?? "No price")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(candidate?.price == nil ? AppPalette.muted : AppPalette.ink)
-                                .lineLimit(candidate?.price == nil ? 2 : 1)
+                                .lineLimit(1)
                                 .multilineTextAlignment(.center)
                                 .minimumScaleFactor(0.78)
-                                .frame(minWidth: candidate?.price == nil ? 78 : 50, maxWidth: candidate?.price == nil ? 84 : 66)
-                                .padding(.horizontal, 8)
+                                .frame(minWidth: candidate?.price == nil ? 52 : 50, maxWidth: candidate?.price == nil ? 58 : 66)
+                                .padding(.horizontal, candidate?.price == nil ? 6 : 8)
                                 .padding(.vertical, 6)
                                 .background(Color.white, in: Capsule())
                                 .overlay(Capsule().stroke(AppPalette.line, lineWidth: 1))
@@ -2118,9 +2127,8 @@ private struct ResultsActionButtonStyle: ButtonStyle {
             .foregroundStyle(.white)
             .lineLimit(1)
             .minimumScaleFactor(0.86)
-            .frame(minWidth: minWidth)
             .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .frame(minWidth: minWidth, minHeight: 38)
             .background(
                 RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous)
                     .fill(configuration.isPressed ? AppPalette.accentRed.opacity(0.84) : AppPalette.accentRed)
