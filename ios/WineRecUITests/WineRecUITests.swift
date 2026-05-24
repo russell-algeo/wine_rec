@@ -77,14 +77,13 @@ final class WineRecUITests: XCTestCase {
         sleep(1)
         try captureScreenshot(named: "ios-ui-ingest.png", in: screenshotDirectory)
 
-        tap(app.buttons["section-nav-2"])
-        sleep(1)
-        try captureScreenshot(named: "ios-ui-results-empty.png", in: screenshotDirectory)
-
-        tap(app.buttons["section-nav-1"])
         app.swipeUp(velocity: .slow)
         sleep(1)
         try captureScreenshot(named: "ios-ui-story-break.png", in: screenshotDirectory)
+
+        app.swipeUp(velocity: .fast)
+        sleep(1)
+        try captureScreenshot(named: "ios-ui-results-empty.png", in: screenshotDirectory)
     }
 
     func testCaptureActualFlowScreenshots() throws {
