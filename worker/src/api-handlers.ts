@@ -15,6 +15,7 @@ import {
 } from "@wine-rec/contracts";
 
 import { createOcrProvider } from "./providers/ocr.js";
+import { VivinoBrowser } from "./providers/vivino-browser.js";
 import { createWineProfileProviders } from "./providers/wine-profiles.js";
 import {
   AnalysisCanceledError,
@@ -69,6 +70,10 @@ const MAX_SERVERLESS_CONCURRENT_WORKERS = parsePositiveIntegerEnv(
   10,
 );
 const SERVERLESS_WORKER_CANDIDATE_CONCURRENCY = 1;
+const SERVERLESS_WORKER_CANDIDATE_TIMEOUT_MS = parsePositiveIntegerEnv(
+  "SERVERLESS_WORKER_CANDIDATE_TIMEOUT_MS",
+  Math.max(1_000, Math.min(42_000, SERVERLESS_WORKER_TIME_BUDGET_MS - 5_000)),
+);
 const SERVERLESS_WORKER_INITIAL_JITTER_MAX_SECONDS = parsePositiveIntegerEnv(
   "SERVERLESS_WORKER_INITIAL_JITTER_MAX_SECONDS",
   3,
@@ -828,6 +833,78 @@ function getJobCandidate(job: AnalysisRun, candidateId: string): WineCandidate |
   return job.candidates.find((candidate) => candidate.id === candidateId) ?? null;
 }
 
+function buildUnmatchedRecommendation(candidateId: string): Recommendation {
+  return {
+    candidateId,
+    fitScore: 0,
+    matchConfidence: 0,
+    profile: null,
+    status: "unmatched",
+  };
+}
+
+async function runCandidateAnalysisWithTimeout(
+  candidate: WineCandidate,
+  shouldCancel: () => Promise<boolean>,
+): Promise<Recommendation> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let didTimeout = false;
+
+  const analysisPromise = runCandidateAnalysis(
+    {
+      candidates: [candidate],
+    },
+    {
+      shouldCancel,
+    },
+    {
+      candidateConcurrency: SERVERLESS_WORKER_CANDIDATE_CONCURRENCY,
+    },
+  ).then(({ recommendations }) => {
+    const recommendation = recommendations[0];
+    if (!recommendation) {
+      throw new Error(`Candidate ${candidate.id} finished without a recommendation.`);
+    }
+    return recommendation;
+  }).catch((error) => {
+    if (!didTimeout) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(
+      "[worker] Candidate %s analysis settled after timeout: %s",
+      candidate.id,
+      message,
+    );
+    return buildUnmatchedRecommendation(candidate.id);
+  });
+
+  const timeoutPromise = new Promise<Recommendation>((resolve) => {
+    timeoutId = setTimeout(() => {
+      didTimeout = true;
+      console.log(
+        "[worker] Candidate %s exceeded %dms; closing Vivino browser and returning unmatched recommendation.",
+        candidate.id,
+        SERVERLESS_WORKER_CANDIDATE_TIMEOUT_MS,
+      );
+      void VivinoBrowser.getInstance().close().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log("[worker] Failed to close Vivino browser after candidate timeout: %s", message);
+      });
+      resolve(buildUnmatchedRecommendation(candidate.id));
+    }, SERVERLESS_WORKER_CANDIDATE_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([analysisPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): Promise<void> {
   const job = await store.getJobState(payload.jobId);
   if (!job || !hasParsedJobState(job)) {
@@ -894,23 +971,8 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
       continue;
     }
 
-    const { recommendations } = await runCandidateAnalysis(
-      {
-        candidates: [candidate],
-      },
-      {
-        shouldCancel: shouldStop,
-      },
-      {
-        candidateConcurrency: SERVERLESS_WORKER_CANDIDATE_CONCURRENCY,
-      },
-    );
-
+    const recommendation = await runCandidateAnalysisWithTimeout(candidate, shouldStop);
     await assertJobActive(payload.jobId, store);
-    const recommendation = recommendations[0];
-    if (!recommendation) {
-      throw new Error(`Candidate ${candidate.id} finished without a recommendation.`);
-    }
 
     const completed = await store.completeJobCandidate(
       payload.jobId,
