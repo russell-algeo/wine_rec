@@ -31,6 +31,10 @@ const SERVERLESS_PLAYWRIGHT_PROFILE_DIR_PREFIX = "playwright_chromiumdev_profile
 const VIVINO_PLACEHOLDER_IMAGE_PATH_PATTERN = /\/bottleShot\/fallback_\d+\.png(?:$|\?)/i;
 const VIVINO_ZERO_RESULT_EXPLORE_RETRY_PREFIX = "VIVINO_ZERO_RESULT_EXPLORE_RETRY:";
 
+function isServerlessRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+}
+
 function getConfiguredChromiumBrotliDir(): string | null {
   const configured = process.env.CHROMIUM_BROTLI_DIR?.trim();
   return configured ? configured : null;
@@ -573,6 +577,26 @@ export class VivinoBrowser {
         };
 
         let { evaluation, hits } = await evaluateSearchPage(5_000);
+        if (
+          !hits.length &&
+          isServerlessRuntime() &&
+          (evaluation.hasAwsWafChallenge || shouldRetryZeroResultExploreSearch(evaluation))
+        ) {
+          console.log(
+            "[vivino-browser] Serverless search for %j returned an empty/WAF explore page; returning no hits without browser retries: %s",
+            query,
+            JSON.stringify({
+              url: evaluation.url,
+              title: evaluation.title,
+              linkCount: evaluation.linkCount,
+              hasPreloadedState: evaluation.hasPreloadedState,
+              hasAwsWafChallenge: evaluation.hasAwsWafChallenge,
+              showsZeroWineMessage: evaluation.showsZeroWineMessage,
+            }),
+          );
+          return [];
+        }
+
         if (!hits.length && isSuspiciousEmptyVivinoSearch(evaluation)) {
           const diagnostics = JSON.stringify({
             url: evaluation.url,
@@ -630,6 +654,15 @@ export class VivinoBrowser {
       });
     } catch (error) {
       if (error instanceof RetryableVivinoBrowserError) {
+        if (isServerlessRuntime()) {
+          console.log(
+            "[vivino-browser] Serverless search failed for %j; returning no hits instead of retrying worker: %s",
+            query,
+            error.reason,
+          );
+          return [];
+        }
+
         if (error.reason.startsWith(VIVINO_ZERO_RESULT_EXPLORE_RETRY_PREFIX)) {
           console.log(
             "[vivino-browser] Search exhausted fresh-page retries for zero-result explore page %j: %s",
