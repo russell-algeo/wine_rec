@@ -10,7 +10,7 @@ private enum AppArtwork {
 }
 
 private enum AppLayout {
-    static let navHeight: CGFloat = 56
+    static let navHeight: CGFloat = 48
     static let horizontalInset: CGFloat = 16
     static let resultsHorizontalInset: CGFloat = 16
     static let mobileContentWidth: CGFloat = 640
@@ -33,7 +33,6 @@ struct ContentView: View {
     @State private var resultSortOrder = ResultSortOrder.recommended
     @State private var resultProfileFilter = ResultProfileFilter.excludeInferred
     @State private var selectedResultSectionId = allResultSectionsId
-    @State private var activePageSection = 0
     @State private var maxPriceFilter: Double?
     @State private var includePriceUnavailable = true
 
@@ -116,7 +115,7 @@ struct ContentView: View {
                             .padding(.bottom, 40)
                         }
 
-                        topBar(proxy: proxy, topInset: topSafeInset)
+                        topBar(topInset: topSafeInset)
 
                         if showingTastePanel {
                             tasteDrawer
@@ -196,21 +195,14 @@ struct ContentView: View {
         }
     }
 
-    private func topBar(proxy: ScrollViewProxy, topInset: CGFloat) -> some View {
-        HStack(spacing: 14) {
-            SectionNavigationDots(activeIndex: activePageSection) { index in
-                let sectionID = ["hero", "ingest", "results"][index]
-                activePageSection = index
-
-                withAnimation(.spring(response: 0.52, dampingFraction: 0.9)) {
-                    proxy.scrollTo(sectionID, anchor: .top)
-                }
-            }
-
+    private func topBar(topInset: CGFloat) -> some View {
+        HStack(spacing: 8) {
             Text("Wine Rec")
-                .font(AppTypography.display(size: 21))
-                .tracking(-0.63)
+                .font(AppTypography.display(size: 20))
+                .tracking(-0.5)
                 .foregroundStyle(AppPalette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
 
             Spacer()
 
@@ -1779,46 +1771,6 @@ private struct OnboardingDots: View {
     }
 }
 
-private struct SectionNavigationDots: View {
-    let activeIndex: Int
-    let onSelect: (Int) -> Void
-
-    var body: some View {
-        VStack(spacing: 4) {
-            ForEach(0..<3, id: \.self) { index in
-                Button {
-                    onSelect(index)
-                } label: {
-                    if index == activeIndex {
-                        Capsule()
-                            .fill(AppPalette.accentBlue)
-                            .frame(width: 7, height: 20)
-                    } else {
-                        Circle()
-                            .fill(AppPalette.line)
-                            .frame(width: 7, height: 7)
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("section-nav-\(index)")
-                .accessibilityLabel(sectionLabel(for: index))
-            }
-        }
-        .frame(width: 18)
-    }
-
-    private func sectionLabel(for index: Int) -> String {
-        switch index {
-        case 0:
-            return "Go to intro"
-        case 1:
-            return "Go to source"
-        default:
-            return "Go to results"
-        }
-    }
-}
-
 private struct SurfaceCard<Content: View>: View {
     let width: CGFloat?
     let content: Content
@@ -2169,9 +2121,9 @@ private struct NavToggleButtonStyle: ButtonStyle {
             .font(AppTypography.body(size: 14, weight: .bold))
             .foregroundStyle(AppPalette.accentBlue)
             .lineLimit(1)
-            .frame(width: 72)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .frame(width: 64)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
             .background(Color.clear, in: RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: AppLayout.controlRadius, style: .continuous)
