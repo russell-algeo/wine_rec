@@ -165,8 +165,8 @@ final class AppModel {
             selectedFilePreviewData = data
             selectedRecognizedText = """
             By the glass
-            Domaine Dujac Morey-Saint-Denis Pinot Noir 2021
-            Arnot-Roberts Chardonnay Trout Gulch 2022
+            Domaine Dujac Morey-Saint-Denis Pinot Noir 2021 $34
+            Arnot-Roberts Chardonnay Trout Gulch 2022 $28
             Lopez de Heredia Vina Tondonia Reserva Rioja 2011
             """
             selectedVisionLineCount = 4
