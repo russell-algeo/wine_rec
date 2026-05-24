@@ -11,8 +11,9 @@ private enum AppArtwork {
 
 private enum AppLayout {
     static let navHeight: CGFloat = 34
-    static let navBottomPadding: CGFloat = 10
+    static let navBottomPadding: CGFloat = 4
     static let horizontalInset: CGFloat = 16
+    static let navHorizontalInset: CGFloat = 36
     static let resultsHorizontalInset: CGFloat = 16
     static let mobileContentWidth: CGFloat = 640
     static let panelRadius: CGFloat = 20
@@ -202,7 +203,7 @@ struct ContentView: View {
 
     private func topBar(topInset: CGFloat) -> some View {
         let chromeHeight = topChromeHeight(topSafeInset: topInset)
-        let navTopOffset = max(8, topInset - AppLayout.navHeight)
+        let navTopOffset = max(8, topInset - AppLayout.navHeight - 12)
 
         return HStack(spacing: 8) {
             Text("Wine Rec")
@@ -222,7 +223,7 @@ struct ContentView: View {
             .accessibilityIdentifier("top-my-taste-button")
             .buttonStyle(NavToggleButtonStyle())
         }
-        .padding(.horizontal, AppLayout.horizontalInset)
+        .padding(.horizontal, AppLayout.navHorizontalInset)
         .frame(maxWidth: .infinity)
         .frame(height: AppLayout.navHeight)
         .padding(.top, navTopOffset)
