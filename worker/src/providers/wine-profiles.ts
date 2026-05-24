@@ -60,6 +60,51 @@ type RawExternalProfile = {
 const VIVINO_DIRECT_MATCH_THRESHOLD = 0.38;
 const MIN_CONFIDENCE_FOR_RULE_BASED_INFERENCE = 0.68;
 const styleListingLabels = new Set(["chilled red", "red", "white", "orange", "rose", "rosé", "sparkling"]);
+const nonWineBeverageTerms = [
+  /\b(?:american\s+)?ipa\b/i,
+  /\blager\b/i,
+  /\bpilsner\b/i,
+  /\bstout\b/i,
+  /\bporter\b/i,
+  /\bbrewery\b/i,
+  /\bbrewer(?:y|ies)\b/i,
+  /\b(?:non[-\s]?alco(?:holic|lic)|n\/a)\b/i,
+  /\bcold\s+can(?:s)?\b/i,
+];
+const genericTastingWords = new Set([
+  "acid",
+  "acidic",
+  "aromatic",
+  "berry",
+  "black",
+  "bright",
+  "cherry",
+  "chilled",
+  "citrus",
+  "crisp",
+  "dark",
+  "dry",
+  "earthy",
+  "fresh",
+  "fruit",
+  "fruits",
+  "fruity",
+  "jammy",
+  "juicy",
+  "light",
+  "mineral",
+  "red",
+  "refreshing",
+  "rich",
+  "ripe",
+  "soft",
+  "spicy",
+  "structured",
+  "tannic",
+  "tannin",
+  "tannins",
+  "white",
+]);
 const searchNoiseTokens = new Set([
   "bottle",
   "bottles",
@@ -78,6 +123,69 @@ const searchNoiseTokens = new Set([
 function isAnonymousStyleListingCandidate(candidate: WineCandidate): boolean {
   const label = candidate.label?.trim().toLowerCase() ?? "";
   return !candidate.producer && Boolean(candidate.region) && styleListingLabels.has(label);
+}
+
+function normalizeCandidateText(candidate: WineCandidate): string {
+  return [
+    candidate.rawText,
+    candidate.producer,
+    candidate.label,
+    candidate.varietal,
+    candidate.region,
+    candidate.notes,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function hasStructuredWineSignal(candidate: WineCandidate): boolean {
+  return Boolean(
+    candidate.region?.trim() ||
+      candidate.varietal?.trim() ||
+      candidate.vintage ||
+      /(?:cabernet|chardonnay|chenin|gamay|grenache|malbec|merlot|montepulciano|nebbiolo|pinot|riesling|sangiovese|sauvignon|shiraz|syrah|tempranillo|zinfandel)/i.test(
+        normalizeCandidateText(candidate),
+      ),
+  );
+}
+
+function isGenericTastingPhrase(candidate: WineCandidate): boolean {
+  if (hasStructuredWineSignal(candidate)) {
+    return false;
+  }
+
+  const text = normalizeCandidateText(candidate);
+  const tokens = text
+    .replace(/[^a-z\s]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2);
+
+  return tokens.length >= 2 && tokens.every((token) => genericTastingWords.has(token));
+}
+
+function isLowContextOcrFragment(candidate: WineCandidate): boolean {
+  if (candidate.extractionConfidence >= 0.6 || hasStructuredWineSignal(candidate)) {
+    return false;
+  }
+
+  const text = normalizeCandidateText(candidate);
+  const alphaTokens = text.match(/[a-z]{2,}/g) ?? [];
+  const punctuationCount = (text.match(/[{}"\\|]/g) ?? []).length;
+  return alphaTokens.length <= 8 || punctuationCount >= 2;
+}
+
+function shouldSkipVivinoDirectLookup(candidate: WineCandidate): boolean {
+  const text = normalizeCandidateText(candidate);
+  return (
+    nonWineBeverageTerms.some((pattern) => pattern.test(text)) ||
+    isGenericTastingPhrase(candidate) ||
+    isLowContextOcrFragment(candidate)
+  );
 }
 
 function buildProfile(
@@ -559,6 +667,14 @@ class VivinoDirectProvider implements WineProfileProvider {
     }
 
     if (isAnonymousStyleListingCandidate(candidate)) {
+      return null;
+    }
+
+    if (shouldSkipVivinoDirectLookup(candidate)) {
+      console.log(
+        "[vivino-direct] Skipping browser search for likely OCR noise/non-wine candidate: %s",
+        candidate.rawText ?? candidate.id,
+      );
       return null;
     }
 
