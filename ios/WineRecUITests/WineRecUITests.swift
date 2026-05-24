@@ -102,6 +102,15 @@ final class WineRecUITests: XCTestCase {
         sleep(1)
         try captureScreenshot(named: "ios-ui-results-completed.png", in: screenshotDirectory)
 
+        let adjustPreferencesButton = app.buttons["results-adjust-preferences-button"].firstMatch
+        if adjustPreferencesButton.waitForExistence(timeout: 5) {
+            tap(adjustPreferencesButton)
+            sleep(1)
+            try captureScreenshot(named: "ios-ui-results-preferences-open.png", in: screenshotDirectory)
+            tap(adjustPreferencesButton)
+            sleep(1)
+        }
+
         let filtersButton = app.buttons["Filters"].firstMatch
         if filtersButton.waitForExistence(timeout: 5) {
             tap(filtersButton)

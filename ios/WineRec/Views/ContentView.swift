@@ -654,6 +654,7 @@ struct ContentView: View {
                                 showingResultsTastePanel.toggle()
                             }
                         }
+                        .accessibilityIdentifier("results-adjust-preferences-button")
                         .buttonStyle(ResultsActionButtonStyle(minWidth: 122))
 
                         Spacer(minLength: 14)
@@ -673,20 +674,20 @@ struct ContentView: View {
 
                     if showingResultsTastePanel {
                         VStack(alignment: .leading, spacing: 9) {
-                            VStack(spacing: 0) {
-                                interactiveTasteScale(for: .body)
-                                interactiveTasteScale(for: .tannin)
-                                interactiveTasteScale(for: .sweetness)
-                                interactiveTasteScale(for: .acidity)
+                            VStack(spacing: 2) {
+                                interactiveTasteScale(for: .body, compact: true)
+                                interactiveTasteScale(for: .tannin, compact: true)
+                                interactiveTasteScale(for: .sweetness, compact: true)
+                                interactiveTasteScale(for: .acidity, compact: true)
                             }
 
                             Text(model.isLiveReranking
                                  ? "Results are re-ranked to match your updated preferences."
                                  : "Adjust sliders to instantly re-rank results without re-running analysis.")
-                                .font(.footnote)
+                                .font(.caption)
                                 .foregroundStyle(AppPalette.muted)
                         }
-                        .padding(14)
+                        .padding(10)
                         .background(AppPalette.cardSecondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 }
@@ -808,11 +809,12 @@ struct ContentView: View {
         }
     }
 
-    private func interactiveTasteScale(for dimension: TasteDimension) -> some View {
+    private func interactiveTasteScale(for dimension: TasteDimension, compact: Bool = false) -> some View {
         TasteScaleRow(
             dimension: dimension,
             value: model.preferences[keyPath: dimension.keyPath],
-            tone: .standard
+            tone: .standard,
+            compactInteractive: compact
         ) { nextValue in
             model.updatePreference(dimension.keyPath, value: nextValue)
         }
@@ -1098,6 +1100,10 @@ private struct ResultCard: View {
         return computePriceBenchmark(restaurantPrice: restaurantPrice, retailPrice: retailPrice)
     }
 
+    private var fitBadgeTextReserve: CGFloat {
+        72
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack(alignment: .topTrailing) {
@@ -1121,7 +1127,6 @@ private struct ResultCard: View {
                                     .foregroundStyle(AppPalette.ink)
                                     .lineLimit(4)
                             }
-                            .padding(.trailing, 58)
 
                             if let matchedTitle {
                                 Text("Matched to \(matchedTitle)")
@@ -1137,6 +1142,7 @@ private struct ResultCard: View {
                                     .lineLimit(3)
                             }
                         }
+                        .padding(.trailing, fitBadgeTextReserve)
 
                         Spacer(minLength: 0)
 
@@ -2005,15 +2011,17 @@ private struct TasteScaleRow: View {
     let dimension: TasteDimension
     let value: Int?
     let tone: TasteScaleTone
+    var compactInteractive = false
     var onChange: ((Int) -> Void)?
 
     var body: some View {
         let isInteractive = onChange != nil
-        let markerWidth: CGFloat = isInteractive ? 52 : 32
-        let trackHeight: CGFloat = isInteractive ? 10 : 8
-        let labelWidth: CGFloat = isInteractive ? 72 : 52
-        let labelSize: CGFloat = isInteractive ? 15 : 11
-        let rowSpacing: CGFloat = isInteractive ? 10 : 5
+        let isCompactInteractive = isInteractive && compactInteractive
+        let markerWidth: CGFloat = isCompactInteractive ? 38 : (isInteractive ? 52 : 32)
+        let trackHeight: CGFloat = isCompactInteractive ? 8 : (isInteractive ? 10 : 8)
+        let labelWidth: CGFloat = isCompactInteractive ? 58 : (isInteractive ? 72 : 52)
+        let labelSize: CGFloat = isCompactInteractive ? 12 : (isInteractive ? 15 : 11)
+        let rowSpacing: CGFloat = isCompactInteractive ? 6 : (isInteractive ? 10 : 5)
 
         HStack(spacing: rowSpacing) {
             Text(dimension.lowLabel)
@@ -2066,7 +2074,7 @@ private struct TasteScaleRow: View {
                     .opacity(0.02)
                 }
             }
-            .frame(height: isInteractive ? 26 : 16)
+            .frame(height: isCompactInteractive ? 20 : (isInteractive ? 26 : 16))
 
             Text(dimension.highLabel)
                 .font(.system(size: labelSize, weight: .semibold))
