@@ -4,10 +4,12 @@ import { z } from "zod";
 
 import {
   analysisRunSchema,
+  clientOcrRecognitionMetadataSchema,
   createAnalysisResponseSchema,
   providerHealthSchema,
   sourceTypeSchema,
   type AnalysisRun,
+  type ClientOcrRecognitionMetadata,
   type CreateAnalysisResponse,
   type ProviderHealth,
   type Recommendation,
@@ -21,7 +23,7 @@ import {
   AnalysisRetryableError,
   runCandidateAnalysis,
 } from "./services/pipeline.js";
-import { parseWineCandidates } from "./services/parser.js";
+import { parseClientOcrCandidates, parseWineCandidates } from "./services/parser.js";
 import { extractCandidatesFromUrl, extractSourceText } from "./services/source-extractor.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
 import { createId } from "./id.js";
@@ -36,6 +38,7 @@ const coordinatorWorkerJobPayloadSchema = z.object({
   fileBase64: z.string().optional(), // kept for backward compat with in-flight messages
   sourceUrl: z.string().url().optional(),
   recognizedText: z.string().optional(),
+  recognitionMetadata: clientOcrRecognitionMetadataSchema.optional(),
 });
 
 const jobWorkerJobPayloadSchema = z.object({
@@ -419,6 +422,7 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
 export async function createClientOcrAnalysis(input: {
   sourceFilename: string;
   recognizedText: string;
+  recognitionMetadata?: ClientOcrRecognitionMetadata | undefined;
 }): Promise<CreateAnalysisResponse> {
   const recognizedText = input.recognizedText.trim();
   if (!recognizedText) {
@@ -434,16 +438,18 @@ export async function createClientOcrAnalysis(input: {
   });
 
   try {
-    const { messageId } = await publishWorkerJob(
-      {
+    const payload: CoordinatorWorkerJobPayload = {
         mode: "coordinator",
         jobId: id,
         sourceType: "client-ocr-text",
         sourceFilename: job.sourceFilename,
         recognizedText,
-      },
-      getCoordinatorPublishOptions(),
-    );
+    };
+    if (input.recognitionMetadata) {
+      payload.recognitionMetadata = input.recognitionMetadata;
+    }
+
+    const { messageId } = await publishWorkerJob(payload, getCoordinatorPublishOptions());
     await updateJob(id, { queueMessageId: messageId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to enqueue analysis";
@@ -702,7 +708,7 @@ async function extractAndPersistJobState(
 
   if (payload.recognizedText !== undefined) {
     extractedText = payload.recognizedText;
-    candidates = parseWineCandidates(extractedText);
+    candidates = parseClientOcrCandidates(extractedText, payload.recognitionMetadata?.lines);
   } else if (payload.sourceUrl) {
     candidates = await extractCandidatesFromUrl(payload.sourceUrl);
   } else {

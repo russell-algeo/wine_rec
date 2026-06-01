@@ -4,6 +4,20 @@ import UIKit
 struct VisionOCRResult {
     let recognizedText: String
     let lineCount: Int
+    let lines: [VisionOCRLineObservation]
+}
+
+struct VisionOCRBoundingBox: Codable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+struct VisionOCRLineObservation: Codable {
+    let text: String
+    let confidence: Double
+    let boundingBox: VisionOCRBoundingBox
 }
 
 enum VisionOCRError: LocalizedError {
@@ -35,7 +49,7 @@ struct VisionOCRService {
 
                 let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
                 let lines = observations
-                    .compactMap { observation -> (text: String, y: CGFloat, x: CGFloat)? in
+                    .compactMap { observation -> VisionOCRLineObservation? in
                         guard let candidate = observation.topCandidates(1).first else {
                             return nil
                         }
@@ -43,17 +57,28 @@ struct VisionOCRService {
                         guard !text.isEmpty else {
                             return nil
                         }
-                        return (text, observation.boundingBox.minY, observation.boundingBox.minX)
+                        let boundingBox = observation.boundingBox
+                        return VisionOCRLineObservation(
+                            text: text,
+                            confidence: Double(candidate.confidence),
+                            boundingBox: VisionOCRBoundingBox(
+                                x: Double(boundingBox.minX),
+                                y: Double(boundingBox.minY),
+                                width: Double(boundingBox.width),
+                                height: Double(boundingBox.height)
+                            )
+                        )
                     }
                     .sorted {
-                        if abs($0.y - $1.y) > 0.015 {
-                            return $0.y > $1.y
+                        let firstBox = $0.boundingBox
+                        let secondBox = $1.boundingBox
+                        if abs(firstBox.y - secondBox.y) > 0.015 {
+                            return firstBox.y > secondBox.y
                         }
-                        return $0.x < $1.x
+                        return firstBox.x < secondBox.x
                     }
-                    .map(\.text)
 
-                let recognizedText = lines.joined(separator: "\n")
+                let recognizedText = lines.map(\.text).joined(separator: "\n")
                 guard !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     continuation.resume(throwing: VisionOCRError.noTextRecognized)
                     return
@@ -61,7 +86,8 @@ struct VisionOCRService {
 
                 continuation.resume(returning: VisionOCRResult(
                     recognizedText: recognizedText,
-                    lineCount: lines.count
+                    lineCount: lines.count,
+                    lines: lines
                 ))
             }
 

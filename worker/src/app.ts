@@ -124,12 +124,12 @@ export async function buildApp(): Promise<FastifyInstance> {
     const parsed = createAnalysisFromClientOcrRequestSchema.parse(request.body);
 
     try {
-      return createAnalysisResponseSchema.parse(
-        await createClientOcrAnalysis({
-          sourceFilename: parsed.sourceFilename,
-          recognizedText: parsed.recognizedText,
-        }),
-      );
+      const input = {
+        sourceFilename: parsed.sourceFilename,
+        recognizedText: parsed.recognizedText,
+        ...(parsed.recognitionMetadata ? { recognitionMetadata: parsed.recognitionMetadata } : {}),
+      };
+      return createAnalysisResponseSchema.parse(await createClientOcrAnalysis(input));
     } catch (error) {
       if (error instanceof RequestError) {
         return reply.status(error.statusCode).send({ message: error.message });

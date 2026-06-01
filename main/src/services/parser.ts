@@ -1,4 +1,4 @@
-import type { WineCandidate } from "@wine-rec/contracts";
+import type { ClientOcrLineObservation, WineCandidate } from "@wine-rec/contracts";
 import { createId } from "../id.js";
 
 const vintagePattern = /\b(19|20)\d{2}\b/;
@@ -38,6 +38,7 @@ const varietalHints = [
   "pinot noir",
   "pinot grigio",
   "riesling",
+  "sangiovese",
   "chardonnay",
   "syrah",
   "shiraz",
@@ -45,6 +46,27 @@ const varietalHints = [
   "malbec",
   "champagne",
   "prosecco",
+  "albarino",
+  "albariño",
+  "aligote",
+  "aligoté",
+  "blaufrankisch",
+  "catarratto",
+  "corpinnat",
+  "friulano",
+  "garnacha",
+  "gruner",
+  "lambrusco",
+  "macabeu",
+  "merwah",
+  "muscadine",
+  "refosco",
+  "ribolla",
+  "souvignier",
+  "tintillo",
+  "txakolina",
+  "xarello",
+  "zweigelt",
 ];
 const regionHints = [
   "burgundy",
@@ -148,6 +170,12 @@ const ocrCorrections: Array<[RegExp, string]> = [
   [/\bSchaztel\b/g, "Schäztel"],
   [/Tradicién/g, "Tradición"],
   [/Vino de\}\s+Volta/g, "Vino del Volta"],
+  [/\bItasmendi\b/gi, "Itsasmendi"],
+  [/\bAlbar(?:ifio|iao)\b/gi, "Albarino"],
+  [/\bQannboubin(?:e)?\b/gi, "Qannoubine"],
+  [/\bBlaufrankish\b/gi, "Blaufrankisch"],
+  [/\bOMBRANalis\b/g, "Ombra Vallis"],
+  [/\b7014\b/g, "2024"],
 ];
 
 function escapeRegex(value: string): string {
@@ -1128,4 +1156,198 @@ export function buildCandidateFromItem(item: {
 }): WineCandidate | null {
   const color = item.section ? normalizeSectionHeader(item.section) : null;
   return parseBlock([item.name], 0, color, item.price, item.tab, item.section);
+}
+
+function hasWineCue(line: string): boolean {
+  const normalized = line.toLowerCase();
+  return (
+    vintagePattern.test(line) ||
+    abbreviatedVintagePattern.test(line) ||
+    colorHints.some((hint) => normalized.includes(hint)) ||
+    varietalHints.some((hint) => normalized.includes(hint)) ||
+    regionHints.some((hint) => normalized.includes(hint)) ||
+    geographicTailHints.some((hint) => normalized.includes(hint))
+  );
+}
+
+function isLikelyNonWineVisionLine(line: string): boolean {
+  return /\b(?:beer|lager|ipa|cocktail|espresso|download|view full|favorite dishes|menu)\b/i.test(line);
+}
+
+const visionWineTermPattern =
+  /\b(?:albarino|albariño|aligote|aligoté|annia|aries|blaufrankisch|brut|catarratto|corpinnat|friulano|garnacha|gialla|grigio|gruner|lambrusco|macabeu|merwah|muscadine|pipeño|pipeno|refosco|ribolla|souvignier|tintillo|txakolina|xarello|zweigelt)\b/i;
+
+function hasClientVisionWineCue(line: string): boolean {
+  return hasWineCue(line) || visionWineTermPattern.test(line);
+}
+
+function looksLikeShortProducerLine(line: string): boolean {
+  const normalized = normalizeQualityText(line);
+  if (!normalized || isSectionHeader(normalized) || isNonWineLine(normalized)) return false;
+  if (hasClientVisionWineCue(normalized) || vintagePattern.test(normalized)) return false;
+  if (/[,$/]|(?:\d{2,})/.test(normalized)) return false;
+
+  const tokens = extractAlphaTokens(normalized).filter((token) => token.length >= 2);
+  return tokens.length >= 1 && tokens.length <= 4;
+}
+
+function splitClientVisionWineSegments(row: string): string[] {
+  const cleaned = row
+    .replace(/[·•]/g, "\n")
+    .replace(/\s+\.\s+(?=[A-Z][A-Za-zÀ-ÿ]+(?:\s|$))/gu, "\n")
+    .split(/\n+/)
+    .map((segment) => segment.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  if (cleaned.length <= 1) return [];
+  return cleaned.filter((segment) => extractAlphaTokens(segment).length >= 2);
+}
+
+function fallbackClientVisionCandidate(row: string, index: number): WineCandidate | null {
+  const normalizedRow = applyOcrCorrections(row)
+    .replace(/[·•]/g, " ")
+    .replace(/[|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const alphaTokens = extractAlphaTokens(normalizedRow).filter((token) => token.length >= 2);
+  if (alphaTokens.length < 2 || isLikelyNonWineVisionLine(normalizedRow)) return null;
+
+  const vintageMatch = normalizedRow.match(vintagePattern);
+  const vintage = vintageMatch ? Number(vintageMatch[0]) : null;
+  const { producer, label } = inferProducerAndLabel(normalizedRow, vintage);
+  const lower = normalizedRow.toLowerCase();
+  const color = colorHints.find((hint) => lower.includes(hint)) ?? null;
+  const varietal = detectHint(normalizedRow, varietalHints);
+  const region =
+    detectHint(normalizedRow, regionHints) ??
+    geographicTailHints.find((hint) => lower.includes(hint)) ??
+    null;
+
+  if (!label && !varietal && !color && !vintage) return null;
+
+  return {
+    id: createId(),
+    rawText: normalizedRow,
+    price: null,
+    menuTab: null,
+    menuSection: null,
+    lineNumber: index,
+    producer,
+    label,
+    vintage,
+    color,
+    varietal,
+    region,
+    notes: null,
+    extractionConfidence: 0.58,
+  };
+}
+
+function rowsFromClientOcrLines(lines: ClientOcrLineObservation[]): string[] {
+  const positioned = lines
+    .map((line) => {
+      const boundingBox = line.boundingBox;
+      return {
+        text: line.text.trim(),
+        x: boundingBox?.x ?? 0,
+        centerY: boundingBox ? boundingBox.y + boundingBox.height / 2 : 0,
+        height: boundingBox?.height ?? 0,
+      };
+    })
+    .filter((line) => line.text.length > 0)
+    .sort((a, b) => b.centerY - a.centerY || a.x - b.x);
+
+  const rows: Array<{ centerY: number; items: typeof positioned }> = [];
+  for (const line of positioned) {
+    const row = rows.find((candidate) => Math.abs(candidate.centerY - line.centerY) <= Math.max(0.009, line.height * 0.75));
+    if (row) {
+      row.items.push(line);
+      row.centerY = row.items.reduce((sum, item) => sum + item.centerY, 0) / row.items.length;
+    } else {
+      rows.push({ centerY: line.centerY, items: [line] });
+    }
+  }
+
+  return rows
+    .map((row) =>
+      row.items
+        .sort((a, b) => a.x - b.x)
+        .map((item) => item.text)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+function dedupeCandidates(candidates: WineCandidate[]): WineCandidate[] {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = [
+      candidate.rawText,
+      candidate.producer,
+      candidate.label,
+      candidate.vintage,
+      candidate.region,
+    ]
+      .filter(Boolean)
+      .join("|")
+      .toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function parseClientOcrCandidates(
+  recognizedText: string,
+  lines: ClientOcrLineObservation[] | undefined,
+): WineCandidate[] {
+  const baseline = parseWineCandidates(recognizedText);
+  if (!lines?.some((line) => line.boundingBox)) {
+    return baseline;
+  }
+
+  const rows = rowsFromClientOcrLines(lines);
+  const geometryCandidates: WineCandidate[] = [];
+  const addGeometryCandidate = (row: string, index: number): void => {
+    const correctedRow = applyOcrCorrections(row);
+    if (!hasClientVisionWineCue(correctedRow) || isLikelyNonWineVisionLine(correctedRow)) return;
+    const candidate =
+      parseBlock([correctedRow], index, null, null, null, null) ??
+      fallbackClientVisionCandidate(correctedRow, index);
+    if (candidate) {
+      geometryCandidates.push({
+        ...candidate,
+        extractionConfidence: Math.max(candidate.extractionConfidence, 0.62),
+      });
+    }
+  };
+
+  rows.forEach((row, index) => {
+    addGeometryCandidate(row, index);
+
+    for (const segment of splitClientVisionWineSegments(row)) {
+      addGeometryCandidate(segment, index);
+    }
+
+    const next = rows[index + 1];
+    if (!next) return;
+
+    if (looksLikeShortProducerLine(row) && hasClientVisionWineCue(next)) {
+      addGeometryCandidate(`${row} ${next}`, index);
+    }
+
+    if (hasClientVisionWineCue(row) && looksLikeShortProducerLine(next)) {
+      addGeometryCandidate(`${row} ${next}`, index);
+    }
+
+    if (hasClientVisionWineCue(row) && !isLikelyNonWineVisionLine(next) && extractAlphaTokens(next).length <= 9) {
+      addGeometryCandidate(`${row} ${next}`, index);
+    }
+  });
+
+  return dedupeCandidates([...baseline, ...geometryCandidates]).filter(
+    (candidate) => candidate.extractionConfidence >= 0.55,
+  );
 }

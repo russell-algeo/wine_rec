@@ -52,6 +52,7 @@ const {
   createWineProfileProvidersMock,
   fetchUrlPreviewMock,
   runCandidateAnalysisMock,
+  parseClientOcrCandidatesMock,
   parseWineCandidatesMock,
   extractCandidatesFromUrlMock,
   extractSourceTextMock,
@@ -310,6 +311,7 @@ const {
     createWineProfileProvidersMock: vi.fn(),
     fetchUrlPreviewMock: vi.fn(),
     runCandidateAnalysisMock: vi.fn(),
+    parseClientOcrCandidatesMock: vi.fn(),
     parseWineCandidatesMock: vi.fn(),
     extractCandidatesFromUrlMock: vi.fn(),
     extractSourceTextMock: vi.fn(),
@@ -373,6 +375,7 @@ vi.mock("./services/pipeline.js", () => ({
 }));
 
 vi.mock("./services/parser.js", () => ({
+  parseClientOcrCandidates: parseClientOcrCandidatesMock,
   parseWineCandidates: parseWineCandidatesMock,
 }));
 
@@ -772,7 +775,7 @@ describe("serverless worker orchestration", () => {
       [],
     );
 
-    parseWineCandidatesMock.mockReturnValue(candidates);
+    parseClientOcrCandidatesMock.mockReturnValue(candidates);
     publishJSONMock.mockResolvedValue({ messageId: "msg-0" });
     vi.spyOn(Math, "random").mockReturnValue(0);
 
@@ -784,7 +787,7 @@ describe("serverless worker orchestration", () => {
       recognizedText: "Domaine Test Pinot Noir 2022",
     });
 
-    expect(parseWineCandidatesMock).toHaveBeenCalledWith("Domaine Test Pinot Noir 2022");
+    expect(parseClientOcrCandidatesMock).toHaveBeenCalledWith("Domaine Test Pinot Noir 2022", undefined);
     expect(extractSourceTextMock).not.toHaveBeenCalled();
     expect(extractCandidatesFromUrlMock).not.toHaveBeenCalled();
     expect(updateJobMock).toHaveBeenCalledWith(

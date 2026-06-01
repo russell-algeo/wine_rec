@@ -24,6 +24,7 @@ final class AppModel {
     var selectedFilePreviewData: Data?
     var selectedRecognizedText: String?
     var selectedVisionLineCount: Int?
+    var selectedVisionLines: [VisionOCRLineObservation]?
     var sourceURLText = ""
     var pendingURL: String?
     var urlPreview: URLPreview?
@@ -135,6 +136,7 @@ final class AppModel {
             selectedFilePreviewData = data
             selectedRecognizedText = result.recognizedText
             selectedVisionLineCount = result.lineCount
+            selectedVisionLines = result.lines
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -170,6 +172,7 @@ final class AppModel {
             Lopez de Heredia Vina Tondonia Reserva Rioja 2011
             """
             selectedVisionLineCount = 4
+            selectedVisionLines = nil
             errorMessage = nil
             isRunningVisionOCR = false
             isBusy = false
@@ -209,6 +212,7 @@ final class AppModel {
             selectedFilePreviewData = Self.previewData(for: destination)
             selectedRecognizedText = nil
             selectedVisionLineCount = nil
+            selectedVisionLines = nil
             errorMessage = nil
         } catch {
             errorMessage = "Failed to import the selected file."
@@ -221,6 +225,7 @@ final class AppModel {
         selectedFilePreviewData = nil
         selectedRecognizedText = nil
         selectedVisionLineCount = nil
+        selectedVisionLines = nil
     }
 
     func confirmURL() async {
@@ -279,7 +284,8 @@ final class AppModel {
             if let selectedRecognizedText, let selectedFileName {
                 created = try await apiClient.createAnalysis(
                     fromRecognizedText: selectedRecognizedText,
-                    sourceFilename: selectedFileName
+                    sourceFilename: selectedFileName,
+                    visionLines: selectedVisionLines
                 )
             } else if let selectedFileURL {
                 created = try await apiClient.upload(fileURL: selectedFileURL)

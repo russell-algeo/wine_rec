@@ -135,10 +135,30 @@ export const createAnalysisFromUrlRequestSchema = z.object({
   url: z.string().url(),
 });
 
+export const clientOcrBoundingBoxSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
+
+export const clientOcrLineObservationSchema = z.object({
+  text: z.string().trim().min(1),
+  confidence: z.number().min(0).max(1).optional(),
+  boundingBox: clientOcrBoundingBoxSchema.optional(),
+});
+
+export const clientOcrRecognitionMetadataSchema = z
+  .object({
+    engine: z.string().trim().min(1).optional(),
+    lines: z.array(clientOcrLineObservationSchema).max(2_000).optional(),
+  })
+  .passthrough();
+
 export const createAnalysisFromClientOcrRequestSchema = z.object({
   sourceFilename: z.string().trim().min(1).max(512),
   recognizedText: z.string().trim().min(1),
-  recognitionMetadata: z.record(z.unknown()).optional(),
+  recognitionMetadata: clientOcrRecognitionMetadataSchema.optional(),
 });
 
 export const createAnalysisResponseSchema = z.object({
@@ -167,4 +187,6 @@ export type AnalysisRun = z.infer<typeof analysisRunSchema>;
 export type ProviderHealth = z.infer<typeof providerHealthSchema>;
 export type CreateAnalysisFromUrlRequest = z.infer<typeof createAnalysisFromUrlRequestSchema>;
 export type CreateAnalysisFromClientOcrRequest = z.infer<typeof createAnalysisFromClientOcrRequestSchema>;
+export type ClientOcrLineObservation = z.infer<typeof clientOcrLineObservationSchema>;
+export type ClientOcrRecognitionMetadata = z.infer<typeof clientOcrRecognitionMetadataSchema>;
 export type CreateAnalysisResponse = z.infer<typeof createAnalysisResponseSchema>;

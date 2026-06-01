@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseWineCandidates } from "./parser.js";
+import { parseClientOcrCandidates, parseWineCandidates } from "./parser.js";
 import { canonicalizeText, hasTesseract, ocrFixtureToText } from "../test-support/ocr-fixtures.js";
 
 describe("wine parser", () => {
@@ -332,6 +332,37 @@ describe("wine parser", () => {
     expect(normalizedNames.some((name) => name.includes(canonicalizeText("Karatta griffin grit sparkling shiraz")))).toBe(true);
     expect(normalizedNames.some((name) => name.includes(canonicalizeText("heinrich naked white")))).toBe(true);
     expect(normalizedNames.some((name) => name.includes(canonicalizeText("marinara")))).toBe(true);
+  });
+
+  it("uses client OCR geometry to join producer and wine cue rows", () => {
+    const recognizedText = [
+      "Filipa Pato",
+      "3B Sparkling Rose",
+      "A.R. Lenoble",
+      "Brut Intense",
+      "Bizkaiko Txakolina 2024",
+      "Itsasmendi",
+    ].join("\n");
+    const lines = recognizedText.split("\n").map((text, index) => ({
+      text,
+      confidence: 0.96,
+      boundingBox: {
+        x: 0.1,
+        y: 0.9 - index * 0.06,
+        width: 0.5,
+        height: 0.03,
+      },
+    }));
+
+    const flattened = parseClientOcrCandidates(recognizedText, undefined);
+    const geometry = parseClientOcrCandidates(recognizedText, lines);
+    const flattenedNames = flattened.map((candidate) => canonicalizeText(candidate.rawText));
+    const geometryNames = geometry.map((candidate) => canonicalizeText(candidate.rawText));
+
+    expect(flattenedNames).not.toContain(canonicalizeText("Filipa Pato 3B Sparkling Rose"));
+    expect(geometryNames).toContain(canonicalizeText("Filipa Pato 3B Sparkling Rose"));
+    expect(geometryNames).toContain(canonicalizeText("A.R. Lenoble Brut Intense"));
+    expect(geometryNames).toContain(canonicalizeText("Bizkaiko Txakolina 2024 Itsasmendi"));
   });
 
   const integration = hasTesseract ? it : it.skip;
