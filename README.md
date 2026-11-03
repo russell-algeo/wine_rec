@@ -71,6 +71,7 @@ The deprecated integrations below were removed from the live runtime on March 10
 
 ## Notes
 
+- See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel deployment topology, environment contract, local-linking procedure, and deployment validation checklist.
 - The `vivino-direct` provider uses an embedded Playwright Chromium browser to scrape Vivino search results. As a future improvement, this could be extracted into a dedicated sidecar process (a small HTTP service wrapping Playwright) for independent scaling and restarts without affecting the main API.
 - Full iOS builds require Xcode, which is not available in this workspace at the moment.
 - `task_plan.md`, `findings.md`, and `progress.md` are included to follow the planning workflow during implementation.
