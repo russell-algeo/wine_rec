@@ -20,8 +20,25 @@ import {
   createUrlAnalysis,
   getAnalysisRun,
   getPreview,
+  getProviderCanary,
   getProviderHealth,
 } from "./api-handlers.js";
+
+function readSingleHeader(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+function isProviderCanaryAllowed(headers: Record<string, string | string[] | undefined>): boolean {
+  if (process.env.VERCEL_ENV === "production") {
+    return false;
+  }
+
+  const enabled = process.env.WINE_REC_PROVIDER_CANARY_ENABLED === "true";
+  const configuredSecret = process.env.WINE_REC_PROVIDER_CANARY_SECRET?.trim();
+  const suppliedSecret = readSingleHeader(headers["x-provider-canary-secret"]).trim();
+
+  return Boolean(enabled && configuredSecret && suppliedSecret === configuredSecret);
+}
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -83,6 +100,22 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get("/api/health/providers", async () => {
     return getProviderHealth();
+  });
+
+  app.post("/api/debug/provider-canary", async (request, reply) => {
+    if (
+      process.env.VERCEL_ENV === "production" ||
+      process.env.WINE_REC_PROVIDER_CANARY_ENABLED !== "true" ||
+      !process.env.WINE_REC_PROVIDER_CANARY_SECRET?.trim()
+    ) {
+      return reply.status(404).send({ message: "Provider canary is disabled" });
+    }
+
+    if (!isProviderCanaryAllowed(request.headers)) {
+      return reply.status(403).send({ message: "Provider canary access denied" });
+    }
+
+    return getProviderCanary(request.body);
   });
 
   app.post("/api/uploads", async (request, reply) => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseClientOcrCandidates, parseWineCandidates } from "./parser.js";
+import { parseClientOcrCandidates, parseStructuredOcrCandidates, parseWineCandidates } from "./parser.js";
 import { canonicalizeText, hasTesseract, ocrFixtureToText } from "../test-support/ocr-fixtures.js";
 
 describe("wine parser", () => {
@@ -363,6 +363,147 @@ describe("wine parser", () => {
     expect(geometryNames).toContain(canonicalizeText("Filipa Pato 3B Sparkling Rose"));
     expect(geometryNames).toContain(canonicalizeText("A.R. Lenoble Brut Intense"));
     expect(geometryNames).toContain(canonicalizeText("Bizkaiko Txakolina 2024 Itsasmendi"));
+  });
+
+  it("parses structured OCR row candidates without flattening them through the text parser", () => {
+    const candidates = parseStructuredOcrCandidates([
+      {
+        rawText: "STENCI REROSCO! Dimitti Cacovich",
+        lineNumber: 4,
+        source: {
+          variant: "photo-vertical-left-mid-clahe",
+          family: "photo-focus",
+          textKind: "plain",
+          windowSize: 2,
+          lineIndex: 4,
+        },
+      },
+      {
+        rawText: "dapkizio VetLa Catarratte",
+        lineNumber: 5,
+        source: {
+          variant: "photo-upper-center-clahe",
+          family: "photo-focus",
+          textKind: "plain",
+          windowSize: 1,
+          lineIndex: 5,
+        },
+      },
+      {
+        rawText: "_.STENCNIK| Di itt oe ee ui 3 218 ae [2 .REFOS 3 : Holla Gibllal Fri li, O41 5 7 4",
+        lineNumber: 6,
+        source: {
+          variant: "photo-vertical-left-mid-clahe",
+          family: "photo-focus",
+          textKind: "plain",
+          windowSize: 2,
+          lineIndex: 6,
+        },
+      },
+      {
+        rawText: "prosecco. OMBRA alls Mares, Trey",
+        lineNumber: 7,
+        source: {
+          variant: "column-right-normalized",
+          family: "column",
+          textKind: "plain",
+          windowSize: 1,
+          lineIndex: 7,
+        },
+      },
+    ]);
+
+    const normalizedNames = candidates.map((candidate) => canonicalizeText(candidate.rawText));
+
+    expect(normalizedNames).toContain(canonicalizeText("Stencnik Refosco Dimitri Cacovich"));
+    expect(normalizedNames).toContain(canonicalizeText("Fabrizio Vella Catarratto"));
+    expect(normalizedNames).toContain(canonicalizeText("Stencnik Dimitri oe ee ui 3 218 ae 2 Refosco 3 : Ribolla Gialla Friuli, O41 5 7 4"));
+    expect(normalizedNames).toContain(canonicalizeText("prosecco. Ombra Vallis Mareni, Trey"));
+  });
+
+  it("caps structured OCR candidates while preserving stronger wine rows", () => {
+    const noisyRows = Array.from({ length: 180 }, (_, index) => ({
+      rawText: `Fragmentary OCR Producer ${index} Label ${index}`,
+      lineNumber: index,
+      source: {
+        variant: "photo-full-clahe",
+        family: "photo-focus",
+        textKind: "plain",
+        windowSize: 2,
+        lineIndex: index,
+      },
+    }));
+    const candidates = parseStructuredOcrCandidates([
+      ...noisyRows,
+      {
+        rawText: "Heinrich Naked White Burgenland Austria",
+        lineNumber: 181,
+        source: {
+          variant: "column-left-normalized",
+          family: "column",
+          textKind: "plain",
+          windowSize: 1,
+          lineIndex: 181,
+        },
+      },
+      {
+        rawText: "Vallis Mareni Ombra Prosecco Treviso",
+        lineNumber: 182,
+        source: {
+          variant: "column-right-normalized",
+          family: "column",
+          textKind: "plain",
+          windowSize: 1,
+          lineIndex: 182,
+        },
+      },
+    ]);
+    const normalizedNames = candidates.map((candidate) => canonicalizeText(candidate.rawText));
+
+    expect(candidates.length).toBeLessThanOrEqual(200);
+    expect(normalizedNames).toContain(canonicalizeText("Heinrich Naked White Burgenland Austria"));
+    expect(normalizedNames).toContain(canonicalizeText("Vallis Mareni Ombra Prosecco Treviso"));
+  });
+
+  it("allows a lower structured OCR candidate budget through env for preview dry runs", () => {
+    const originalBudget = process.env.STRUCTURED_OCR_CANDIDATE_BUDGET;
+    process.env.STRUCTURED_OCR_CANDIDATE_BUDGET = "3";
+
+    try {
+      const names = [
+        "Alpha",
+        "Bravo",
+        "Charlie",
+        "Delta",
+        "Echo",
+        "Foxtrot",
+        "Golf",
+        "Hotel",
+        "India",
+        "Juliet",
+        "Kilo",
+        "Lima",
+      ];
+      const rows = names.map((name, index) => ({
+        rawText: `${name} Estate ${name} Label Burgundy France`,
+        lineNumber: index,
+        source: {
+          variant: "column-left-normalized",
+          family: "column",
+          textKind: "plain",
+          windowSize: 1,
+          lineIndex: index,
+        },
+      }));
+
+      expect(parseStructuredOcrCandidates(rows)).toHaveLength(3);
+    } finally {
+      if (originalBudget === undefined) {
+        delete process.env.STRUCTURED_OCR_CANDIDATE_BUDGET;
+      } else {
+        process.env.STRUCTURED_OCR_CANDIDATE_BUDGET = originalBudget;
+      }
+    }
   });
 
   const integration = hasTesseract ? it : it.skip;

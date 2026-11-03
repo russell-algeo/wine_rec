@@ -7,8 +7,7 @@ import {
   createWineProfileProviders,
   RetryableWineProfileLookupError,
 } from "../providers/wine-profiles.js";
-import { parseWineCandidates } from "./parser.js";
-import { extractCandidatesFromUrl, extractSourceText } from "./source-extractor.js";
+import { extractCandidatesFromUrl, extractUploadOcrCandidates } from "./source-extractor.js";
 
 type AnalysisPipelineHooks = {
   shouldCancel?: () => Promise<boolean> | boolean;
@@ -251,8 +250,7 @@ export async function runAnalysisPipeline(input: {
   if (input.sourceUrl) {
     candidates = await extractCandidatesFromUrl(input.sourceUrl);
   } else {
-    extractedText = await extractSourceText(input);
-    candidates = parseWineCandidates(extractedText);
+    ({ extractedText, candidates } = await extractUploadOcrCandidates(input));
   }
 
   await throwIfCanceled(hooks.shouldCancel);

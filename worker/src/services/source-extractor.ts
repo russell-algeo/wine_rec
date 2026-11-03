@@ -6,6 +6,8 @@ import {
   buildCandidateFromItem,
   isNonWineLine,
   looksLikeTitleLine,
+  parseStructuredOcrCandidates,
+  parseWineCandidates,
 } from "./parser.js";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +44,36 @@ export async function extractSourceText(input: {
       ? { ...input, buffer: input.fileBuffer }
       : input,
   );
+}
+
+export async function extractUploadOcrCandidates(input: {
+  sourceType: string;
+  filename: string;
+  mimeType: string;
+  storagePath: string;
+  fileBuffer?: Buffer;
+}): Promise<{ extractedText: string; candidates: WineCandidate[] }> {
+  const ocrProvider = createOcrProvider();
+  const providerInput = input.fileBuffer
+    ? { ...input, buffer: input.fileBuffer }
+    : input;
+
+  if (ocrProvider.extractStructuredText) {
+    const extraction = await ocrProvider.extractStructuredText(providerInput);
+    const candidates = extraction.rowCandidates.length > 0
+      ? parseStructuredOcrCandidates(extraction.rowCandidates)
+      : parseWineCandidates(extraction.extractedText);
+    return {
+      extractedText: extraction.extractedText,
+      candidates,
+    };
+  }
+
+  const extractedText = await ocrProvider.extractText(providerInput);
+  return {
+    extractedText,
+    candidates: parseWineCandidates(extractedText),
+  };
 }
 
 export async function extractCandidatesFromUrl(sourceUrl: string): Promise<WineCandidate[]> {

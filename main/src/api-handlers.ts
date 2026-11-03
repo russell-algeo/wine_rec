@@ -17,14 +17,18 @@ import {
 } from "@wine-rec/contracts";
 
 import { createOcrProvider } from "./providers/ocr.js";
+import {
+  providerCanaryRequestSchema,
+  runProviderCanary,
+} from "./providers/provider-canary.js";
 import { createWineProfileProviders } from "./providers/wine-profiles.js";
 import {
   AnalysisCanceledError,
   AnalysisRetryableError,
   runCandidateAnalysis,
 } from "./services/pipeline.js";
-import { parseClientOcrCandidates, parseWineCandidates } from "./services/parser.js";
-import { extractCandidatesFromUrl, extractSourceText } from "./services/source-extractor.js";
+import { parseClientOcrCandidates } from "./services/parser.js";
+import { extractCandidatesFromUrl, extractUploadOcrCandidates } from "./services/source-extractor.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
 import { createId } from "./id.js";
 
@@ -291,6 +295,10 @@ export async function getProviderHealth(): Promise<ProviderHealth[]> {
   ];
 
   return z.array(providerHealthSchema).parse(providers);
+}
+
+export async function getProviderCanary(input: unknown) {
+  return runProviderCanary(providerCanaryRequestSchema.parse(input));
 }
 
 export async function getPreview(urlInput: string): Promise<{ title: string | null; domain: string }> {
@@ -724,14 +732,13 @@ async function extractAndPersistJobState(
       fileBuffer = Buffer.from(payload.fileBase64, "base64");
     }
 
-    extractedText = await extractSourceText({
+    ({ extractedText, candidates } = await extractUploadOcrCandidates({
       sourceType: payload.sourceType,
       filename: payload.sourceFilename,
       mimeType: payload.mimeType ?? "text/uri-list",
       storagePath: "",
       ...(fileBuffer ? { fileBuffer } : {}),
-    });
-    candidates = parseWineCandidates(extractedText);
+    }));
   }
 
   await assertJobActive(payload.jobId, store);

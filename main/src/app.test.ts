@@ -9,6 +9,7 @@ const {
   createWineProfileProvidersMock,
   fetchUrlPreviewMock,
   getAnalysisByIdMock,
+  getProviderCanaryMock,
   getPreferencesMock,
   putPreferencesMock,
   queueAnalysisMock,
@@ -28,6 +29,7 @@ const {
   createWineProfileProvidersMock: vi.fn(),
   fetchUrlPreviewMock: vi.fn(),
   getAnalysisByIdMock: vi.fn(),
+  getProviderCanaryMock: vi.fn(),
   getPreferencesMock: vi.fn(),
   putPreferencesMock: vi.fn(),
   queueAnalysisMock: vi.fn(),
@@ -89,6 +91,7 @@ vi.mock("./api-handlers.js", () => ({
   createUrlAnalysis: vi.fn(),
   getAnalysisRun: vi.fn(),
   getPreview: vi.fn(),
+  getProviderCanary: getProviderCanaryMock,
   getProviderHealth: vi.fn(async () => []),
 }));
 
@@ -120,6 +123,9 @@ function buildMultipartUpload(filename: string, mimeType: string, content: strin
 
 describe("app upload route", () => {
   let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  const originalProviderCanaryEnabled = process.env.WINE_REC_PROVIDER_CANARY_ENABLED;
+  const originalProviderCanarySecret = process.env.WINE_REC_PROVIDER_CANARY_SECRET;
+  const originalVercelEnv = process.env.VERCEL_ENV;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -131,12 +137,33 @@ describe("app upload route", () => {
       detail: "Uses a bundled sample OCR response when no real OCR provider is configured.",
       extractText: vi.fn(),
     });
+    delete process.env.WINE_REC_PROVIDER_CANARY_ENABLED;
+    delete process.env.WINE_REC_PROVIDER_CANARY_SECRET;
+    delete process.env.VERCEL_ENV;
   });
 
   afterEach(async () => {
     if (app) {
       await app.close();
       app = null;
+    }
+
+    if (originalProviderCanaryEnabled === undefined) {
+      delete process.env.WINE_REC_PROVIDER_CANARY_ENABLED;
+    } else {
+      process.env.WINE_REC_PROVIDER_CANARY_ENABLED = originalProviderCanaryEnabled;
+    }
+
+    if (originalProviderCanarySecret === undefined) {
+      delete process.env.WINE_REC_PROVIDER_CANARY_SECRET;
+    } else {
+      process.env.WINE_REC_PROVIDER_CANARY_SECRET = originalProviderCanarySecret;
+    }
+
+    if (originalVercelEnv === undefined) {
+      delete process.env.VERCEL_ENV;
+    } else {
+      process.env.VERCEL_ENV = originalVercelEnv;
     }
   });
 
@@ -216,5 +243,125 @@ describe("app upload route", () => {
       sourceFilename: "camera-menu.jpg",
       recognizedText: "Domaine Test Pinot Noir 2022",
     });
+  });
+
+  it("keeps the provider canary route disabled by default", async () => {
+    app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/debug/provider-canary",
+      payload: {
+        mode: "dry-run",
+        candidates: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(getProviderCanaryMock).not.toHaveBeenCalled();
+  });
+
+  it("requires the provider canary secret header when explicitly enabled", async () => {
+    process.env.WINE_REC_PROVIDER_CANARY_ENABLED = "true";
+    process.env.WINE_REC_PROVIDER_CANARY_SECRET = "test-secret";
+    app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/debug/provider-canary",
+      payload: {
+        mode: "dry-run",
+        candidates: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(getProviderCanaryMock).not.toHaveBeenCalled();
+  });
+
+  it("runs provider canary dry runs without recommendation-quality output", async () => {
+    process.env.WINE_REC_PROVIDER_CANARY_ENABLED = "true";
+    process.env.WINE_REC_PROVIDER_CANARY_SECRET = "test-secret";
+    getProviderCanaryMock.mockResolvedValue({
+      provider: "vivino-direct",
+      mode: "dry-run",
+      candidateLimit: 3,
+      recommendationQualityEvaluated: false,
+      summary: {
+        candidateCount: 1,
+        plannedQueryCount: 1,
+        fetchedQueryCount: 0,
+        okCount: 0,
+        blockedCount: 0,
+        directHitCount: 0,
+      },
+      candidates: [
+        {
+          candidateId: "candidate-1",
+          query: "producer label 2021",
+          status: "planned",
+          bodyClass: "not-fetched",
+          recordCount: 0,
+          directHit: {
+            accepted: false,
+            matchScore: null,
+            providerWineId: null,
+            matchedName: null,
+          },
+        },
+      ],
+    });
+    app = await buildApp();
+
+    const payload = {
+      mode: "dry-run",
+      candidates: [
+        {
+          id: "candidate-1",
+          rawText: "Producer Label 2021",
+          producer: "Producer",
+          label: "Label",
+          vintage: 2021,
+        },
+      ],
+    };
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/debug/provider-canary",
+      headers: {
+        "x-provider-canary-secret": "test-secret",
+      },
+      payload,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.objectContaining({
+      mode: "dry-run",
+      recommendationQualityEvaluated: false,
+    }));
+    expect(response.json()).not.toHaveProperty("recommendations");
+    expect(getProviderCanaryMock).toHaveBeenCalledWith(payload);
+  });
+
+  it("does not allow the provider canary route in production even when enabled", async () => {
+    process.env.VERCEL_ENV = "production";
+    process.env.WINE_REC_PROVIDER_CANARY_ENABLED = "true";
+    process.env.WINE_REC_PROVIDER_CANARY_SECRET = "test-secret";
+    app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/debug/provider-canary",
+      headers: {
+        "x-provider-canary-secret": "test-secret",
+      },
+      payload: {
+        mode: "dry-run",
+        candidates: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(getProviderCanaryMock).not.toHaveBeenCalled();
   });
 });

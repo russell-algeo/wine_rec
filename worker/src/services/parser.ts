@@ -173,8 +173,46 @@ const ocrCorrections: Array<[RegExp, string]> = [
   [/\bItasmendi\b/gi, "Itsasmendi"],
   [/\bAlbar(?:ifio|iao)\b/gi, "Albarino"],
   [/\bQannboubin(?:e)?\b/gi, "Qannoubine"],
+  [/\bQannbou?bin(?:e)?\b/gi, "Qannoubine"],
+  [/\bQannboub\b/gi, "Qannoubine"],
+  [/\bQannbo?ubine\b/gi, "Qannoubine"],
   [/\bBlaufrankish\b/gi, "Blaufrankisch"],
+  [/\bIfrankish\b/gi, "Blaufrankisch"],
   [/\bOMBRANalis\b/g, "Ombra Vallis"],
+  [/\bOMBRANalls\b/gi, "Ombra Vallis"],
+  [/\bValls\b/g, "Vallis"],
+  [/\bC6tes\b/gi, "Cotes"],
+  [/\bTradicionnelle\b/gi, "Traditionnelle"],
+  [/\bMethod(?=\s+Traditionnelle\b)/gi, "Methode"],
+  [/\bCAND[!I]?\b/g, "CANDI"],
+  [/\bRennersist\b/gi, "Rennersistas"],
+  [/\bTillo(\s+Raul\s+Moreno\b)/gi, "Tintillo$1"],
+  [/\bIL\.\s+Moreno\b/gi, "Raul Moreno"],
+  [/\bDimi(?:tri)?\b/gi, "Dimitri"],
+  [/\bDi\s+itt\b/gi, "Dimitri"],
+  [/\bDimitti\b/gi, "Dimitri"],
+  [/\bDilnili\b/gi, "Dimitri"],
+  [/\bDnt\b/gi, "Dimitri"],
+  [/\bCheovich\b/gi, "Cacovich"],
+  [/\bCaco(?:vich|yich|vyich|oyich)?\b/gi, "Cacovich"],
+  [/\bStenci\b/gi, "Stencnik"],
+  [/\bSTENCH\b/g, "Stencnik"],
+  [/\bREFOS\b/gi, "Refosco"],
+  [/\bReroseo\b/gi, "Refosco"],
+  [/\bREROSCO\b/gi, "Refosco"],
+  [/\bHolla(?=\s+(?:Gibllal|Gialla)\b)/gi, "Ribolla"],
+  [/\bGibllal\b/gi, "Gialla"],
+  [/\bFri\s+li\b/gi, "Friuli"],
+  [/\bCatarratte\b/gi, "Catarratto"],
+  [/\bCatard\s+atta\b/gi, "Catarratto"],
+  [/\bCatar(?:s|r)?\b/gi, "Catarratto"],
+  [/\bVetLa\b/g, "Vella"],
+  [/\bdapkizio\b/gi, "Fabrizio"],
+  [/\bCharlo\b/g, "Carlo"],
+  [/\bPiai\b/g, "Pialli"],
+  [/\bOMBRA\s+alls\s+Mares\b/gi, "Ombra Vallis Mareni"],
+  [/\bVallis\s+Maren\b/gi, "Vallis Mareni"],
+  [/\bMardni\b/gi, "Mareni"],
   [/\b7014\b/g, "2024"],
 ];
 
@@ -423,7 +461,7 @@ function parsePipeDelimitedOcrLine(line: string): {
   };
 }
 
-function applyOcrCorrections(line: string): string {
+export function applyOcrCorrections(line: string): string {
   return ocrCorrections.reduce((value, [pattern, replacement]) => {
     return value.replace(pattern, replacement);
   }, line);
@@ -1158,6 +1196,30 @@ export function buildCandidateFromItem(item: {
   return parseBlock([item.name], 0, color, item.price, item.tab, item.section);
 }
 
+export type StructuredOcrRowCandidate = {
+  rawText: string;
+  lineNumber?: number | null;
+  source?: {
+    variant?: string | null;
+    family?: string | null;
+    textKind?: string | null;
+    windowSize?: number | null;
+    lineIndex?: number | null;
+  };
+};
+
+const defaultStructuredOcrCandidateBudget = 200;
+
+function getStructuredOcrCandidateBudget(): number {
+  const raw = process.env.STRUCTURED_OCR_CANDIDATE_BUDGET?.trim();
+  if (!raw) return defaultStructuredOcrCandidateBudget;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return defaultStructuredOcrCandidateBudget;
+
+  return Math.max(1, Math.min(defaultStructuredOcrCandidateBudget, Math.floor(parsed)));
+}
+
 function hasWineCue(line: string): boolean {
   const normalized = line.toLowerCase();
   return (
@@ -1243,6 +1305,44 @@ function fallbackClientVisionCandidate(row: string, index: number): WineCandidat
   };
 }
 
+function fallbackStructuredOcrCandidate(row: string, index: number): WineCandidate | null {
+  const normalizedRow = applyOcrCorrections(row)
+    .replace(/[·•]/g, " ")
+    .replace(/[|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const alphaTokens = extractAlphaTokens(normalizedRow).filter((token) => token.length >= 2);
+  if (alphaTokens.length < 2 || isNonWineLine(normalizedRow)) return null;
+
+  const vintageMatch = normalizedRow.match(vintagePattern);
+  const vintage = vintageMatch ? Number(vintageMatch[0]) : null;
+  const { producer, label } = inferProducerAndLabel(normalizedRow, vintage);
+  const lower = normalizedRow.toLowerCase();
+  const color = colorHints.find((hint) => lower.includes(hint)) ?? null;
+  const varietal = detectHint(normalizedRow, varietalHints);
+  const region =
+    detectHint(normalizedRow, regionHints) ??
+    geographicTailHints.find((hint) => lower.includes(hint)) ??
+    null;
+
+  return {
+    id: createId(),
+    rawText: normalizedRow,
+    price: null,
+    menuTab: null,
+    menuSection: null,
+    lineNumber: index,
+    producer,
+    label,
+    vintage,
+    color,
+    varietal,
+    region,
+    notes: null,
+    extractionConfidence: 0.62,
+  };
+}
+
 function rowsFromClientOcrLines(lines: ClientOcrLineObservation[]): string[] {
   const positioned = lines
     .map((line) => {
@@ -1297,6 +1397,135 @@ function dedupeCandidates(candidates: WineCandidate[]): WineCandidate[] {
     seen.add(key);
     return true;
   });
+}
+
+type StructuredParsedCandidate = {
+  candidate: WineCandidate;
+  row: StructuredOcrRowCandidate;
+  index: number;
+};
+
+function structuredCandidateText(candidate: WineCandidate): string {
+  return [
+    candidate.rawText,
+    candidate.producer,
+    candidate.label,
+    candidate.vintage,
+    candidate.region,
+    candidate.varietal,
+  ].filter(Boolean).join(" ");
+}
+
+function structuredCandidateIdentityKey(candidate: WineCandidate): string {
+  return extractAlphaTokens(structuredCandidateText(candidate))
+    .map((token) => token.toLowerCase())
+    .filter((token) => token.length >= 3)
+    .filter((token) => !/^(?:red|white|rose|rosé|sparkling|orange|champagne|wine|wines|glass|bottle|carafe)$/i.test(token))
+    .slice(0, 8)
+    .join(" ");
+}
+
+function structuredCandidateBudgetScore(entry: StructuredParsedCandidate): number {
+  const candidate = entry.candidate;
+  const text = structuredCandidateText(candidate);
+  const rawText = candidate.rawText ?? "";
+  const identityTokens = extractAlphaTokens(text).filter((token) => token.length >= 3);
+  const rawTokens = extractAlphaTokens(rawText).filter((token) => token.length >= 3);
+  const numericTokens = rawText.split(/\s+/).filter((token) => /^\d+$/.test(token)).length;
+
+  let score = 0;
+  score += Math.min(identityTokens.length, 8) * 1.8;
+  score += Math.min(rawTokens.length, 8) * 0.45;
+  score += candidate.producer ? 5 : 0;
+  score += candidate.label ? 4 : 0;
+  score += candidate.vintage ? 3 : 0;
+  score += candidate.region ? 2 : 0;
+  score += hasWineCue(text) ? 5 : 0;
+  score += entry.row.source?.family === "base" ? 3 : 0;
+  score += entry.row.source?.family === "column" ? 2 : 0;
+  score += entry.row.source?.family === "photo-focus" ? 1 : 0;
+  score += entry.row.source?.windowSize === 1 ? 1.5 : 0;
+  score += candidate.extractionConfidence ?? 0;
+  score -= Math.max(0, rawTokens.length - 10) * 1.5;
+  score -= numericTokens > rawTokens.length ? 8 : 0;
+  score -= isNonWineLine(rawText) ? 20 : 0;
+  score -= /[<>_=]{2,}/.test(rawText) ? 3 : 0;
+  score -= rawText.length > 120 ? 6 : 0;
+  return score;
+}
+
+function rankStructuredOcrCandidates(entries: StructuredParsedCandidate[]): WineCandidate[] {
+  const exactSeen = new Set<string>();
+  const deduped = entries.filter((entry) => {
+    const candidate = entry.candidate;
+    const key = [
+      candidate.rawText,
+      candidate.producer,
+      candidate.label,
+      candidate.vintage,
+      candidate.region,
+    ]
+      .filter(Boolean)
+      .join("|")
+      .toLowerCase();
+    if (exactSeen.has(key)) return false;
+    exactSeen.add(key);
+    return true;
+  });
+
+  const ranked = deduped
+    .map((entry) => ({
+      ...entry,
+      score: structuredCandidateBudgetScore(entry),
+      identityKey: structuredCandidateIdentityKey(entry.candidate),
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index);
+
+  const identitySeen = new Set<string>();
+  const clustered = ranked.filter((entry) => {
+    const key = entry.identityKey || entry.candidate.rawText.toLowerCase();
+    if (identitySeen.has(key)) return false;
+    identitySeen.add(key);
+    return true;
+  });
+
+  return clustered
+    .slice(0, getStructuredOcrCandidateBudget())
+    .map((entry) => entry.candidate);
+}
+
+export function parseStructuredOcrCandidates(
+  rows: StructuredOcrRowCandidate[],
+): WineCandidate[] {
+  const entries: StructuredParsedCandidate[] = [];
+
+  rows.forEach((row, index) => {
+    const correctedRow = applyOcrCorrections(row.rawText)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!correctedRow) return;
+
+    const lineNumber = row.lineNumber ?? row.source?.lineIndex ?? index;
+    const parsed =
+      parseBlock([correctedRow], lineNumber, null, null, null, null) ??
+      fallbackStructuredOcrCandidate(correctedRow, lineNumber);
+    if (!parsed) return;
+
+    entries.push({
+      candidate: {
+        ...parsed,
+        rawText: correctedRow,
+        lineNumber,
+        extractionConfidence: Math.max(parsed.extractionConfidence, 0.62),
+      },
+      row,
+      index,
+    });
+  });
+
+  return rankStructuredOcrCandidates(entries).filter(
+    (candidate) => candidate.extractionConfidence >= 0.55,
+  );
 }
 
 export function parseClientOcrCandidates(

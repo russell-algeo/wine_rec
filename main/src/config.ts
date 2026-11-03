@@ -62,6 +62,8 @@ export const appConfig = {
   vivinoDirectBackoffMs: parseNumber(process.env.VIVINO_DIRECT_BACKOFF_MS, 2000),
   /** Whether to fetch the secondary /api/wines/{id}/tastes endpoint for richer taste data. */
   vivinoDirectFetchTastes: parseBoolean(process.env.VIVINO_DIRECT_FETCH_TASTES, true),
+  /** Search transport for Vivino identity lookups: browser (default) or curl-explore diagnostic path. */
+  vivinoDirectSearchTransport: parseString(process.env.VIVINO_DIRECT_SEARCH_TRANSPORT, "browser"),
   /** Run Playwright browser headless (default true). Set false for debugging. */
   vivinoDirectHeadless: parseBoolean(process.env.VIVINO_DIRECT_HEADLESS, true),
   /** Optional path to Chrome/Chromium executable. Playwright bundled Chromium is used if unset. */

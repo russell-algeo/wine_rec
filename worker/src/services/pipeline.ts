@@ -7,8 +7,7 @@ import {
   createWineProfileProviders,
   RetryableWineProfileLookupError,
 } from "../providers/wine-profiles.js";
-import { parseWineCandidates } from "./parser.js";
-import { extractCandidatesFromUrl, extractSourceText } from "./source-extractor.js";
+import { extractCandidatesFromUrl, extractUploadOcrCandidates } from "./source-extractor.js";
 
 type AnalysisPipelineHooks = {
   shouldCancel?: () => Promise<boolean> | boolean;
@@ -76,7 +75,12 @@ async function buildCandidateRecommendation(
       result = await provider.lookup(candidate);
     } catch (error) {
       if (error instanceof RetryableWineProfileLookupError) {
-        throw new AnalysisRetryableError(candidate.id, error);
+        console.log(
+          "[analysis] Provider %s exhausted retryable lookup for candidate %s; continuing without failing the job.",
+          error.provider,
+          candidate.id,
+        );
+        continue;
       }
       throw error;
     }
@@ -251,8 +255,7 @@ export async function runAnalysisPipeline(input: {
   if (input.sourceUrl) {
     candidates = await extractCandidatesFromUrl(input.sourceUrl);
   } else {
-    extractedText = await extractSourceText(input);
-    candidates = parseWineCandidates(extractedText);
+    ({ extractedText, candidates } = await extractUploadOcrCandidates(input));
   }
 
   await throwIfCanceled(hooks.shouldCancel);

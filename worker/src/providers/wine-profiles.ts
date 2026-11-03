@@ -10,6 +10,7 @@ import {
   type SearchHit,
   type VivinoRatingSource,
 } from "./vivino-browser.js";
+import { searchVivinoExploreWithCurl } from "./vivino-explore-curl.js";
 
 export interface CandidateProfileResult {
   provider: string;
@@ -616,11 +617,12 @@ class VivinoDirectProvider implements WineProfileProvider {
       return null;
     }
 
-    // Step 3: Fetch aggregate rating metadata and taste data for the best match
-    const [wineMeta, tastesData] = await Promise.all([
-      this.fetchWineMeta(bestHit),
-      this.fetchTastes(bestHit.wineId),
-    ]);
+    // Step 3: Fetch aggregate rating metadata, then optional taste data.
+    // Keeping these serial avoids a follow-up burst after a successful identity match.
+    const wineMeta = await this.fetchWineMeta(bestHit);
+    const tastesData = appConfig.vivinoDirectFetchTastes
+      ? await this.fetchTastes(bestHit.wineId)
+      : null;
     console.log(
       "[vivino-direct] Aggregate rating for wine %d:",
       bestHit.wineId,
@@ -629,7 +631,7 @@ class VivinoDirectProvider implements WineProfileProvider {
     console.log(
       "[vivino-direct] Taste data for wine %d:",
       bestHit.wineId,
-      JSON.stringify(tastesData, null, 2),
+      appConfig.vivinoDirectFetchTastes ? JSON.stringify(tastesData, null, 2) : "disabled",
     );
 
     const tasteStructure = tastesData?.tastes?.structure;
@@ -687,6 +689,9 @@ class VivinoDirectProvider implements WineProfileProvider {
 
   private async searchByName(query: string): Promise<SearchHit[]> {
     try {
+      if (appConfig.vivinoDirectSearchTransport === "curl-explore") {
+        return await searchVivinoExploreWithCurl(query);
+      }
       return await VivinoBrowser.getInstance().search(query);
     } catch (error) {
       if (error instanceof RetryableVivinoBrowserError) {

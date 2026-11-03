@@ -5,6 +5,13 @@ export type OcrImageVariant = {
   buffer: Buffer;
   cropped: boolean;
   thresholded: boolean;
+  family?: "base" | "column" | "photo-focus";
+  bounds?: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null;
 };
 
 type Bounds = {
@@ -248,6 +255,8 @@ export async function prepareImageVariantsForOcr(input: Buffer): Promise<OcrImag
       buffer: await renderOcrVariant(orientedBuffer, bounds, thresholded),
       cropped: Boolean(bounds),
       thresholded,
+      family: "base",
+      bounds: null,
     });
   };
 
@@ -260,4 +269,100 @@ export async function prepareImageVariantsForOcr(input: Buffer): Promise<OcrImag
   await addVariant("full-thresholded", null, true);
 
   return variants;
+}
+
+export async function prepareColumnVariantsForOcr(input: Buffer): Promise<OcrImageVariant[]> {
+  const orientedBuffer = await sharp(input).rotate().removeAlpha().png().toBuffer();
+  const metadata = await sharp(orientedBuffer).metadata();
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+  if (!width || !height || width < 600 || height < 600) return [];
+
+  const specs = [
+    { label: "column-left-normalized", left: 0, top: 0, width: Math.ceil(width * 0.56), height },
+    {
+      label: "column-right-normalized",
+      left: Math.floor(width * 0.44),
+      top: 0,
+      width: width - Math.floor(width * 0.44),
+      height,
+    },
+  ];
+
+  return Promise.all(
+    specs.map(async (spec) => ({
+      label: spec.label,
+      buffer: await sharp(orientedBuffer)
+        .extract({ left: spec.left, top: spec.top, width: spec.width, height: spec.height })
+        .resize({ width: 1800, height: 3000, fit: "inside", withoutEnlargement: true })
+        .normalize()
+        .grayscale()
+        .median(1)
+        .sharpen({ sigma: 1.1, m1: 0.3, m2: 0.6 })
+        .linear(1.08, -8)
+        .png()
+        .toBuffer(),
+      cropped: true,
+      thresholded: false,
+      family: "column" as const,
+      bounds: { left: spec.left / width, top: 0, width: spec.width / width, height: 1 },
+    })),
+  );
+}
+
+export async function shouldUsePhotoFocusOcr(input: Buffer): Promise<boolean> {
+  const metadata = await sharp(input).metadata();
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+  return Boolean(metadata.orientation) && Math.min(width, height) >= 3000;
+}
+
+export async function preparePhotoFocusVariantsForOcr(input: Buffer): Promise<OcrImageVariant[]> {
+  const orientedBuffer = await sharp(input).rotate().removeAlpha().png().toBuffer();
+  const metadata = await sharp(orientedBuffer).metadata();
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+  if (!width || !height) return [];
+
+  const clampRect = (spec: Bounds & { label: string }) => {
+    const left = clamp(Math.floor(spec.left), 0, width - 1);
+    const top = clamp(Math.floor(spec.top), 0, height - 1);
+    return {
+      ...spec,
+      left,
+      top,
+      width: Math.max(1, Math.min(width - left, Math.floor(spec.width))),
+      height: Math.max(1, Math.min(height - top, Math.floor(spec.height))),
+    };
+  };
+  const specs = [
+    { label: "photo-full-clahe", left: 0, top: 0, width, height },
+    { label: "photo-center-wide-clahe", left: width * 0.12, top: height * 0.08, width: width * 0.76, height: height * 0.84 },
+    { label: "photo-center-tight-clahe", left: width * 0.22, top: height * 0.12, width: width * 0.58, height: height * 0.76 },
+    { label: "photo-vertical-left-mid-clahe", left: width * 0.2, top: 0, width: width * 0.35, height },
+    { label: "photo-vertical-mid-right-clahe", left: width * 0.42, top: 0, width: width * 0.36, height },
+    { label: "photo-upper-center-clahe", left: width * 0.12, top: 0, width: width * 0.76, height: height * 0.55 },
+    { label: "photo-lower-center-clahe", left: width * 0.12, top: height * 0.45, width: width * 0.76, height: height * 0.55 },
+  ].map(clampRect);
+
+  return Promise.all(
+    specs.map(async (spec) => ({
+      label: spec.label,
+      buffer: await sharp(orientedBuffer)
+        .extract({ left: spec.left, top: spec.top, width: spec.width, height: spec.height })
+        .resize({ width: 2600, height: 3600, fit: "inside", withoutEnlargement: false })
+        .grayscale()
+        .normalize()
+        .clahe({ width: 32, height: 32, maxSlope: 3 })
+        .median(1)
+        .sharpen({ sigma: 1.2, m1: 0.35, m2: 0.7 })
+        .linear(1.12, -8)
+        .png()
+        .toBuffer(),
+      cropped: true,
+      thresholded: false,
+      family: "photo-focus" as const,
+      bounds: { left: spec.left / width, top: spec.top / height, width: spec.width / width, height: spec.height / height },
+    })),
+  );
 }

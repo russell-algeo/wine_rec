@@ -4,7 +4,7 @@ import type { Recommendation, WineCandidate } from "@wine-rec/contracts";
 
 type MockJob = {
   id: string;
-  sourceType: "url-html" | "client-ocr-text";
+  sourceType: "url-html" | "client-ocr-text" | "upload-image";
   sourceFilename: string;
   status: "queued" | "processing" | "completed" | "failed" | "canceled";
   queueMessageId: string | null;
@@ -56,6 +56,7 @@ const {
   parseWineCandidatesMock,
   extractCandidatesFromUrlMock,
   extractSourceTextMock,
+  extractUploadOcrCandidatesMock,
   storeState,
   resetStoreState,
   createJobMock,
@@ -315,6 +316,7 @@ const {
     parseWineCandidatesMock: vi.fn(),
     extractCandidatesFromUrlMock: vi.fn(),
     extractSourceTextMock: vi.fn(),
+    extractUploadOcrCandidatesMock: vi.fn(),
     storeState: state,
     resetStoreState,
     createJobMock,
@@ -382,6 +384,7 @@ vi.mock("./services/parser.js", () => ({
 vi.mock("./services/source-extractor.js", () => ({
   extractCandidatesFromUrl: extractCandidatesFromUrlMock,
   extractSourceText: extractSourceTextMock,
+  extractUploadOcrCandidates: extractUploadOcrCandidatesMock,
 }));
 
 vi.mock("./services/url-preview.js", () => ({
@@ -794,6 +797,57 @@ describe("serverless worker orchestration", () => {
       "analysis-1",
       expect.objectContaining({
         extractedText: "Domaine Test Pinot Noir 2022",
+        candidates,
+      }),
+    );
+    expect(createJobCandidateWorkMock).toHaveBeenCalledWith("analysis-1", candidates);
+  });
+
+  it("parses uploaded image OCR through the structured upload extraction path", async () => {
+    const candidates = [buildCandidate("candidate-1")];
+    seedJobState(
+      buildJob({
+        sourceType: "upload-image",
+        sourceFilename: "camera-menu.jpg",
+        extractedText: null,
+        candidates: [],
+        recommendations: [],
+        workerCount: 0,
+      }),
+      [],
+      [],
+    );
+
+    extractUploadOcrCandidatesMock.mockResolvedValue({
+      extractedText: "structured upload OCR",
+      candidates,
+    });
+    publishJSONMock.mockResolvedValue({ messageId: "msg-0" });
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
+    await processWorkerJob({
+      mode: "coordinator",
+      jobId: "analysis-1",
+      sourceType: "upload-image",
+      sourceFilename: "camera-menu.jpg",
+      mimeType: "image/jpeg",
+      fileBase64: Buffer.from("image bytes").toString("base64"),
+    });
+
+    expect(extractUploadOcrCandidatesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "upload-image",
+        filename: "camera-menu.jpg",
+        mimeType: "image/jpeg",
+        storagePath: "",
+        fileBuffer: expect.any(Buffer),
+      }),
+    );
+    expect(parseWineCandidatesMock).not.toHaveBeenCalled();
+    expect(updateJobMock).toHaveBeenCalledWith(
+      "analysis-1",
+      expect.objectContaining({
+        extractedText: "structured upload OCR",
         candidates,
       }),
     );

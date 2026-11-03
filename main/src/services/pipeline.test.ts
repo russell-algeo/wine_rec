@@ -4,14 +4,14 @@ import type { UserTastePreference, WineCandidate, WineProfile } from "@wine-rec/
 
 const {
   createWineProfileProvidersMock,
-  extractSourceTextMock,
+  extractCandidatesFromUrlMock,
+  extractUploadOcrCandidatesMock,
   getPreferencesMock,
-  parseWineCandidatesMock,
 } = vi.hoisted(() => ({
   createWineProfileProvidersMock: vi.fn(),
-  extractSourceTextMock: vi.fn(),
+  extractCandidatesFromUrlMock: vi.fn(),
+  extractUploadOcrCandidatesMock: vi.fn(),
   getPreferencesMock: vi.fn(),
-  parseWineCandidatesMock: vi.fn(),
 }));
 
 vi.mock("../providers/wine-profiles.js", () => {
@@ -33,11 +33,8 @@ vi.mock("../providers/wine-profiles.js", () => {
 });
 
 vi.mock("./source-extractor.js", () => ({
-  extractSourceText: extractSourceTextMock,
-}));
-
-vi.mock("./parser.js", () => ({
-  parseWineCandidates: parseWineCandidatesMock,
+  extractCandidatesFromUrl: extractCandidatesFromUrlMock,
+  extractUploadOcrCandidates: extractUploadOcrCandidatesMock,
 }));
 
 vi.mock("./repository.js", () => ({
@@ -137,8 +134,7 @@ describe("analysis pipeline progress hooks", () => {
       },
     ];
 
-    extractSourceTextMock.mockResolvedValue("RAW OCR TEXT");
-    parseWineCandidatesMock.mockReturnValue(candidates);
+    extractUploadOcrCandidatesMock.mockResolvedValue({ extractedText: "RAW OCR TEXT", candidates });
 
     const lookup = vi
       .fn()
@@ -242,8 +238,7 @@ describe("analysis pipeline progress hooks", () => {
       extractionConfidence: 0.9,
     }));
 
-    extractSourceTextMock.mockResolvedValue("RAW OCR TEXT");
-    parseWineCandidatesMock.mockReturnValue(candidates);
+    extractUploadOcrCandidatesMock.mockResolvedValue({ extractedText: "RAW OCR TEXT", candidates });
 
     let activeLookups = 0;
     let maxActiveLookups = 0;
@@ -363,8 +358,7 @@ describe("analysis pipeline progress hooks", () => {
       },
     ];
 
-    extractSourceTextMock.mockResolvedValue("RAW OCR TEXT");
-    parseWineCandidatesMock.mockReturnValue(candidates);
+    extractUploadOcrCandidatesMock.mockResolvedValue({ extractedText: "RAW OCR TEXT", candidates });
 
     let releaseLookup!: () => void;
     const lookup = vi.fn(async () => {
@@ -442,8 +436,7 @@ describe("analysis pipeline progress hooks", () => {
       },
     ];
 
-    extractSourceTextMock.mockResolvedValue("RAW OCR TEXT");
-    parseWineCandidatesMock.mockReturnValue(candidates);
+    extractUploadOcrCandidatesMock.mockResolvedValue({ extractedText: "RAW OCR TEXT", candidates });
 
     createWineProfileProvidersMock.mockReturnValue([
       {

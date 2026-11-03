@@ -282,6 +282,10 @@ function shouldAbortServerlessRequest(url: string, resourceType: string): boolea
   return BLOCKED_SERVERLESS_HOST_PATTERNS.some((pattern) => pattern.test(hostname));
 }
 
+function isServerlessRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+}
+
 // Keep browser-side evaluators as raw strings so tsx/esbuild helpers like `__name`
 // are not serialized into the page context and crash `page.evaluate(...)`.
 const SEARCH_PAGE_EVALUATION = String.raw`
@@ -582,6 +586,14 @@ export class VivinoBrowser {
             hasAwsWafChallenge: evaluation.hasAwsWafChallenge,
             showsZeroWineMessage: evaluation.showsZeroWineMessage,
           });
+          if (isServerlessRuntime() && evaluation.hasAwsWafChallenge) {
+            console.log(
+              "[vivino-browser] Serverless search for %j rendered a WAF/empty page; returning no hits without browser retries: %s",
+              query,
+              diagnostics,
+            );
+            return [];
+          }
           console.log(
             "[vivino-browser] Suspicious empty search page for %j, retrying once: %s",
             query,
@@ -613,6 +625,14 @@ export class VivinoBrowser {
             hasAwsWafChallenge: evaluation.hasAwsWafChallenge,
             showsZeroWineMessage: evaluation.showsZeroWineMessage,
           });
+          if (isServerlessRuntime()) {
+            console.log(
+              "[vivino-browser] Serverless search for %j returned an empty/WAF explore page; returning no hits without browser retries: %s",
+              query,
+              diagnostics,
+            );
+            return [];
+          }
           console.log(
             "[vivino-browser] Zero-result explore page for %j, retrying with a fresh page: %s",
             query,
@@ -830,7 +850,7 @@ export class VivinoBrowser {
   }
 
   private async launchBrowser(): Promise<Browser> {
-    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+    const isServerless = isServerlessRuntime();
 
     if (isServerless) {
       chromium.setGraphicsMode = isServerlessChromiumGraphicsEnabled();
@@ -882,7 +902,7 @@ export class VivinoBrowser {
   }
 
   private getMaxConcurrentBrowserTasks(): number {
-    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+    const isServerless = isServerlessRuntime();
     return isServerless ? SERVERLESS_BROWSER_TASK_CONCURRENCY : Number.POSITIVE_INFINITY;
   }
 

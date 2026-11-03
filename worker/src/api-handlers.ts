@@ -17,14 +17,18 @@ import {
 } from "@wine-rec/contracts";
 
 import { createOcrProvider } from "./providers/ocr.js";
+import {
+  providerCanaryRequestSchema,
+  runProviderCanary,
+} from "./providers/provider-canary.js";
 import { createWineProfileProviders } from "./providers/wine-profiles.js";
 import {
   AnalysisCanceledError,
   AnalysisRetryableError,
   runCandidateAnalysis,
 } from "./services/pipeline.js";
-import { parseClientOcrCandidates, parseWineCandidates } from "./services/parser.js";
-import { extractCandidatesFromUrl, extractSourceText } from "./services/source-extractor.js";
+import { parseClientOcrCandidates } from "./services/parser.js";
+import { extractCandidatesFromUrl, extractUploadOcrCandidates } from "./services/source-extractor.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
 import { createId } from "./id.js";
 
@@ -291,6 +295,10 @@ export async function getProviderHealth(): Promise<ProviderHealth[]> {
   ];
 
   return z.array(providerHealthSchema).parse(providers);
+}
+
+export async function getProviderCanary(input: unknown) {
+  return runProviderCanary(providerCanaryRequestSchema.parse(input));
 }
 
 export async function getPreview(urlInput: string): Promise<{ title: string | null; domain: string }> {
@@ -724,14 +732,13 @@ async function extractAndPersistJobState(
       fileBuffer = Buffer.from(payload.fileBase64, "base64");
     }
 
-    extractedText = await extractSourceText({
+    ({ extractedText, candidates } = await extractUploadOcrCandidates({
       sourceType: payload.sourceType,
       filename: payload.sourceFilename,
       mimeType: payload.mimeType ?? "text/uri-list",
       storagePath: "",
       ...(fileBuffer ? { fileBuffer } : {}),
-    });
-    candidates = parseWineCandidates(extractedText);
+    }));
   }
 
   await assertJobActive(payload.jobId, store);
@@ -832,6 +839,16 @@ async function processCoordinatorJob(
 
 function getJobCandidate(job: AnalysisRun, candidateId: string): WineCandidate | null {
   return job.candidates.find((candidate) => candidate.id === candidateId) ?? null;
+}
+
+function buildUnmatchedRecommendation(candidate: WineCandidate): Recommendation {
+  return {
+    candidateId: candidate.id,
+    fitScore: 0,
+    matchConfidence: 0,
+    profile: null,
+    status: "unmatched",
+  };
 }
 
 async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): Promise<void> {
@@ -1060,15 +1077,33 @@ export async function processWorkerFailure(sourceBody: string): Promise<void> {
 
   let failureStatus: AnalysisRun["status"] | null = null;
   if (claimedCandidate) {
-    const failed = await store.failJobCandidate(
-      payload.jobId,
-      claimedCandidate.candidateId,
-      leaseOwner,
-      claimedCandidate.errorMessage ?? "Analysis failed after exhausting all retry attempts.",
-    );
-    failureStatus = failed.jobStatus;
-    if (!failed.progressTracked) {
-      await syncJobFromCandidateWork(store, payload.jobId);
+    const candidate = getJobCandidate(job, claimedCandidate.candidateId);
+    if (candidate) {
+      console.log(
+        "[worker] Candidate %s exhausted worker retries; saving unmatched recommendation instead of failing the analysis.",
+        claimedCandidate.candidateId,
+      );
+      const completed = await store.completeJobCandidate(
+        payload.jobId,
+        claimedCandidate.candidateId,
+        leaseOwner,
+        buildUnmatchedRecommendation(candidate),
+      );
+      failureStatus = completed.jobStatus;
+      if (!completed.progressTracked) {
+        await syncJobFromCandidateWork(store, payload.jobId);
+      }
+    } else {
+      const failed = await store.failJobCandidate(
+        payload.jobId,
+        claimedCandidate.candidateId,
+        leaseOwner,
+        `Candidate ${claimedCandidate.candidateId} is missing from analysis state.`,
+      );
+      failureStatus = failed.jobStatus;
+      if (!failed.progressTracked) {
+        await syncJobFromCandidateWork(store, payload.jobId);
+      }
     }
   }
   if (!claimedCandidate) {
