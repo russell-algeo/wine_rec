@@ -75,6 +75,7 @@ Authorized direct, non-forced pushes to `master` do not require a PR or approvin
 
 ## Notes
 
+- `worker/src`, `worker/packages` and the two `worker/api` routes are copies of the same code in `main/`. Edit `main/` and run `shared/scripts/check-worker-sync.sh --write` to update `worker/`. CI runs the script without `--write` and fails on drift.
 - See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel deployment topology, environment contract, local-linking procedure, and deployment validation checklist.
 - The `vivino-direct` provider uses an embedded Playwright Chromium browser to scrape Vivino search results. As a future improvement, this could be extracted into a dedicated sidecar process (a small HTTP service wrapping Playwright) for independent scaling and restarts without affecting the main API.
 - Full iOS builds require Xcode, which is not available in this workspace at the moment.
