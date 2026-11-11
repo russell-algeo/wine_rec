@@ -69,6 +69,10 @@ The deprecated integrations below were removed from the live runtime on March 10
 - `wine-searcher`: This was a custom endpoint hook for Wine-Searcher style lookups. Revisit it if you get access to a stable wrapper that can add bottle metadata, merchant/price context, or broader catalog coverage than Vivino.
 - `spoonacular-style`: This was a description-based style fallback keyed off varietal or wine name. Revisit it only if you need a coarse textual style signal when exact bottle matching is impossible; it is too low-fidelity to be a primary recommendation source.
 
+## Git workflow
+
+Authorized direct, non-forced pushes to `master` do not require a PR or approving GitHub review. The default-branch ruleset continues to block force pushes and branch deletion. Review changes and run the relevant checks before publishing; PRs remain optional. This workflow does not grant deployment approval or change the separate release safeguards in [DEPLOYMENT.md](DEPLOYMENT.md#deployment-safety).
+
 ## Notes
 
 - See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel deployment topology, environment contract, local-linking procedure, and deployment validation checklist.
