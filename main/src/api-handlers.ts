@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { scope, scopedAnalysisId, scopedFlowControlKey, previewDeploymentOrigin } from "./deployment-scope.js";
+import { PreviewBudgetError, previewBudgetConfig, reservePreviewPublication } from "./preview-publish-budget.js";
 import { ProviderAccessBlockedError } from "./providers/provider-access.js";
 import { Client as QStashClient } from "@upstash/qstash";
 import { del } from "@vercel/blob";
@@ -151,7 +153,11 @@ function getQStashClient(): QStashClient {
 
   const baseUrl = process.env.QSTASH_URL;
 
-  return new QStashClient(baseUrl ? { token, baseUrl } : { token });
+  return new QStashClient({ token, ...(baseUrl ? { baseUrl } : {}),
+    // retry:false still sends twice in QStash SDK 2.10.1. Explicit zero is
+    // necessary; an ambiguous publish must never be retried by this client.
+    ...(scope.namespace ? { retry: { retries: 0 } } : {}),
+  });
 }
 
 async function loadJobStore() {
@@ -243,16 +249,20 @@ async function publishWorkerJob(
     };
   } = {},
 ): Promise<{ messageId: string }> {
+  const destination = getJobDestinationUrl(payload.mode);
+  await reservePreviewPublication(payload);
   const request = {
-    url: getJobDestinationUrl(payload.mode),
+    url: destination,
     body: { ...payload, ...(scope.namespace ? { deploymentNamespace: scope.namespace } : {}) },
-    retries: options.retries ?? 0,
-    ...(options.retryDelay ? { retryDelay: options.retryDelay } : {}),
+    retries: scope.namespace ? 0 : options.retries ?? 0,
+    ...(scope.namespace ? { deduplicationId: createHash("sha256")
+      .update(JSON.stringify([scope.namespace, payload.mode, payload.jobId])).digest("hex") } : {}),
+    ...(!scope.namespace && options.retryDelay ? { retryDelay: options.retryDelay } : {}),
     ...(options.delaySeconds && options.delaySeconds > 0
       ? { delay: options.delaySeconds }
       : {}),
     ...(options.flowControl ? { flowControl: options.flowControl } : {}),
-    ...(options.failureCallback ? { failureCallback: options.failureCallback } : {}),
+    ...(!scope.namespace && options.failureCallback ? { failureCallback: options.failureCallback } : {}),
   };
   const bypassSecret = getAutomationBypassSecret(payload.mode);
   const response = bypassSecret
@@ -330,6 +340,7 @@ export async function createUploadAnalysis(input: {
   filename: string;
   mimeType?: string;
 }): Promise<CreateAnalysisResponse> {
+  previewBudgetConfig(); // Fail before job or Blob creation if the gate is absent.
   const ocrProvider = createOcrProvider();
 
   if (!ocrProvider.isEnabled) {
@@ -396,6 +407,7 @@ export async function createUploadAnalysis(input: {
 }
 
 export async function createUrlAnalysis(input: { url: string }): Promise<CreateAnalysisResponse> {
+  previewBudgetConfig();
   let url: URL;
 
   try {
@@ -443,6 +455,7 @@ export async function createClientOcrAnalysis(input: {
   sourceFilename: string;
   recognizedText: string;
 }): Promise<CreateAnalysisResponse> {
+  previewBudgetConfig();
   const recognizedText = input.recognizedText.trim();
   if (!recognizedText) {
     throw new RequestError("Recognized text is required", 400);
@@ -576,7 +589,7 @@ function getWorkerLeaseOwner(workerIndex: number): string {
 }
 
 function getInitialWorkerCount(candidateCount: number): number {
-  return Math.min(Math.max(0, candidateCount), MAX_SERVERLESS_CONCURRENT_WORKERS);
+  return Math.min(Math.max(0, candidateCount), scope.namespace ? 1 : MAX_SERVERLESS_CONCURRENT_WORKERS);
 }
 
 function getWorkerFlowControl(jobId: string): {
@@ -586,7 +599,7 @@ function getWorkerFlowControl(jobId: string): {
   const sanitizedJobId = jobId.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
     key: scopedFlowControlKey(`analysis.${sanitizedJobId}.worker`),
-    parallelism: MAX_SERVERLESS_CONCURRENT_WORKERS,
+    parallelism: scope.namespace ? 1 : MAX_SERVERLESS_CONCURRENT_WORKERS,
   };
 }
 
@@ -670,6 +683,7 @@ async function requeueWorkerJob(
   store: JobStore,
   delaySeconds = getWorkerRequeueDelaySeconds(),
 ): Promise<void> {
+  if (scope.namespace) throw new PreviewBudgetError("Preview smoke test stopped at the worker time limit; no handoff published");
   await assertJobActive(payload.jobId, store);
   const currentWorker = await store.getJobWorker(payload.jobId, payload.workerIndex);
   if (!currentWorker || currentWorker.status === "completed" || currentWorker.status === "canceled") {
@@ -1063,6 +1077,17 @@ export async function processWorkerJob(input: unknown): Promise<void> {
       return; // ACK this delivery. Access denial must not become a QStash retry.
     }
 
+    if (scope.namespace) {
+      // Zero delivery retries/callbacks means errors must become visible terminal
+      // states here. A crash or failed Redis write still needs operator recovery;
+      // never manufacture another publication to hide a bounded-test failure.
+      await store.updateJob(payload.jobId, {
+        status: "failed", queueMessageId: null,
+        errorMessage: error instanceof Error ? error.message : "Preview smoke test failed",
+      });
+      return;
+    }
+
     if (payload.mode === "worker") {
       if (error instanceof AnalysisCanceledError) {
         return;
@@ -1103,6 +1128,11 @@ export async function processWorkerFailure(sourceBody: string): Promise<void> {
   const store = await loadJobStore();
   const job = await store.getJobState(payload.jobId);
   if (!job || job.status === "canceled" || job.status === "completed" || job.status === "failed") {
+    return;
+  }
+  if (scope.namespace) {
+    await store.updateJob(payload.jobId, { status: "failed", queueMessageId: null,
+      errorMessage: "Preview smoke test stopped after a delivery failure; no retry published" });
     return;
   }
 

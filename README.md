@@ -148,3 +148,57 @@ on a disposable loopback Valkey engine. It requires `VALKEY_SERVER_BIN` and the
 pinned Python Redis dependency listed by `test-redis-terminal.py`. It never
 connects to a hosted database or uses real credentials. Ordinary Vitest tests
 also check the actual job-store key builders, queue scope and startup gates.
+
+### One-off Preview QStash smoke-test budget
+
+Namespaced Preview is deliberately a bounded smoke-test mode, not production
+reliability validation. Both roots must set the same
+`WINE_REC_PREVIEW_PUBLISH_LIMIT` (integer 1–6) and
+`WINE_REC_PREVIEW_EXPIRES_AT` (canonical ISO UTC timestamp within 24 hours).
+Missing/invalid configuration fails before job or Blob creation. Redis server
+time enforces the publication deadline as well as a shared atomic allowance.
+
+Each job may publish one coordinator and one worker, with a stable deduplication
+ID. The worker requires its coordinator's permit. SDK HTTP retries are explicitly
+`{ retries: 0 }` because `retry: false` still attempts twice in SDK 2.10.1.
+Delivery retries are zero; callbacks and timed handoffs are disabled. A worker
+that cannot finish within its existing time budget fails visibly instead of
+spending another message. Caught errors persist terminal state before ACK; a
+crash, timeout, or unavailable Redis can still leave a job requiring manual
+reconciliation. These limits are intentional, not a successful full reliability
+acceptance. Unnamespaced Production retry/callback/concurrency defaults remain
+unchanged.
+
+The sole namespaced hash `qstash-smoke-budget:v1` retains its original limit,
+deadline, spent count and per-job permits without TTL. An uncertain admission or
+publication is spent and is never refunded. Changed configuration fails closed,
+not reset. Exact fixture cleanup and rollback must retain this small budget hash;
+normal job-state TTLs and cancellation cannot replenish it. This is logical
+collision prevention under the shared credential, not an ACL.
+
+The currently authorized batch has four uploads total. Its first fixture already
+consumed one coordinator delivery and has been cleaned up; only three fixtures
+remain, not a retry of the first. Six additional publications give seven nominal
+delivery attempts including that prior one. Before each fixture, verify current
+US-region account usage, exact immutable deployment pairing, no pending prior
+job/retries, and sufficient remaining allowance to leave at least 990/1,000 daily
+attempts for Production. Stop if observed total plus the maximum remaining test
+spend exceeds 10, if usage cannot be reconciled, or if limits/cost/access change.
+Do not rely on a guessed midnight reset. Check again after each fixture, since
+unrelated traffic shares the account. The application bounds publish attempts;
+vendor-level unexpected duplicate deliveries are not proven impossible, so
+actual billing/usage counters remain an acceptance gate, not a theoretical
+guarantee of zero Production impact.
+
+Only approved non-private fixtures may use the existing public Blob store. Their
+URLs are bearer links. Delete only their exact objects after verified terminal
+state and queue quiescence; never list/delete broad Production prefixes or alter
+historical uploads. QStash message deletion for cancellation uses the same
+single-attempt Preview SDK client and does not publish a replacement. Failed or
+uncertain cleanup must be reconciled, not hidden by another upload.
+
+`main/scripts/test-preview-budget.py` exercises the actual Lua on disposable
+loopback Valkey, including 64-way duplicate/unique admission races, expiry,
+ambiguous outcomes, configuration mismatch and synthetic Production preservation.
+The ordinary suite also tests the actual SDK with intercepted transport, source
+retention after ambiguous publication, and fail-closed worker/callback behavior.

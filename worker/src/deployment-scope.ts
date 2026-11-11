@@ -18,7 +18,13 @@ export function scopedAnalysisId(id: string): string {
   return scope.namespace ? `pv_${scope.namespace.slice("preview:".length)}_${id}` : id;
 }
 export function scopedFlowControlKey(key: string): string {
-  return scope.namespace ? `${scope.namespace}.${key}` : key;
+  if (!key || /[^A-Za-z0-9._-]/.test(key)) {
+    throw new Error("QStash flow-control key must contain only alphanumeric, hyphen, underscore, or period characters");
+  }
+  // QStash rejects the colon used in Redis namespaces. The fixed namespace
+  // grammar allows only lowercase alphanumerics/hyphens in the label, so this
+  // wire-only representation is injective and leaves Redis/payload scope intact.
+  return scope.namespace ? `preview.${scope.namespace.slice("preview:".length)}.${key}` : key;
 }
 
 export function previewDeploymentOrigin(input: string | undefined): string {
