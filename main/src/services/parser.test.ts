@@ -366,7 +366,7 @@ describe("wine parser", () => {
         color: "sparkling",
       },
       {
-        rawText: canonicalizeText("Stéphane Coquillette Champagne, France"),
+        rawText: canonicalizeText("Stéphane Coquillette Inflorescence Champagne, France"),
         price: "$31",
         color: "sparkling",
       },

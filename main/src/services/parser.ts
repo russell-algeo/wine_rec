@@ -65,6 +65,7 @@ const geographicTailHints = [
   "austria",
   "oregon",
   "california",
+  "new york",
   "australia",
   "japan",
   "georgia",
@@ -139,7 +140,7 @@ const nonWineHints = [
 const menuTabMarkerPattern = /^@@TAB:\s*(.+)$/;
 const menuSectionMarkerPattern = /^@@SECTION:\s*(.+)$/;
 const inlinePricePattern =
-  /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?(?:\s+[A-Za-z0-9]+)?)\s*$/;
+  /^(.*?)(?:\s*\/\s*(\d{1,2})(?!\d)(?:\.\d{2})?(?:\.\s*\d+)?\.?(?:\s+[A-Za-z0-9]+)?)\s*$/;
 const inlineMenuPricePattern =
   /^(.*?)(?::\s*|\s+)((?:NA|\$?\d+(?:\.\d{2})?)(?:\s*\/\s*(?:NA|\$?\d+(?:\.\d{2})?)){1,2})\s*$/i;
 const standaloneStyleRegionPattern = /^(chilled\s+red|red|white|orange|sparkling|rose|rosé)\s*[-—:]\s*(.+)$/i;
@@ -315,7 +316,18 @@ function extractStructuredContinuation(
     new RegExp(`\\b${escapeRegex(hint)}\\b`, "i").test(normalizedRemainder),
   );
   const looksDelimitedLikeRegion = normalizedLine.includes(",");
-  if (!vintage && !hasGeographicTail) return null;
+  // A leading year is not, by itself, evidence of a wrapped region. Complete
+  // vintage-first wine rows must remain independent (including unpriced rows).
+  const hasKnownRegion = regionHints.some((hint) =>
+    new RegExp(`\\b${escapeRegex(hint)}\\b`, "i").test(normalizedRemainder),
+  );
+  const hasVarietal = varietalHints.some((hint) =>
+    hint !== "champagne" && new RegExp(`\\b${escapeRegex(hint)}\\b`, "i").test(normalizedRemainder),
+  );
+  if (hasVarietal || /\b(domaine|chateau|château|winery|vineyards?|estate)\b/i.test(normalizedRemainder)) {
+    return null;
+  }
+  if (!hasGeographicTail && !(vintage && hasKnownRegion && alphaTokens.length <= 4)) return null;
   const titleLikeWords = normalizedLine
     .split(/\s+/)
     .filter(Boolean)
@@ -573,7 +585,7 @@ function shouldRejectCandidate(input: {
 function extractInlinePrice(line: string): { title: string; price: string | null } {
   const match = line.match(inlinePricePattern);
   if (!match) {
-    const barePriceMatch = line.match(/^(.*\S)\s+(\d{1,3}(?:\.\d{2})?)\s*$/);
+    const barePriceMatch = line.match(/^(.*\S)\s+(\$?\d{1,3}(?:\.\d{2})?)\s*$/);
     if (!barePriceMatch || !hasLikelyPriceToken(barePriceMatch[2] ?? "")) {
       return { title: line.trim(), price: null };
     }
@@ -598,26 +610,13 @@ function extractInlineMenuPrice(line: string): { title: string; price: string | 
 
   const title = match[1]?.trim().replace(/[:\s]+$/g, "") ?? "";
   const priceBlob = match[2] ?? "";
-  const usesExplicitMenuSeparator = title.endsWith(":") || priceBlob.includes("$");
   if (!title || !/[A-Za-z]/.test(title)) {
     return null;
   }
-  if (!usesExplicitMenuSeparator) {
-    const barePriceMatch = line.match(/^(.*\S)\s+(\d{1,3}(?:\.\d{2})?)\s*$/);
-    if (!barePriceMatch || !hasLikelyPriceToken(barePriceMatch[2] ?? "")) {
-      return null;
-    }
 
-    const bareTitle = barePriceMatch[1]?.trim().replace(/[:\s]+$/g, "") ?? "";
-    const alphaTokens = extractAlphaTokens(bareTitle).filter((token) => token.length >= 2);
-    if (alphaTokens.length < 2) {
-      return null;
-    }
-
-    return {
-      title: bareTitle,
-      price: formatPriceToken(barePriceMatch[2] ?? ""),
-    };
+  // "2023 / 19" is a vintage followed by a single price, not two prices.
+  if (priceBlob.split(/\s*\/\s*/).some((token) => /^(19|20)\d{2}$/.test(token.trim()))) {
+    return null;
   }
 
   const numericPrices = priceBlob
@@ -644,6 +643,7 @@ export function isNonWineLine(line: string): boolean {
     .trim();
 
   if (!normalized) return true;
+  if (/\bipa\b/i.test(normalized)) return true;
   // Prose descriptions (>200 chars) are never wine names.
   if (normalized.length > 200) return true;
   return nonWineHints.some((hint) => normalized.includes(hint));
@@ -653,17 +653,23 @@ function inferProducerAndLabel(
   line: string,
   vintage: number | null,
 ): Pick<WineCandidate, "producer" | "label"> {
-  const withoutVintage = vintage ? line.replace(String(vintage), "").trim() : line.trim();
-  const quotedLabelMatch = withoutVintage.match(/^(.*?)\s*[‘'“"]([^’'"”]+)[’'"”]\s*(.*)$/);
+  const withoutVintage = (vintage ? line.replace(String(vintage), "").trim() : line.trim())
+    .replace(/^(?:NV|N\.V\.)\s+/i, "");
+  // Match paired quotes without interpreting an apostrophe inside a label as
+  // its closing quote (for example, "Kate's Pas De Duex").
+  const quotedLabelMatch = withoutVintage.match(
+    /^(?:(.*?)\s+)?(?:"([^"]+)"|“([^”]+)”|[‘']((?:[^’']|[’'](?=\p{L}))+)[’'])\s*(.*)$/u,
+  );
 
   if (quotedLabelMatch) {
     const producer = quotedLabelMatch[1]?.trim().replace(/\s+-\s*$/, "") ?? null;
-    const labelTail = quotedLabelMatch[3]?.trim().replace(/^[-,]\s*/, "") ?? "";
+    const quotedLabel = (quotedLabelMatch[2] ?? quotedLabelMatch[3] ?? quotedLabelMatch[4])?.trim() ?? null;
+    const labelTail = quotedLabelMatch[5]?.trim().replace(/^[-,]\s*/, "") ?? "";
     const labelTailLooksLikeMetadata = /,|\b(19|20)\d{2}\b/.test(labelTail);
-    const label = [quotedLabelMatch[2]?.trim() ?? null, labelTail].filter(Boolean).join(" ") || null;
+    const label = [quotedLabel, labelTail].filter(Boolean).join(" ") || null;
     return {
       producer: producer || null,
-      label: labelTailLooksLikeMetadata ? (quotedLabelMatch[2]?.trim() ?? null) : label,
+      label: labelTailLooksLikeMetadata ? quotedLabel : label,
     };
   }
 
@@ -700,6 +706,8 @@ function inferProducerAndLabel(
 
 export function normalizeSectionHeader(line: string): string | null {
   const normalized = line
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
@@ -722,20 +730,28 @@ function isSectionHeader(line: string): boolean {
 }
 
 function isPriceLine(line: string): boolean {
-  return (
-    /^\$\d+(?:\.\d{2})?$/.test(line) ||
-    /^\d+\s*\/\s*\d+$/.test(line) ||
-    hasLikelyPriceToken(line)
-  );
+  return /^\$?\d+(?:\.\d{2})?(?:\s*\/\s*\$?\d+(?:\.\d{2})?){1,2}$/.test(line) ||
+    /^\$\d+(?:\.\d{2})?$/.test(line) || hasLikelyPriceToken(line);
 }
 
 function normalizePriceLine(line: string): string {
-  if (/^\$\d+(?:\.\d{2})?$/.test(line)) return line;
-  // "18 / 72" glass/bottle — take the bottle (larger) price
-  const parts = line.match(/^(\d+)\s*\/\s*(\d+)$/);
-  if (parts) return `$${parts[2]}`;
-  if (hasLikelyPriceToken(line)) return formatPriceToken(line);
-  return line;
+  // Menus may put a currency sign on every glass/carafe/bottle amount.
+  const amounts = line.split(/\s*\/\s*/).map((part) => Number(part.replace(/^\$/, "")));
+  return formatPriceToken(String(Math.max(...amounts)));
+}
+
+// Only unambiguous geography can cross a price boundary. A country suffix
+// alone is not enough: "Louis Roederer, France" may be the next wine.
+function isRegionOnlyContinuation(line: string): boolean {
+  const parts = line.toLowerCase().split(/\s*,\s*/);
+  const regions = [
+    ...regionHints, ...geographicTailHints,
+    "finger lakes", "abruzzo", "friuli", "languedoc", "veneto",
+    "russian river valley", "napa valley", "loire valley", "rhone", "rhône", "beaujolais",
+    "roussillon", "alsace", "piedmont", "sicily", "mendoza", "willamette valley",
+  ];
+  return parts.length >= 2 && parts.every((part) => regions.includes(part)) &&
+    geographicTailHints.includes(parts[parts.length - 1]!);
 }
 
 function looksLikeRegionLine(line: string): boolean {
@@ -760,7 +776,35 @@ function looksLikeVarietalFragment(line: string): boolean {
   return false;
 }
 
-function looksLikeTitleContinuation(line: string): boolean {
+function hasNamedVarietal(line: string): boolean {
+  return varietalHints.some((hint) => {
+    const match = line.match(new RegExp(`\\b${escapeRegex(hint)}$`, "i"));
+    return match !== null && extractAlphaTokens(line.slice(0, match.index)).length > 0;
+  });
+}
+
+function looksLikeVarietalDescription(line: string): boolean {
+  if (vintagePattern.test(line) || extractInlinePrice(line).price || extractInlineMenuPrice(line) ||
+    /[‘'“"][^’'"”]+[’'"”]/.test(line)) return false;
+  return varietalHints.some((hint) => {
+    const match = line.match(new RegExp(`\\b${escapeRegex(hint)}\\b`, "i"));
+    if (!match) return false;
+    const tail = line.slice(match.index! + match[0].length);
+    return /^\s+(?:with|showing|offering)\b|\b(?:notes?|aromas?|flavou?rs?) of\b/i.test(tail);
+  });
+}
+
+function hasWineIdentitySignal(line: string): boolean {
+  return Boolean(
+    vintagePattern.test(line) || /^(NV|N\.V\.)\s/i.test(line) ||
+    /[‘'“"][^’'"”]+[’'"”]/.test(line) || detectHint(line, varietalHints) ||
+    extractInlinePrice(line).price || extractInlineMenuPrice(line),
+  );
+}
+
+function looksLikeTitleContinuation(line: string, precedingTitle: string): boolean {
+  if (looksLikeVarietalDescription(line)) return false;
+  if (extractInlinePrice(line).price || extractInlineMenuPrice(line)) return false;
   if (parseStandaloneStyleRegionLine(line)) return false;
   if (extractStructuredContinuation(line)) return false;
   if (vintagePattern.test(line)) return false;
@@ -770,6 +814,13 @@ function looksLikeTitleContinuation(line: string): boolean {
   // A standalone varietal fragment should not be consumed as a title continuation;
   // it needs to stay in the notes so synthetic extraction can promote it.
   if (looksLikeVarietalFragment(line)) return false;
+  // A named-grape line is weaker evidence than a vintage, label or price.
+  // Keep it wrapped when the preceding line is only a producer ("Ridge" /
+  // "Napa Valley Cabernet Sauvignon"), but split two complete named wines.
+  if (hasNamedVarietal(line)) return !hasWineIdentitySignal(precedingTitle);
+  // A grape mentioned inside a longer description belongs in notes, not in
+  // the title of an already identified wine.
+  if (detectHint(line, varietalHints) && detectHint(precedingTitle, varietalHints)) return false;
   if (looksLikeRegionLine(line)) return true;
   if (line.includes(",")) return false;
 
@@ -796,9 +847,11 @@ function looksLikeTitleContinuation(line: string): boolean {
 }
 
 export function looksLikeTitleLine(line: string): boolean {
+  if (looksLikeVarietalDescription(line)) return false;
   if (looksLikeServingMetadataLine(line)) return false;
   if (extractStructuredContinuation(line)) return false;
-  const barePriceMatch = line.match(/^(.*\S)\s+(\d{1,3}(?:\.\d{2})?)\s*$/);
+  if (hasNamedVarietal(line)) return true;
+  const barePriceMatch = line.match(/^(.*\S)\s+(\$?\d{1,3}(?:\.\d{2})?)\s*$/);
   if (barePriceMatch && hasLikelyPriceToken(barePriceMatch[2] ?? "")) {
     const alphaWords = extractAlphaTokens(barePriceMatch[1]).filter((token) => token.length >= 2);
     if (alphaWords.length >= 2) return true;
@@ -832,7 +885,7 @@ export function parseBlock(
     const nextLine = lines[noteStartIndex]!;
     const currentTitle = titleLines[titleLines.length - 1] ?? "";
 
-    if (endsWithBarePrice(currentTitle)) {
+    if (endsWithBarePrice(currentTitle) || extractInlinePrice(currentTitle).price || extractInlineMenuPrice(currentTitle)) {
       break;
     }
 
@@ -842,7 +895,7 @@ export function parseBlock(
       continue;
     }
 
-    if (looksLikeTitleContinuation(nextLine)) {
+    if (looksLikeTitleContinuation(nextLine, titleLines.join(" "))) {
       titleLines.push(nextLine);
       noteStartIndex += 1;
       continue;
@@ -1028,13 +1081,14 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
   let currentMenuSection: string | null = null;
   let currentBlock: string[] = [];
   let blockStartLineNumber = 0;
+  let blockPrice: string | null = null;
 
   const flushBlock = (price: string | null = null) => {
     const candidate = parseBlock(
       currentBlock,
       blockStartLineNumber,
       currentColor,
-      price,
+      price ?? blockPrice,
       currentMenuTab,
       currentMenuSection,
     );
@@ -1042,13 +1096,10 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
       candidates.push(candidate);
     }
     currentBlock = [];
+    blockPrice = null;
   };
 
   sanitizedLines.forEach((line, index) => {
-    if (firstSectionIndex >= 0 && index < firstSectionIndex) {
-      return;
-    }
-
     if (!line) {
       return;
     }
@@ -1083,28 +1134,34 @@ export function parseWineCandidates(extractedText: string): WineCandidate[] {
     }
 
     if (isPriceLine(line)) {
-      flushBlock(normalizePriceLine(line));
-      return;
-    }
-
-    const inlineMenuPrice = extractInlineMenuPrice(line);
-    if (inlineMenuPrice) {
-      flushBlock();
-      const candidate = parseBlock(
-        [inlineMenuPrice.title],
-        index,
-        currentColor,
-        inlineMenuPrice.price,
-        currentMenuTab,
-        currentMenuSection,
-      );
-      if (candidate) {
-        candidates.push(candidate);
+      if (currentBlock.length > 0) {
+        blockPrice = normalizePriceLine(blockPrice == null ? line : `${blockPrice} / ${line}`);
       }
       return;
     }
 
-    if (currentBlock.length > 0 && looksLikeTitleLine(line) && !looksLikeTitleContinuation(line)) {
+    if (blockPrice !== null) {
+      const nextLine = sanitizedLines.slice(index + 1).find(Boolean) ?? "";
+      // A separately priced appellation is a new listing, not metadata for
+      // the previous bottle. Other complete wine rows also start afresh.
+      if (isRegionOnlyContinuation(line) && !isPriceLine(nextLine)) {
+        currentBlock.push(line);
+        flushBlock();
+        return;
+      }
+      flushBlock();
+    }
+
+    if (firstSectionIndex >= 0 && index < firstSectionIndex && currentBlock.length === 0) {
+      const nextLine = sanitizedLines.slice(index + 1).find(Boolean) ?? "";
+      const hasRowEvidence = vintagePattern.test(line) || /^(NV|N\.V\.)\s/i.test(line) ||
+        /[‘'“"][^’'"”]+[’'"”]/.test(line) || extractInlinePrice(line).price ||
+        extractInlineMenuPrice(line) || isPriceLine(nextLine) ||
+        (!line.includes(",") && line.split(/\s+/).length <= 12 && hasNamedVarietal(line));
+      if (!hasRowEvidence) return;
+    }
+
+    if (currentBlock.length > 0 && looksLikeTitleLine(line) && !looksLikeTitleContinuation(line, currentBlock.join(" "))) {
       flushBlock();
       blockStartLineNumber = index;
     }

@@ -23,7 +23,20 @@ import {
   getProviderHealth,
 } from "./api-handlers.js";
 
-export async function buildApp(): Promise<FastifyInstance> {
+export type AppHandlers = {
+  cancelAnalysis: typeof cancelAnalysis;
+  createClientOcrAnalysis: typeof createClientOcrAnalysis;
+  createUploadAnalysis: typeof createUploadAnalysis;
+  createUrlAnalysis: typeof createUrlAnalysis;
+  getAnalysisRun: typeof getAnalysisRun;
+  getPreview: typeof getPreview;
+  getProviderHealth: typeof getProviderHealth;
+};
+
+export async function buildApp(handlers: AppHandlers = {
+  cancelAnalysis, createClientOcrAnalysis, createUploadAnalysis,
+  createUrlAnalysis, getAnalysisRun, getPreview, getProviderHealth,
+}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: true,
   });
@@ -72,7 +85,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     try {
-      return reply.send(await getPreview(url));
+      return reply.send(await handlers.getPreview(url));
     } catch (error) {
       if (error instanceof RequestError) {
         return reply.status(error.statusCode).send({ error: error.message });
@@ -82,7 +95,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   app.get("/api/health/providers", async () => {
-    return getProviderHealth();
+    return handlers.getProviderHealth();
   });
 
   app.post("/api/uploads", async (request, reply) => {
@@ -93,7 +106,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     try {
       return createAnalysisResponseSchema.parse(
-        await createUploadAnalysis({
+        await handlers.createUploadAnalysis({
           buffer: await file.toBuffer(),
           filename: file.filename,
           mimeType: file.mimetype,
@@ -111,7 +124,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     const parsed = z.object({ url: z.string() }).parse(request.body);
 
     try {
-      return createAnalysisResponseSchema.parse(await createUrlAnalysis(parsed));
+      return createAnalysisResponseSchema.parse(await handlers.createUrlAnalysis(parsed));
     } catch (error) {
       if (error instanceof RequestError) {
         return reply.status(error.statusCode).send({ message: error.message });
@@ -125,7 +138,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     try {
       return createAnalysisResponseSchema.parse(
-        await createClientOcrAnalysis({
+        await handlers.createClientOcrAnalysis({
           sourceFilename: parsed.sourceFilename,
           recognizedText: parsed.recognizedText,
         }),
@@ -140,7 +153,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get("/api/analyses/:id", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
-    const analysis = await getAnalysisRun(params.id);
+    const analysis = await handlers.getAnalysisRun(params.id);
     if (!analysis) {
       return reply.status(404).send({ message: "Analysis not found" });
     }
@@ -149,7 +162,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.post("/api/analyses/:id/cancel", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
-    const analysis = await cancelAnalysis(params.id);
+    const analysis = await handlers.cancelAnalysis(params.id);
     if (!analysis) {
       return reply.status(404).send({ message: "Analysis not found" });
     }

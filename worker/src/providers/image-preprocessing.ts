@@ -236,7 +236,11 @@ export async function prepareImageVariantsForOcr(input: Buffer): Promise<OcrImag
   const orientedBuffer = await sharp(input).rotate().removeAlpha().png().toBuffer();
   const documentBounds = await detectDocumentBounds(orientedBuffer);
 
-  const variants: OcrImageVariant[] = [];
+  // Keep an unfiltered, EXIF-oriented baseline: normalization can erase fine
+  // price digits on photographed menus. Bound dimensions without changing contrast.
+  const original = await sharp(orientedBuffer).resize({width: MAX_OCR_WIDTH, height: MAX_OCR_HEIGHT,
+    fit: "inside", withoutEnlargement: true}).png().toBuffer();
+  const variants: OcrImageVariant[] = [{label:"original",buffer:original,cropped:false,thresholded:false}];
   const seen = new Set<string>();
 
   const addVariant = async (label: string, bounds: Bounds | null, thresholded: boolean) => {
@@ -256,6 +260,11 @@ export async function prepareImageVariantsForOcr(input: Buffer): Promise<OcrImag
     await addVariant("document-thresholded", documentBounds, true);
   }
 
+  // Dark text on a colored heading can disappear at the high threshold used
+  // for faint paper text. Keep a complementary dark-ink pass; it observes pixels,
+  // never supplies a category or other inferred text.
+  variants.push({label: "dark-ink", buffer: await sharp(original).grayscale().threshold(96).png().toBuffer(),
+    cropped: false, thresholded: true});
   await addVariant("full-normalized", null, false);
   await addVariant("full-thresholded", null, true);
 

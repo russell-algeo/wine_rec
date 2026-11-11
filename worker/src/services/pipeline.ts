@@ -1,5 +1,7 @@
+import { ProviderRequestStoppedError, type ProviderRequestGuard } from "../providers/provider-access.js";
 import type { Recommendation, SourceType, WineCandidate } from "@wine-rec/contracts";
 import type { UserTastePreference } from "@wine-rec/contracts";
+import { compareRecommendationFit } from "@wine-rec/contracts";
 import { defaultPreference, rankMatch, scoreRecommendation } from "@wine-rec/core";
 
 import { appConfig } from "../config.js";
@@ -30,7 +32,7 @@ type AnalysisPipelineOptions = {
   candidateConcurrency?: number;
 };
 
-export class AnalysisCanceledError extends Error {
+export class AnalysisCanceledError extends ProviderRequestStoppedError {
   constructor() {
     super("Analysis stopped by user.");
     this.name = "AnalysisCanceledError";
@@ -59,6 +61,7 @@ async function buildCandidateRecommendation(
   candidate: WineCandidate,
   preference: UserTastePreference,
   providers: ReturnType<typeof createWineProfileProviders>,
+  beforeRequest: ProviderRequestGuard,
 ): Promise<Recommendation> {
   let best:
     | {
@@ -73,7 +76,8 @@ async function buildCandidateRecommendation(
     if (!provider.isEnabled) continue;
     let result: Awaited<ReturnType<typeof provider.lookup>>;
     try {
-      result = await provider.lookup(candidate);
+      await beforeRequest();
+      result = await provider.lookup(candidate, { beforeRequest });
     } catch (error) {
       if (error instanceof RetryableWineProfileLookupError) {
         throw new AnalysisRetryableError(candidate.id, error);
@@ -84,7 +88,8 @@ async function buildCandidateRecommendation(
     if (!result) continue;
 
     const status = rankMatch(result.matchScore);
-    const fitScore = scoreRecommendation(preference, result.profile.taste);
+    const fitScore = status === "matched" || result.profile.taste.sourceMode === "inferred"
+      ? scoreRecommendation(preference, result.profile.taste) : 0;
     if (!best || result.matchScore > best.matchConfidence) {
       best = {
         fitScore,
@@ -109,12 +114,7 @@ async function buildCandidateRecommendation(
 }
 
 function sortRecommendations(recommendations: Recommendation[]): void {
-  recommendations.sort((left, right) => {
-    if (right.fitScore !== left.fitScore) {
-      return right.fitScore - left.fitScore;
-    }
-    return right.matchConfidence - left.matchConfidence;
-  });
+  recommendations.sort(compareRecommendationFit);
 }
 
 export async function runCandidateAnalysis(input: {
@@ -175,7 +175,11 @@ export async function runCandidateAnalysis(input: {
 
       let recommendation: Recommendation;
       try {
-        recommendation = await buildCandidateRecommendation(candidate, preference, providers);
+        recommendation = await buildCandidateRecommendation(candidate, preference, providers, async () => {
+          if (fatalError) throw fatalError;
+          await throwIfCanceled(hooks.shouldCancel);
+          if (fatalError) throw fatalError;
+        });
       } catch (error) {
         fatalError ??= error;
         return;

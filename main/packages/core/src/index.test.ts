@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultPreference,
   inferTasteVector,
+  mapExternalTasteVector,
   normalizeTasteValue,
   rankMatch,
   scoreRecommendation,
@@ -10,6 +11,41 @@ import {
 } from "./index.js";
 
 describe("core scoring", () => {
+  it("does not interpret Cabernet Sauvignon as Sauvignon Blanc", () => {
+    const cab = inferTasteVector({ varietal: "Cabernet Sauvignon" });
+    expect(cab).toEqual(inferTasteVector({ varietal: "Cabernet" }));
+    expect(cab.tannin).toBe(4);
+    expect(cab.body).toBe(4);
+    expect(inferTasteVector({ varietal: "Sauvignon Blanc" }).tannin).toBe(1);
+  });
+
+  it("does not infer a white wine when style and color are unknown", () => {
+    const unknown = inferTasteVector({ label: "Unknown bottle" });
+    expect(unknown.confidence).toBe(0);
+    expect(scoreRecommendation(defaultPreference(), unknown)).toBe(0);
+  });
+
+  it("records missing taste dimensions instead of claiming direct complete data", () => {
+    const partial = mapExternalTasteVector({ body: 4, acidity: NaN }, "direct", 0.9);
+    expect(partial.sourceMode).toBe("mapped");
+    expect(partial.observedDimensions).toEqual(["body"]);
+    expect(partial.confidence).toBe(0.225);
+    expect(scoreRecommendation(defaultPreference(), partial)).toBe(0);
+    const missing = mapExternalTasteVector({}, "mapped", 0.7);
+    expect(missing.confidence).toBe(0);
+    const full = mapExternalTasteVector({ body: 4, acidity: 3, tannin: 4, sweetness: 1 }, "direct", 0.9);
+    expect(full.confidence).toBe(0.9);
+    expect(full.sourceMode).toBe("direct");
+    expect(scoreRecommendation(defaultPreference(), full)).toBeGreaterThan(0);
+  });
+  it("does not score legacy or duplicate measured dimensions as complete", () => {
+    const preference = defaultPreference();
+    const legacy = { ...preference, sourceMode: "direct" as const, confidence: 0.9 };
+    expect(scoreRecommendation(preference, legacy)).toBe(0);
+    expect(scoreRecommendation(preference, { ...legacy, sourceMode: "mapped" })).toBe(0);
+    expect(scoreRecommendation(preference, { ...legacy, observedDimensions: ["body", "body", "body", "body"] })).toBe(0);
+    expect(scoreRecommendation(preference, { ...legacy, observedDimensions: ["body", "acidity", "tannin", "sweetness"] })).toBe(100);
+  });
   it("prefers high acidity and low sweetness for the default preference", () => {
     const crisp = inferTasteVector({
       label: "Sancerre Sauvignon Blanc",

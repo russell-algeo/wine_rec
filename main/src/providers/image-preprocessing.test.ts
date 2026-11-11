@@ -31,6 +31,9 @@ describe("image preprocessing", () => {
 
     const variants = await prepareImageVariantsForOcr(image);
 
+    expect(variants.map((variant) => variant.label)).toContain("original");
+    expect(variants.map((variant) => variant.label)).toContain("dark-ink");
+    expect(variants.length).toBeLessThanOrEqual(6);
     expect(variants.map((variant) => variant.label)).toContain("document-normalized");
     expect(variants.map((variant) => variant.label)).toContain("document-thresholded");
     expect(variants.some((variant) => variant.cropped)).toBe(true);

@@ -1,0 +1,47 @@
+[
+  {
+    "name": "Il Conti Pinot Grigio",
+    "producer": "Il Conti",
+    "label": "Pinot Grigio",
+    "requested": 2017,
+    "returned": 2024,
+    "region": "Veneto, Italy",
+    "source": "Hand-labeled from 2026-11-10 Venable public-menu canary: menu year and contradictory returned year. Name fields normalized solely for deterministic offline matching; no live lookup."
+  },
+  {
+    "name": "Hook & Ladder Chardonnay",
+    "producer": "Hook & Ladder",
+    "label": "Chardonnay",
+    "requested": 2015,
+    "returned": 2023,
+    "region": "Russian River Valley, California",
+    "source": "Hand-labeled from 2026-11-10 Venable public-menu canary: menu year and contradictory returned year. Name fields normalized solely for deterministic offline matching; no live lookup."
+  },
+  {
+    "name": "Colli Della Murgia Tufjano",
+    "producer": "Colli Della Murgia",
+    "label": "Tufjano",
+    "requested": 2016,
+    "returned": 2025,
+    "region": "Puglia, Italy",
+    "source": "Hand-labeled from 2026-11-10 Venable public-menu canary: menu year and contradictory returned year. Name fields normalized solely for deterministic offline matching; no live lookup."
+  },
+  {
+    "name": "Bollinger R.D. Extra Brut",
+    "producer": "Bollinger",
+    "label": "R.D. Extra Brut",
+    "requested": 2002,
+    "returned": 2004,
+    "region": "Champagne, France",
+    "source": "Hand-labeled from 2026-11-10 Venable public-menu canary: menu year and contradictory returned year. Name fields normalized solely for deterministic offline matching; no live lookup."
+  },
+  {
+    "name": "Zolo Malbec",
+    "producer": "Zolo",
+    "label": "Malbec",
+    "requested": 2017,
+    "returned": 2023,
+    "region": "Mendoza, Argentina",
+    "source": "Hand-labeled from 2026-11-10 Venable public-menu canary: menu year and contradictory returned year. Name fields normalized solely for deterministic offline matching; no live lookup."
+  }
+]

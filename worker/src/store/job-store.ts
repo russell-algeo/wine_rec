@@ -1,3 +1,4 @@
+import { scopedRedisKey } from "../deployment-scope.js";
 import type { AnalysisRun, Recommendation, WineCandidate } from "@wine-rec/contracts";
 
 import { redis } from "./redis-client.js";
@@ -61,31 +62,31 @@ export type JobCandidateTransitionResult = {
 };
 
 function getJobKey(jobId: string): string {
-  return `job:${jobId}`;
+  return scopedRedisKey(`job:${jobId}`);
 }
 
 function getJobWorkerKey(jobId: string, workerIndex: number): string {
-  return `job:${jobId}:worker:${workerIndex}`;
+  return scopedRedisKey(`job:${jobId}:worker:${workerIndex}`);
 }
 
 function getJobCandidateWorkKey(jobId: string, candidateId: string): string {
-  return `job:${jobId}:candidate:${candidateId}`;
+  return scopedRedisKey(`job:${jobId}:candidate:${candidateId}`);
 }
 
 function getJobCandidateQueueKey(jobId: string): string {
-  return `job:${jobId}:candidate-queue`;
+  return scopedRedisKey(`job:${jobId}:candidate-queue`);
 }
 
 function getJobCandidateLeaseKey(jobId: string): string {
-  return `job:${jobId}:candidate-leases`;
+  return scopedRedisKey(`job:${jobId}:candidate-leases`);
 }
 
 function getJobProgressKey(jobId: string): string {
-  return `job:${jobId}:progress`;
+  return scopedRedisKey(`job:${jobId}:progress`);
 }
 
 function getJobRecommendationsKey(jobId: string): string {
-  return `job:${jobId}:recommendations`;
+  return scopedRedisKey(`job:${jobId}:recommendations`);
 }
 
 async function setJson(key: string, value: unknown): Promise<void> {
@@ -143,9 +144,27 @@ async function getJobRecommendations(jobId: string): Promise<Recommendation[]> {
   );
 }
 
+// Terminal job state is monotonic. This merge runs atomically so a stale
+// worker cannot revive a blocked/canceled/completed job with "processing".
+const updateJobScript = redis.createScript<number>(`
+local raw = redis.call("GET", KEYS[1])
+if not raw then return 0 end
+local job = cjson.decode(raw)
+if job.status == "failed" or job.status == "canceled" or job.status == "completed" then return 0 end
+local updates = cjson.decode(ARGV[1])
+for key, value in pairs(updates) do job[key] = value end
+job.updatedAt = ARGV[2]
+redis.call("SET", KEYS[1], cjson.encode(job), "EX", tonumber(ARGV[3]))
+return 1
+`);
+
 const claimNextJobCandidateScript = redis.createScript<string | false>(`
 local queueKey = KEYS[1]
 local leaseKey = KEYS[2]
+local jobRaw = redis.call("GET", KEYS[3])
+if not jobRaw then return false end
+local job = cjson.decode(jobRaw)
+if job.status == "failed" or job.status == "canceled" or job.status == "completed" then return false end
 local candidateKeyPrefix = ARGV[1]
 local leaseOwner = ARGV[2]
 local nowMs = tonumber(ARGV[3])
@@ -235,6 +254,13 @@ local function result(updated, progressTracked, jobStatus)
   })
 end
 
+local currentJobRaw = redis.call("GET", jobKey)
+if not currentJobRaw then return result(false, false, nil) end
+local currentJob = cjson.decode(currentJobRaw)
+if currentJob.status == "failed" or currentJob.status == "canceled" or currentJob.status == "completed" then
+  return result(false, true, currentJob.status)
+end
+
 local raw = redis.call("GET", candidateKey)
 if not raw then
   return result(false, false, nil)
@@ -293,6 +319,10 @@ const requeueJobCandidateScript = redis.createScript<number>(`
 local queueKey = KEYS[1]
 local leaseKey = KEYS[2]
 local candidateKey = KEYS[3]
+local jobRaw = redis.call("GET", KEYS[4])
+if not jobRaw then return 0 end
+local job = cjson.decode(jobRaw)
+if job.status == "failed" or job.status == "canceled" or job.status == "completed" then return 0 end
 local leaseOwner = ARGV[1]
 local errorMessage = ARGV[2]
 local nowIso = ARGV[3]
@@ -339,6 +369,13 @@ local function result(updated, progressTracked, jobStatus)
     progressTracked = progressTracked,
     jobStatus = jobStatus or cjson.null,
   })
+end
+
+local currentJobRaw = redis.call("GET", jobKey)
+if not currentJobRaw then return result(false, false, nil) end
+local currentJob = cjson.decode(currentJobRaw)
+if currentJob.status == "failed" or currentJob.status == "canceled" or currentJob.status == "completed" then
+  return result(false, true, currentJob.status)
 end
 
 local raw = redis.call("GET", candidateKey)
@@ -438,18 +475,9 @@ export async function getJobState(jobId: string): Promise<JobRecord | null> {
 }
 
 export async function updateJob(jobId: string, updates: Partial<JobRecord>): Promise<void> {
-  const existing = await getStoredJob(jobId);
-  if (!existing) {
-    return;
-  }
-
-  const updated: JobRecord = {
-    ...existing,
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await setJson(getJobKey(jobId), updated);
+  await updateJobScript.exec([getJobKey(jobId)], [
+    JSON.stringify(updates), new Date().toISOString(), String(JOB_TTL_SECONDS),
+  ]);
 }
 
 export async function updateJobStatus(
@@ -631,6 +659,7 @@ export async function claimNextJobCandidate(
     [
       getJobCandidateQueueKey(jobId),
       getJobCandidateLeaseKey(jobId),
+      getJobKey(jobId),
     ],
     [
       `${getJobCandidateWorkKey(jobId, "")}`,
@@ -685,6 +714,7 @@ export async function requeueJobCandidate(
       getJobCandidateQueueKey(jobId),
       getJobCandidateLeaseKey(jobId),
       getJobCandidateWorkKey(jobId, candidateId),
+      getJobKey(jobId),
     ],
     [
       leaseOwner,

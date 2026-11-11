@@ -1,0 +1,444 @@
+[
+  {
+    "name": "Vintage-first demo keeps all four source rows",
+    "source": "shared/test/fixtures/sample-ocr.txt; expected rows and vintages transcribed directly",
+    "input": "2022 Domaine de la Villaudiere Sancerre Sauvignon Blanc\n2021 Flowers Pinot Noir Sonoma Coast\nNV Pierre Peters Cuvee de Reserve Champagne\n2021 Ridge Cabernet Sauvignon Paso Robles\n",
+    "expected": [
+      {
+        "rawText": "2022 Domaine de la Villaudiere Sancerre Sauvignon Blanc",
+        "vintage": 2022,
+        "notes": null,
+        "lineNumber": 0
+      },
+      {
+        "rawText": "2021 Flowers Pinot Noir Sonoma Coast",
+        "vintage": 2021,
+        "notes": null,
+        "lineNumber": 1
+      },
+      {
+        "rawText": "NV Pierre Peters Cuvee de Reserve Champagne",
+        "vintage": null,
+        "notes": null,
+        "lineNumber": 2
+      },
+      {
+        "rawText": "2021 Ridge Cabernet Sauvignon Paso Robles",
+        "vintage": 2021,
+        "notes": null,
+        "lineNumber": 3
+      }
+    ]
+  },
+  {
+    "name": "Priced wine before the first heading is retained",
+    "input": "2021 Flowers Pinot Noir $65\nWHITE\n2022 Bianchi Chardonnay $49",
+    "expected": [
+      {
+        "rawText": "2021 Flowers Pinot Noir",
+        "price": "$65",
+        "color": null,
+        "menuSection": null
+      },
+      {
+        "rawText": "2022 Bianchi Chardonnay",
+        "price": "$49",
+        "color": "white",
+        "menuSection": "WHITE"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Unpriced named-grape wine before the first heading is retained",
+    "input": "Flowers Pinot Noir\nWHITE\nBianchi Chardonnay $49",
+    "expected": [
+      {
+        "rawText": "Flowers Pinot Noir",
+        "price": null,
+        "color": null
+      },
+      {
+        "rawText": "Bianchi Chardonnay",
+        "price": "$49",
+        "color": "white"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Tab metadata before a plain heading is not discarded",
+    "input": "@@TAB: BY THE GLASS\nRED\nFlowers Pinot Noir $18",
+    "expected": [
+      {
+        "rawText": "Flowers Pinot Noir",
+        "price": "$18",
+        "menuTab": "BY THE GLASS",
+        "menuSection": "RED",
+        "color": "red"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Adjacent named-grape rows are not wrapped together",
+    "input": "Domaine Drouhin Pinot Noir\nFlowers Chardonnay",
+    "expected": [
+      {
+        "rawText": "Domaine Drouhin Pinot Noir",
+        "producer": "Domaine Drouhin",
+        "label": "Pinot Noir",
+        "notes": null
+      },
+      {
+        "rawText": "Flowers Chardonnay",
+        "producer": "Flowers",
+        "label": "Chardonnay",
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Adjacent priced rows do not become notes",
+    "input": "Flowers Pinot Noir $65\nBianchi Chardonnay $49",
+    "expected": [
+      {
+        "rawText": "Flowers Pinot Noir",
+        "price": "$65",
+        "notes": null
+      },
+      {
+        "rawText": "Bianchi Chardonnay",
+        "price": "$49",
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Wrapped varietal and separate price stay together",
+    "input": "Domaine Drouhin\nPinot Noir\n$65",
+    "expected": [
+      {
+        "rawText": "Domaine Drouhin Pinot Noir",
+        "producer": "Domaine Drouhin",
+        "label": "Pinot Noir",
+        "price": "$65",
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Vintage and region continuation stays attached",
+    "input": "wonderwerk - montepulciano 'marinara'\n2023 contra costa county, california",
+    "expected": [
+      {
+        "producer": "wonderwerk montepulciano",
+        "vintage": 2023,
+        "region": "contra costa county, california",
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Known region continuation without a country stays attached",
+    "input": "Flowers 'Estate'\n2021 Sonoma Coast\n$65",
+    "expected": [
+      {
+        "producer": "Flowers",
+        "label": "Estate",
+        "vintage": 2021,
+        "region": "Sonoma Coast",
+        "price": "$65",
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Full vintage-first wine with a country is still a new row",
+    "input": "2022 Domaine Test Sauvignon Blanc, France\n2021 Flowers Pinot Noir Sonoma Coast, California",
+    "expected": [
+      {
+        "rawText": "2022 Domaine Test Sauvignon Blanc, France",
+        "vintage": 2022,
+        "notes": null
+      },
+      {
+        "rawText": "2021 Flowers Pinot Noir Sonoma Coast, California",
+        "vintage": 2021,
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Inline decimal dollar price is removed from identity",
+    "input": "Cardedu 'Praja' Monica di Sardegna $23.99",
+    "expected": [
+      {
+        "rawText": "Cardedu 'Praja' Monica di Sardegna",
+        "producer": "Cardedu",
+        "label": "Praja Monica di Sardegna",
+        "price": "$23.99"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Inline bare glass and bottle prices choose the larger amount",
+    "input": "Flowers Pinot Noir 18 / 72",
+    "expected": [
+      {
+        "rawText": "Flowers Pinot Noir",
+        "price": "$72",
+        "vintage": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Vintage before slash is not mistaken for bottle price",
+    "input": "Martin Texier 'Petite Nature' Rhône, France 2023 / 19",
+    "expected": [
+      {
+        "rawText": "Martin Texier 'Petite Nature' Rhône, France 2023",
+        "price": "$19",
+        "vintage": 2023
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "OCR punctuation after slash price is tolerated",
+    "source": "Photographed sectioned-menu fixture Tesseract output; photo visibly shows 2023 / 19",
+    "input": "Martin Texier ‘Petite Nature’ Rhone, France 2023 /19. a",
+    "expected": [
+      {
+        "rawText": "Martin Texier ‘Petite Nature’ Rhône, France 2023",
+        "price": "$19",
+        "vintage": 2023
+      }
+    ]
+  },
+  {
+    "name": "An unpriced vintage remains a vintage",
+    "input": "Flowers Pinot Noir 2021",
+    "expected": [
+      {
+        "rawText": "Flowers Pinot Noir 2021",
+        "price": null,
+        "vintage": 2021
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Quoted apostrophe survives matching double quotes",
+    "input": "Knuttel \"Kate's Pas De Duex\" $50",
+    "expected": [
+      {
+        "producer": "Knuttel",
+        "label": "Kate's Pas De Duex",
+        "price": "$50"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Quoted apostrophe survives matching single quotes",
+    "input": "Knuttel 'Kate's Pas De Duex' $50",
+    "expected": [
+      {
+        "producer": "Knuttel",
+        "label": "Kate's Pas De Duex",
+        "price": "$50"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Curly quoted apostrophe survives",
+    "input": "Knuttel ‘Kate’s Pas De Duex’ $50",
+    "expected": [
+      {
+        "producer": "Knuttel",
+        "label": "Kate’s Pas De Duex",
+        "price": "$50"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Non-vintage marker is not part of producer",
+    "input": "NV Pierre Peters 'Cuvee de Reserve' Champagne $90",
+    "expected": [
+      {
+        "producer": "Pierre Peters",
+        "label": "Cuvee de Reserve Champagne",
+        "vintage": null,
+        "price": "$90"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Beer in a mixed menu is excluded without matching substrings in wine names",
+    "input": "RED\nLocal Brewery IPA $8\nPrincipato Pinot Noir $40",
+    "expected": [
+      {
+        "rawText": "Principato Pinot Noir",
+        "producer": "Principato",
+        "price": "$40",
+        "color": "red"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Region after an inline priced title stays attached",
+    "input": "karatta 'griffin' sparkling shiraz $75\nSouth Australia",
+    "expected": [
+      {
+        "producer": "karatta",
+        "price": "$75",
+        "region": "South Australia",
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Apostrophe in producer is not an opening label quote",
+    "input": "Domaine d'Ourea 'Tire Bouchon' $50",
+    "expected": [
+      {
+        "producer": "Domaine d'Ourea",
+        "label": "Tire Bouchon",
+        "price": "$50"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Beer word fragments do not reject a wine producer",
+    "input": "Stout Family Cabernet Sauvignon $80",
+    "expected": [
+      {
+        "producer": "Stout Family",
+        "label": "Cabernet Sauvignon",
+        "price": "$80"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Accented rose heading preserves section and canonical color",
+    "input": "Rosé\nMiraval 'Provence' $50",
+    "expected": [
+      {
+        "producer": "Miraval",
+        "label": "Provence",
+        "color": "rose",
+        "menuSection": "Rosé",
+        "price": "$50"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Grape in tasting notes does not create a new wine or steal its price",
+    "input": "WHITE\nDomaine X Chardonnay 2023\nRich Chardonnay with fresh citrus\n$50",
+    "expected": [
+      {
+        "rawText": "Domaine X Chardonnay 2023",
+        "producer": "Domaine X",
+        "label": "Chardonnay",
+        "vintage": 2023,
+        "notes": "Rich Chardonnay with fresh citrus",
+        "price": "$50",
+        "color": "white"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Producer wraps onto a geographic named-grape line",
+    "input": "RED\nRidge\nNapa Valley Cabernet Sauvignon\n$75",
+    "expected": [
+      {
+        "rawText": "Ridge Napa Valley Cabernet Sauvignon",
+        "price": "$75",
+        "notes": null,
+        "varietal": "cabernet sauvignon",
+        "color": "red"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Producer wraps onto a non-geographic named-grape line",
+    "input": "RED\nRidge\nEstate Cabernet Sauvignon\n$75",
+    "expected": [
+      {
+        "rawText": "Ridge Estate Cabernet Sauvignon",
+        "price": "$75",
+        "notes": null,
+        "varietal": "cabernet sauvignon",
+        "color": "red"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Completed wrapped title separates from the next complete row",
+    "input": "RED\nRidge\nNapa Valley Cabernet Sauvignon\nFlowers Pinot Noir\n$65",
+    "expected": [
+      {
+        "rawText": "Ridge Napa Valley Cabernet Sauvignon",
+        "price": null,
+        "notes": null
+      },
+      {
+        "rawText": "Flowers Pinot Noir",
+        "price": "$65",
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Producer containing a tasting word still starts an independent row",
+    "input": "WHITE\nFlowers Chardonnay\nDry Creek Chardonnay\n$50",
+    "expected": [
+      {
+        "rawText": "Flowers Chardonnay",
+        "price": null,
+        "notes": null
+      },
+      {
+        "rawText": "Dry Creek Chardonnay",
+        "producer": "Dry Creek",
+        "price": "$50",
+        "notes": null
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  },
+  {
+    "name": "Title-cased tasting notes still remain descriptive notes",
+    "input": "WHITE\nDomaine X Chardonnay 2023\nRich Chardonnay With Fresh Citrus\n$50",
+    "expected": [
+      {
+        "rawText": "Domaine X Chardonnay 2023",
+        "notes": "Rich Chardonnay With Fresh Citrus",
+        "price": "$50",
+        "color": "white"
+      }
+    ],
+    "source": "Synthetic isolated regression; expected fields specified from the input, not parser output"
+  }
+]

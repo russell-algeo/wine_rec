@@ -1044,6 +1044,17 @@ private struct ResultCard: View {
         recommendation.profile?.taste.sourceMode == .inferred
     }
 
+    private var canShowFit: Bool {
+        recommendation.hasComparableFit
+    }
+
+    private var tasteEvidenceLabel: String {
+        guard let taste = recommendation.profile?.taste else { return "Taste unavailable" }
+        if isInferred { return taste.confidence > 0 ? "Estimated style; bottle identity unverified" : "Insufficient style information" }
+        guard let dimensions = taste.observedDimensions else { return "Taste-data completeness not recorded" }
+        return "\(Set(dimensions).count)/4 taste dimensions available"
+    }
+
     private var menuTitle: String {
         candidate?.rawText ?? recommendation.profile?.displayName ?? "Unmatched wine"
     }
@@ -1130,12 +1141,15 @@ private struct ResultCard: View {
                             }
 
                             if let matchedTitle {
-                                Text("Matched to \(matchedTitle)")
+                                Text("\(recommendation.status == .matched ? "Matched to" : "Possible match:") \(matchedTitle)")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(AppPalette.muted)
                                     .lineLimit(3)
                             }
 
+                            Text(tasteEvidenceLabel)
+                                .font(.system(size: 12))
+                                .foregroundStyle(AppPalette.muted)
                             if isInferred {
                                 Text("No reliable Vivino match was found, so this taste profile is inferred from the extracted wine details.")
                                     .font(.system(size: 12))
@@ -1177,11 +1191,12 @@ private struct ResultCard: View {
                 }
 
                 VStack(spacing: 2) {
-                    Text("Fit")
+                    Text(isInferred ? "Est. fit" : "Taste fit")
                         .font(.system(size: 10, weight: .bold))
                         .textCase(.uppercase)
-                    Text("\(Int(recommendation.fitScore.rounded()))")
+                    Text(canShowFit ? "\(Int(recommendation.fitScore.rounded()))" : "—")
                         .font(.system(size: 24, weight: .black))
+                        .accessibilityLabel(canShowFit ? "Fit \(Int(recommendation.fitScore.rounded()))" : "Fit unavailable")
                 }
                 .foregroundStyle(AppPalette.accentBlue)
                 .frame(width: 50, height: 56)
@@ -1208,7 +1223,8 @@ private struct ResultCard: View {
                     ForEach(TasteDimension.allCases) { dimension in
                         TasteScaleRow(
                             dimension: dimension,
-                            value: recommendation.profile?.taste[keyPath: dimension.tasteKeyPath],
+                            value: recommendation.profile?.taste.hasUsableDimension(dimension.testIdentifier) == true
+                                ? recommendation.profile?.taste[keyPath: dimension.tasteKeyPath] : nil,
                             tone: isInferred ? .uncertain : .standard
                         )
                     }
@@ -2374,22 +2390,18 @@ private func rerankedRecommendations(
         .map { recommendation in
             Recommendation(
                 candidateId: recommendation.candidateId,
-                fitScore: recommendation.profile.map { scoreRecommendation(preference: preferences, taste: $0.taste) } ?? recommendation.fitScore,
+                fitScore: recommendation.hasComparableFit
+                    ? recommendation.profile.map { scoreRecommendation(preference: preferences, taste: $0.taste) } ?? 0 : 0,
                 matchConfidence: recommendation.matchConfidence,
                 profile: recommendation.profile,
                 status: recommendation.status
             )
         }
-        .sorted {
-            if $0.fitScore == $1.fitScore {
-                return $0.matchConfidence > $1.matchConfidence
-            }
-
-            return $0.fitScore > $1.fitScore
-        }
+        .sorted(by: Recommendation.recommendedBefore)
 }
 
 private func scoreRecommendation(preference: UserTastePreference, taste: TasteVector) -> Double {
+    guard taste.hasComparableTaste else { return 0 }
     let weightedDistance =
         abs(Double(preference.body - taste.body)) * preference.weights.body +
         abs(Double(preference.acidity - taste.acidity)) * preference.weights.acidity +
@@ -2414,7 +2426,7 @@ private func sortRecommendations(
     sortOrder: ResultSortOrder
 ) -> [Recommendation] {
     guard sortOrder == .discovered else {
-        return recommendations
+        return recommendations.sorted(by: Recommendation.recommendedBefore)
     }
 
     let discoveredOrder = Dictionary(uniqueKeysWithValues: candidates.enumerated().map { ($1.id, $0) })

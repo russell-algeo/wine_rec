@@ -1,10 +1,11 @@
+import { ProviderAccessBlockedError } from "./providers/provider-access.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Recommendation, WineCandidate } from "@wine-rec/contracts";
 
 type MockJob = {
   id: string;
-  sourceType: "url-html" | "client-ocr-text";
+  sourceType: "url-html" | "client-ocr-text" | "upload-image" | "upload-pdf";
   sourceFilename: string;
   status: "queued" | "processing" | "completed" | "failed" | "canceled";
   queueMessageId: string | null;
@@ -98,7 +99,7 @@ const {
   const getJobMock = vi.fn(async () => (state.job ? clone(state.job) : null));
   const getJobStateMock = vi.fn(async () => (state.job ? clone(state.job) : null));
   const updateJobMock = vi.fn(async (_jobId: string, updates: Partial<MockJob>) => {
-    if (!state.job) {
+    if (!state.job || ["failed", "canceled", "completed"].includes(state.job.status)) {
       return;
     }
 
@@ -338,6 +339,9 @@ const {
   };
 });
 
+const { blobPutMock, blobGetMock, blobDelMock } = vi.hoisted(() => ({ blobPutMock: vi.fn(), blobGetMock: vi.fn(), blobDelMock: vi.fn() }));
+vi.mock("@vercel/blob", () => ({ put: blobPutMock, get: blobGetMock, del: blobDelMock }));
+
 vi.mock("@upstash/qstash", () => ({
   Client: class {
     publishJSON = publishJSONMock;
@@ -410,6 +414,8 @@ vi.mock("./store/job-store.js", () => ({
 
 import { AnalysisRetryableError } from "./services/pipeline.js";
 import {
+  createUploadAnalysis,
+  parseWorkerJobPayload,
   createClientOcrAnalysis,
   createUrlAnalysis,
   processWorkerFailure,
@@ -516,6 +522,10 @@ describe("serverless worker orchestration", () => {
     vi.clearAllMocks();
     vi.useRealTimers();
     resetStoreState();
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", undefined);
+    blobPutMock.mockReset();
+    blobGetMock.mockReset();
+    blobDelMock.mockReset().mockResolvedValue(undefined);
 
     process.env.QSTASH_TOKEN = "test-token";
     process.env.QSTASH_URL = "https://qstash.example.com";
@@ -561,6 +571,8 @@ describe("serverless worker orchestration", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
 
     if (originalQstashToken === undefined) {
       delete process.env.QSTASH_TOKEN;
@@ -1036,4 +1048,196 @@ describe("serverless worker orchestration", () => {
       }),
     );
   });
+  it("acknowledges a provider block, terminates all work, and ignores redelivery without requeue", async () => {
+    const one = buildCandidate("candidate-1"), two = buildCandidate("candidate-2");
+    seedJobState(buildJob({ candidates: [one, two], workerCount: 2 }),
+      [buildWorker(), buildWorker({ index: 1, queueMessageId: "msg-second" })],
+      [buildCandidateWork(one.id, 0), buildCandidateWork(two.id, 1)]);
+    claimNextJobCandidateMock.mockResolvedValueOnce(buildCandidateWork(one.id, 0, { status: "processing", leaseOwner: "worker-0" }));
+    const blocked = new ProviderAccessBlockedError(); runCandidateAnalysisMock.mockRejectedValue(blocked);
+    await expect(processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 })).resolves.toBeUndefined();
+    expect(storeState.job).toMatchObject({ status: "failed", errorMessage: blocked.message });
+    expect([...storeState.workers.values()].every(worker => worker.status === "failed")).toBe(true);
+    expect([...storeState.candidateWork.values()].every(work => work.status === "failed" && work.leaseOwner === null)).toBe(true);
+    expect(clearJobCandidateQueueMock).toHaveBeenCalledWith("analysis-1");
+    expect(deleteMessageMock).toHaveBeenCalledWith("msg-current"); expect(deleteMessageMock).toHaveBeenCalledWith("msg-second");
+    expect(publishJSONMock).not.toHaveBeenCalled();
+    await processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 });
+    await processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 1 });
+    await processWorkerFailure(Buffer.from(JSON.stringify({ mode: "worker", jobId: "analysis-1", workerIndex: 0 })).toString("base64"));
+    expect(runCandidateAnalysisMock).toHaveBeenCalledTimes(1); expect(publishJSONMock).not.toHaveBeenCalled();
+    expect(storeState.job).toMatchObject({ status: "failed", errorMessage: blocked.message });
+  });
+
+  it("preserves cancellation that wins the race with an access block", async () => {
+    const one = buildCandidate("candidate-1");
+    seedJobState(buildJob({ candidates: [one] }), [buildWorker()], [buildCandidateWork(one.id, 0)]);
+    claimNextJobCandidateMock.mockResolvedValueOnce(buildCandidateWork(one.id, 0, { status: "processing", leaseOwner: "worker-0" }));
+    runCandidateAnalysisMock.mockImplementation(async () => {
+      storeState.job!.status = "canceled"; throw new ProviderAccessBlockedError();
+    });
+    await expect(processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 })).resolves.toBeUndefined();
+    expect(storeState.job!.status).toBe("canceled"); expect(publishJSONMock).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges the durable block even if queue cleanup fails", async () => {
+    const one = buildCandidate("candidate-1");
+    seedJobState(buildJob({ candidates: [one] }), [buildWorker()], [buildCandidateWork(one.id, 0)]);
+    claimNextJobCandidateMock.mockResolvedValueOnce(buildCandidateWork(one.id, 0, { status: "processing", leaseOwner: "worker-0" }));
+    runCandidateAnalysisMock.mockRejectedValue(new ProviderAccessBlockedError());
+    clearJobCandidateQueueMock.mockRejectedValueOnce(new Error("Synthetic cleanup failure"));
+    await expect(processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 })).resolves.toBeUndefined();
+    await processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 });
+    expect(storeState.job!.status).toBe("failed");
+    expect(runCandidateAnalysisMock).toHaveBeenCalledTimes(1); expect(publishJSONMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["transient", "uncertain-write", "exhausted"])("contains a %s terminal-state persistence failure without retrying provider work", async failureMode => {
+    const one = buildCandidate("candidate-1");
+    seedJobState(buildJob({ candidates: [one] }), [buildWorker()], [buildCandidateWork(one.id, 0)]);
+    claimNextJobCandidateMock.mockResolvedValueOnce(buildCandidateWork(one.id, 0, { status: "processing", leaseOwner: "worker-0" }));
+    const persist = updateJobMock.getMockImplementation()!;
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    runCandidateAnalysisMock.mockImplementationOnce(async () => {
+      if (failureMode === "exhausted") {
+        updateJobMock.mockRejectedValueOnce(new Error("Synthetic persistence failure"))
+          .mockRejectedValueOnce(new Error("Synthetic persistence failure"))
+          .mockRejectedValueOnce(new Error("Synthetic persistence failure"));
+      } else {
+        updateJobMock.mockImplementationOnce(async (jobId, updates) => {
+          if (failureMode === "uncertain-write") await persist(jobId, updates);
+          throw new Error("Synthetic uncertain response or transient failure");
+        });
+      }
+      throw new ProviderAccessBlockedError();
+    });
+    await expect(processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 })).resolves.toBeUndefined();
+    const terminalWrites = updateJobMock.mock.calls.filter(([, updates]) => updates.status === "failed");
+    expect(terminalWrites).toHaveLength(failureMode === "exhausted" ? 3 : 2);
+    expect(runCandidateAnalysisMock).toHaveBeenCalledTimes(1); expect(publishJSONMock).not.toHaveBeenCalled();
+    if (failureMode === "exhausted") {
+      expect(storeState.job!.status).not.toBe("failed");
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("Job stop unconfirmed"), "analysis-1");
+    } else {
+      expect(storeState.job!.status).toBe("failed");
+      await processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 });
+      expect(runCandidateAnalysisMock).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("queues only a private pathname after a private upload", async () => {
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", "private");
+    blobPutMock.mockImplementation(async (pathname: string) => ({ pathname, url: "https://example.invalid/not-for-queue" }));
+    publishJSONMock.mockResolvedValue({ messageId: "msg-private" });
+    const result = await createUploadAnalysis({ buffer: Buffer.from("private fixture"), filename: "fixture.png", mimeType: "image/png" });
+    const body = publishJSONMock.mock.calls[0]![0].body;
+    expect(body).toMatchObject({ jobId: result.analysisId, privateBlobPathname: `uploads/${result.analysisId}` });
+    expect(body).not.toHaveProperty("fileBlobUrl");
+    expect(body).not.toHaveProperty("fileBase64");
+    expect(blobPutMock).toHaveBeenCalledWith(`uploads/${result.analysisId}`, Buffer.from("private fixture"), { access: "private", contentType: "image/png", addRandomSuffix: false });
+  });
+
+  it("preserves public upload defaults and the legacy queue URL", async () => {
+    blobPutMock.mockResolvedValue({ pathname: "uploads/legacy-random", url: "https://example.invalid/legacy" });
+    publishJSONMock.mockResolvedValue({ messageId: "msg-public" });
+    await createUploadAnalysis({ buffer: Buffer.from("public fixture"), filename: "fixture.png" });
+    expect(publishJSONMock.mock.calls[0]![0].body.fileBlobUrl).toBe("https://example.invalid/legacy");
+    expect(publishJSONMock.mock.calls[0]![0].body).not.toHaveProperty("privateBlobPathname");
+  });
+
+  it("cleans up only the newly stored private object when enqueue fails", async () => {
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", "private");
+    blobPutMock.mockImplementation(async (pathname: string) => ({ pathname, url: "https://example.invalid/not-for-queue" }));
+    publishJSONMock.mockRejectedValueOnce(new Error("queue unavailable"));
+    await expect(createUploadAnalysis({ buffer: Buffer.from("fixture"), filename: "fixture.png" })).rejects.toThrow("queue unavailable");
+    expect(blobDelMock).toHaveBeenCalledTimes(1);
+    expect(blobDelMock).toHaveBeenCalledWith(`uploads/${storeState.job!.id}`);
+    expect(storeState.job?.status).toBe("failed");
+  });
+
+  it("fails an upload without publishing or cleanup when private storage itself fails", async () => {
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", "private");
+    blobPutMock.mockRejectedValueOnce(new Error("private store unavailable"));
+    await expect(createUploadAnalysis({ buffer: Buffer.from("fixture"), filename: "fixture.png" })).rejects.toThrow("private store unavailable");
+    expect(publishJSONMock).not.toHaveBeenCalled();
+    expect(blobDelMock).not.toHaveBeenCalled();
+    expect(storeState.job?.status).toBe("failed");
+  });
+
+  it.each(["public", "private"])("processes an in-flight private upload while current new-upload mode is %s", async mode => {
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", mode);
+    seedJobState(buildJob({ sourceType: "upload-image", sourceFilename: "fixture.png", extractedText: null, candidates: [], workerCount: 0 }), [], []);
+    blobGetMock.mockResolvedValueOnce({ statusCode: 200, stream: new Response("private fixture").body });
+    extractSourceTextMock.mockResolvedValueOnce("empty fixture");
+    parseWineCandidatesMock.mockReturnValueOnce([]);
+    const fetchMock = vi.fn(() => Promise.reject(new Error("unexpected public fetch")));
+    vi.stubGlobal("fetch", fetchMock);
+    await processWorkerJob({ jobId: "analysis-1", sourceType: "upload-image", sourceFilename: "fixture.png", privateBlobPathname: "uploads/analysis-1" });
+    expect(blobGetMock).toHaveBeenCalledWith("uploads/analysis-1", { access: "private" });
+    expect(extractSourceTextMock).toHaveBeenCalledWith(expect.objectContaining({ fileBuffer: Buffer.from("private fixture") }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(storeState.job?.status).toBe("completed");
+  });
+
+  it("keeps queued legacy public uploads readable after private mode activation", async () => {
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", "private");
+    seedJobState(buildJob({ sourceType: "upload-image", sourceFilename: "fixture.png", extractedText: null, candidates: [], workerCount: 0 }), [], []);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("legacy fixture"));
+    vi.stubGlobal("fetch", fetchMock);
+    extractSourceTextMock.mockResolvedValueOnce("empty fixture");
+    parseWineCandidatesMock.mockReturnValueOnce([]);
+    await processWorkerJob({ jobId: "analysis-1", sourceType: "upload-image", sourceFilename: "fixture.png", fileBlobUrl: "https://example.invalid/legacy" });
+    expect(fetchMock).toHaveBeenCalledWith("https://example.invalid/legacy");
+    expect(blobGetMock).not.toHaveBeenCalled();
+    expect(extractSourceTextMock).toHaveBeenCalledWith(expect.objectContaining({ fileBuffer: Buffer.from("legacy fixture") }));
+  });
+
+  it.each([
+    { privateBlobPathname: "uploads/other-job" },
+    { privateBlobPathname: "https://example.invalid/private" },
+    { privateBlobPathname: "uploads/analysis-1", fileBlobUrl: "https://example.invalid/public" },
+    { privateBlobPathname: "uploads/analysis-1", fileBase64: "" },
+    { privateBlobPathname: "uploads/analysis-1", recognizedText: "" },
+    { privateBlobPathname: "uploads/analysis-1", sourceUrl: "https://example.invalid/menu" },
+    { privateBlobPathname: "uploads/analysis-1", sourceType: "url-html" },
+    { privateBlobPathname: "uploads/analysis-1", jobId: "../analysis-1" },
+  ])("rejects unsafe private coordinator payload %# before processing", async override => {
+    const payload = { jobId: "analysis-1", sourceType: "upload-image", sourceFilename: "fixture.png", ...override };
+    expect(() => parseWorkerJobPayload(payload)).toThrow();
+    await expect(processWorkerJob(payload)).rejects.toThrow();
+    expect(blobGetMock).not.toHaveBeenCalled();
+    expect(extractSourceTextMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["public", "private"])("preserves an accepted %s upload if saving its queue message ID fails", async mode => {
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", mode);
+    blobPutMock.mockImplementation(async (pathname: string) => ({ pathname, url: "https://example.invalid/not-for-queue" }));
+    publishJSONMock.mockResolvedValueOnce({ messageId: "msg-accepted" });
+    updateJobMock.mockRejectedValueOnce(new Error("Redis tracking unavailable"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await createUploadAnalysis({ buffer: Buffer.from("fixture"), filename: "fixture.png" });
+    expect(result).toEqual({ analysisId: storeState.job!.id, status: "queued" });
+    expect(publishJSONMock).toHaveBeenCalledTimes(1);
+    expect(blobDelMock).not.toHaveBeenCalled();
+    expect(storeState.job?.status).toBe("queued");
+    expect(updateJobMock).toHaveBeenCalledTimes(1);
+    expect(updateJobMock).toHaveBeenCalledWith(result.analysisId, { queueMessageId: "msg-accepted" });
+    expect(warning).toHaveBeenCalledWith("[uploads] Queue accepted; message tracking write failed", result.analysisId);
+  });
+
+  it.each(["public", "private"])("retains an uncertain-publish %s upload when terminal-state persistence also fails", async mode => {
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", mode);
+    blobPutMock.mockImplementation(async (pathname: string) => ({ pathname, url: "https://example.invalid/not-for-queue" }));
+    publishJSONMock.mockRejectedValueOnce(new Error("publish outcome unknown"));
+    updateJobMock.mockRejectedValueOnce(new Error("terminal state unavailable"));
+    await expect(createUploadAnalysis({ buffer: Buffer.from("fixture"), filename: "fixture.png" })).rejects.toThrow("terminal state unavailable");
+    expect(blobDelMock).not.toHaveBeenCalled();
+    expect(storeState.job?.status).toBe("queued");
+  });
+
+  it("keeps legacy Production payloads but rejects a Preview namespace", () => {
+    expect(parseWorkerJobPayload({ mode: "worker", jobId: "analysis-1", workerIndex: 0 })).toMatchObject({ mode: "worker" });
+    expect(() => parseWorkerJobPayload({ mode: "worker", jobId: "analysis-1", workerIndex: 0, deploymentNamespace: "preview:qa" })).toThrow("namespace");
+  });
+
 });

@@ -81,6 +81,19 @@ struct TasteVector: Codable {
     let sweetness: Int
     let sourceMode: SourceMode
     let confidence: Double
+    // Optional so existing stored/API responses remain decodable.
+    let observedDimensions: [String]?
+
+    var hasComparableTaste: Bool {
+        guard confidence > 0 else { return false }
+        if sourceMode == .inferred { return true }
+        return Set(observedDimensions ?? []) == Set(["body", "acidity", "tannin", "sweetness"])
+    }
+
+    func hasUsableDimension(_ dimension: String) -> Bool {
+        guard confidence > 0 else { return false }
+        return sourceMode == .inferred || (observedDimensions?.contains(dimension) ?? false)
+    }
 }
 
 struct WineProfile: Codable, Identifiable {
@@ -113,6 +126,17 @@ struct Recommendation: Codable, Identifiable {
     let matchConfidence: Double
     let profile: WineProfile?
     let status: RecommendationStatus
+
+    var hasComparableFit: Bool {
+        guard let taste = profile?.taste else { return false }
+        return taste.hasComparableTaste && (taste.sourceMode == .inferred || status == .matched)
+    }
+
+    static func recommendedBefore(_ left: Recommendation, _ right: Recommendation) -> Bool {
+        if left.hasComparableFit != right.hasComparableFit { return left.hasComparableFit }
+        if left.hasComparableFit && left.fitScore != right.fitScore { return left.fitScore > right.fitScore }
+        return left.matchConfidence > right.matchConfidence
+    }
 }
 
 struct WineCandidate: Codable, Identifiable {

@@ -38,6 +38,10 @@ export const tasteVectorSchema = z.object({
   sweetness: z.number().int().min(1).max(5),
   sourceMode: sourceModeSchema,
   confidence: z.number().min(0).max(1),
+  // Absent on older results. Missing measured dimensions are not neutral observations.
+  observedDimensions: z.array(z.enum(["body", "acidity", "tannin", "sweetness"]))
+    .refine(dimensions => new Set(dimensions).size === dimensions.length, "Taste dimensions must be unique")
+    .optional(),
 });
 
 export const tasteWeightsSchema = z.object({
@@ -168,3 +172,27 @@ export type ProviderHealth = z.infer<typeof providerHealthSchema>;
 export type CreateAnalysisFromUrlRequest = z.infer<typeof createAnalysisFromUrlRequestSchema>;
 export type CreateAnalysisFromClientOcrRequest = z.infer<typeof createAnalysisFromClientOcrRequestSchema>;
 export type CreateAnalysisResponse = z.infer<typeof createAnalysisResponseSchema>;
+
+/** Shared evidence contract used by scoring and display, including legacy results. */
+export function hasComparableTaste(taste: TasteVector): boolean {
+  if (!(taste.confidence > 0)) return false;
+  if (taste.sourceMode === "inferred") return true;
+  const dimensions = new Set(taste.observedDimensions);
+  return dimensions.size === 4 && ["body", "acidity", "tannin", "sweetness"]
+    .every(dimension => dimensions.has(dimension as NonNullable<TasteVector["observedDimensions"]>[number]));
+}
+
+export function hasComparableFit(recommendation: Recommendation): boolean {
+  const taste = recommendation.profile?.taste;
+  return Boolean(taste && hasComparableTaste(taste)
+    && (taste.sourceMode === "inferred" || recommendation.status === "matched"));
+}
+
+/** Unavailable fits must not silently determine the recommended order. */
+export function compareRecommendationFit(left: Recommendation, right: Recommendation): number {
+  const leftEligible = hasComparableFit(left);
+  const rightEligible = hasComparableFit(right);
+  if (leftEligible !== rightEligible) return Number(rightEligible) - Number(leftEligible);
+  if (leftEligible && left.fitScore !== right.fitScore) return right.fitScore - left.fitScore;
+  return right.matchConfidence - left.matchConfidence;
+}

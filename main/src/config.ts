@@ -1,8 +1,11 @@
 import path from "node:path";
 import { config as loadEnv } from "dotenv";
 
-loadEnv({ path: path.resolve(process.cwd(), "../.env") });
-loadEnv();
+// The explicit isolated developer entry point never loads hosted credentials.
+if (process.env.WINE_REC_ISOLATED !== "true") {
+  loadEnv({ path: path.resolve(process.cwd(), "../.env") });
+  loadEnv();
+}
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;

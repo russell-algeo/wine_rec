@@ -140,3 +140,33 @@ Last audited from the Vercel CLI on 2026-08-10:
 - The production `wine-rec` deployment exposes the expected API bundle, including coordinator and worker-compatible routes, in `iad1`.
 - The production worker exposes only chunk-worker and worker-failure functions in `iad1`.
 - Local clones are not Vercel-linked by default. Link deliberately as described above; never copy another clone's `.vercel` metadata or credentials.
+
+## Private uploads: activation and compatibility
+
+New uploads can use private Vercel Blob storage. This is opt-in and is not activated by deploying the code alone.
+
+- `BLOB_UPLOAD_ACCESS=private` makes the main coordinator upload with private access and queue only `uploads/<job-id>`. The worker payload validates that path against its job ID and rejects mixed source references.
+- Unset or explicit `public` preserves the existing public bearer-link behavior. Any other value fails closed; there is no fallback from a private upload or authenticated read to public access.
+- Set `BLOB_READ_WRITE_TOKEN` to a credential for the matching **private store** on the intended main deployment. Changing the access option does not convert the existing public store.
+- Existing signed public-URL and base64 messages remain readable. A queued private reference uses an authenticated private read regardless of the current setting for new uploads.
+- The chunk worker consumes candidate state from Redis rather than raw upload bytes. Keep the source mirrored, but do not grant the worker a new private-store credential unless a verified execution path requires it.
+- Do not disclose blob URLs, retrieve historical images, migrate objects, replace the shared production/preview public credential, or remove the legacy public store as part of activation.
+
+### Least-access Preview trial
+
+Before acting, obtain approval for the exact candidate SHA, paired Preview projects, new private Preview store, branch-scoped environment changes, bounded non-private fixtures, and deletion of only those new test objects. Confirm Hobby/free-plan availability and limits at creation time; do not accept a paid upgrade.
+
+1. Keep production unchanged. Use a separate private Preview store and an isolated, healthy Preview Redis database shared only by this Preview pair.
+2. Scope the private Blob token and `BLOB_UPLOAD_ACCESS=private` to the intended main Preview branch. Do not auto-connect a store to all environments. Preserve the existing public credential and all production scopes.
+3. Preserve the worker project's global Ignored Build Step. If an exact candidate Preview is canceled by that policy, use its **Redeploy** dialog and uncheck **Use project's Ignore Build Step** for that one redeploy. Verify target Preview and exact source SHA before submission. Do not redeploy the old production worker or assume a `projectSettings` API override is temporary.
+4. Confirm worker Preview readiness before configuring the main Preview's `CHUNK_WORKER_BASE_URL`, matching deployment-protection handling, signed QStash callbacks, and shared Preview Redis. Keep `ENABLE_VIVINO_DIRECT=false`, `WINE_PROFILE_PROVIDER_ORDER=rule-based`, and `OCR_PROVIDER=tesseract-js` for the trial.
+5. Submit only the separately approved non-private fixtures. Verify private PUT/GET, no public raw-image read, coordinator-to-worker completion, cancellation, result display, and legacy in-flight compatibility. A rule-based result validates the pipeline, not Vivino quality.
+6. Verify storage destination and queue references, record exact newly created test objects, and clean up only those objects after terminal state and retry quiescence if that cleanup was approved. No wildcard deletion or historical-data cleanup.
+
+### Rollback and retention
+
+Private queued jobs depend on the credential and immutable main deployment that created them. Keep that private-capable deployment, credential, store, and signing configuration available until all its jobs are terminal and retries are quiescent. Do not rotate the credential to a different store while those jobs are active.
+
+A rollback to pre-private code attempts public uploads. It will fail while its credential still points to a private store. Changing only BLOB_UPLOAD_ACCESS to public is likewise not a validated rollback. Returning to public uploads requires a compatible public-store credential and explicit approval for that privacy change; preserve the separate immutable private-capable deployment and its credential for in-flight private jobs. Prefer a known private-capable rollback build or an actual tested maintenance mechanism. An invalid OCR provider value is not a maintenance switch.
+
+Private access does **not** implement retention. Successful uploaded images currently have no time-based deletion policy. Deployment retention settings do not delete Blob objects. Best-effort cleanup after a publish error runs only after terminal job-state persistence succeeds. An accepted publish followed by a queue-ID bookkeeping failure retains its source and returns the accepted analysis ID; an uncertain publish plus unavailable terminal persistence also retains the source. Those retained objects may need later operator reconciliation, not automatic deletion. This is not a general retention guarantee. Historical deletion and a future retention schedule require a separately agreed policy.

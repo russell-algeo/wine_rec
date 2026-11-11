@@ -1,8 +1,10 @@
+import { ProviderAccessBlockedError, assertProviderResponseAllowed, type ProviderRequestGuard } from "./provider-access.js";
 import type { TastingNoteGroup, WineCandidate, WineProfile } from "@wine-rec/contracts";
 import { inferTasteVector, mapExternalTasteVector, scoreWineMatch } from "@wine-rec/core";
 
 import { appConfig } from "../config.js";
 import { createId } from "../id.js";
+import { compareVintageEvidence, compareGrapeEvidence } from "./wine-identity-evidence.js";
 import {
   pickPreferredVivinoImageUrl,
   RetryableVivinoBrowserError,
@@ -21,7 +23,7 @@ export interface WineProfileProvider {
   name: string;
   isEnabled: boolean;
   detail: string;
-  lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null>;
+  lookup(candidate: WineCandidate, context?: { beforeRequest?: ProviderRequestGuard }): Promise<CandidateProfileResult | null>;
 }
 
 export class RetryableWineProfileLookupError extends Error {
@@ -58,6 +60,9 @@ type RawExternalProfile = {
 };
 
 const VIVINO_DIRECT_MATCH_THRESHOLD = 0.38;
+// Incomplete vintage or grape evidence may be useful, but must stay below
+// rankMatch's exact bottle-match threshold (0.82).
+const VIVINO_UNVERIFIED_IDENTITY_MAX_SCORE = 0.81;
 const MIN_CONFIDENCE_FOR_RULE_BASED_INFERENCE = 0.68;
 const styleListingLabels = new Set(["chilled red", "red", "white", "orange", "rose", "rosé", "sparkling"]);
 const searchNoiseTokens = new Set([
@@ -491,13 +496,16 @@ function extractTastingNotes(flavor: VivinoFlavorGroup[] | undefined): string | 
 async function vivinoFetch(
   url: URL | string,
   headers: Record<string, string>,
+  beforeRequest?: ProviderRequestGuard,
 ): Promise<Response | null> {
   const maxRetries = appConfig.vivinoDirectMaxRetries;
   const baseBackoff = appConfig.vivinoDirectBackoffMs;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    await beforeRequest?.();
     try {
       const response = await fetch(url, { headers });
+      await assertProviderResponseAllowed(response, beforeRequest?.onAccessBlocked);
 
       if (response.status === 429 && attempt < maxRetries) {
         const delay = baseBackoff * 2 ** attempt;
@@ -512,6 +520,7 @@ async function vivinoFetch(
       }
       return response;
     } catch (error) {
+      if (error instanceof ProviderAccessBlockedError) throw error;
       console.log("[vivino-direct] Network error fetching %s: %s", url.toString(), error instanceof Error ? error.message : error);
       if (attempt < maxRetries) {
         const delay = baseBackoff * 2 ** attempt;
@@ -552,7 +561,25 @@ class VivinoDirectProvider implements WineProfileProvider {
     "X-Requested-With": "XMLHttpRequest",
   };
 
-  async lookup(candidate: WineCandidate): Promise<CandidateProfileResult | null> {
+  private blocked: ProviderAccessBlockedError | null = null;
+
+  async lookup(candidate: WineCandidate, context: { beforeRequest?: ProviderRequestGuard } = {}): Promise<CandidateProfileResult | null> {
+    const guard: ProviderRequestGuard = async () => {
+      if (this.blocked) throw this.blocked;
+      await context.beforeRequest?.();
+      if (this.blocked) throw this.blocked;
+    };
+    guard.onAccessBlocked = error => { this.blocked ??= error; };
+    try {
+      await guard();
+      return await this.lookupCandidate(candidate, guard);
+    } catch (error) {
+      if (error instanceof ProviderAccessBlockedError) this.blocked = error;
+      throw error;
+    }
+  }
+
+  private async lookupCandidate(candidate: WineCandidate, beforeRequest: ProviderRequestGuard): Promise<CandidateProfileResult | null> {
     if (!this.isEnabled) {
       console.log("[vivino-direct] Provider is disabled, skipping");
       return null;
@@ -567,26 +594,38 @@ class VivinoDirectProvider implements WineProfileProvider {
 
     const hitsByWineId = new Map<number, { hit: SearchHit; score: number }>();
     for (const query of queries) {
-      const hits = await this.searchByName(query);
+      await beforeRequest();
+      const hits = await this.searchByName(query, beforeRequest);
       for (const hit of hits) {
-        const score = scoreWineMatch(candidate, {
+        // A strong name match cannot override an explicit vintage or grape contradiction.
+        const vintageComparison = compareVintageEvidence(candidate, hit);
+        const grapeComparison = compareGrapeEvidence(candidate, hit);
+        if (vintageComparison === "conflict" || grapeComparison === "conflict") {
+          continue;
+        }
+        const identityScore = scoreWineMatch(candidate, {
           producer: hit.wineryName,
           label: hit.wineName,
           vintage: hit.year,
           varietal: null,
           region: hit.regionAndCountry,
         });
+        const score = vintageComparison === "unknown" || grapeComparison === "unknown"
+          ? Math.min(identityScore, VIVINO_UNVERIFIED_IDENTITY_MAX_SCORE)
+          : identityScore;
         const existing = hitsByWineId.get(hit.wineId);
-        if (!existing || score > existing.score) {
+        const existingVintage = existing ? compareVintageEvidence(candidate, existing.hit) : null;
+        const gainsVintageEvidence = vintageComparison === "exact" && existingVintage === "unknown";
+        if (!existing || gainsVintageEvidence || (vintageComparison === existingVintage && score > existing.score)) {
           hitsByWineId.set(hit.wineId, { hit, score });
         }
       }
 
-      const bestSoFar = [...hitsByWineId.values()].reduce(
-        (best, current) => (current.score > best ? current.score : best),
-        0,
+      const hasDecisiveHit = [...hitsByWineId.values()].some(({ hit, score }) =>
+        score >= 0.72 && compareVintageEvidence(candidate, hit) !== "unknown"
+          && compareGrapeEvidence(candidate, hit) !== "unknown",
       );
-      if (bestSoFar >= 0.72) {
+      if (hasDecisiveHit) {
         break;
       }
     }
@@ -617,10 +656,10 @@ class VivinoDirectProvider implements WineProfileProvider {
     }
 
     // Step 3: Fetch aggregate rating metadata and taste data for the best match
-    const [wineMeta, tastesData] = await Promise.all([
-      this.fetchWineMeta(bestHit),
-      this.fetchTastes(bestHit.wineId),
-    ]);
+    // Sequential enrichment prevents a detected block on one endpoint from
+    // racing a newly started request to another endpoint.
+    const wineMeta = await this.fetchWineMeta(bestHit, beforeRequest);
+    const tastesData = await this.fetchTastes(bestHit.wineId, beforeRequest);
     console.log(
       "[vivino-direct] Aggregate rating for wine %d:",
       bestHit.wineId,
@@ -639,13 +678,13 @@ class VivinoDirectProvider implements WineProfileProvider {
       bestHit.imageUrl,
       wineMeta?.imageUrl,
     );
-    const hasDirectTaste = Boolean(
-      tasteStructure &&
-        (tasteStructure.acidity != null ||
-          tasteStructure.sweetness != null ||
-          tasteStructure.tannin != null ||
-          tasteStructure.intensity != null),
-    );
+    const taste = mapExternalTasteVector({
+      body: vivinoStructureToScale(tasteStructure?.intensity),
+      acidity: vivinoStructureToScale(tasteStructure?.acidity),
+      tannin: vivinoStructureToScale(tasteStructure?.tannin),
+      sweetness: vivinoStructureToScale(tasteStructure?.sweetness),
+    }, "direct", 0.9);
+    const observedCount = taste.observedDimensions?.length ?? 0;
 
     return {
       provider: this.name,
@@ -655,7 +694,7 @@ class VivinoDirectProvider implements WineProfileProvider {
         displayName: [bestHit.wineryName, bestHit.wineName].filter(Boolean).join(" "),
         producer: bestHit.wineryName || candidate.producer,
         label: bestHit.wineName || candidate.label,
-        vintage: bestHit.year ?? candidate.vintage,
+        vintage: bestHit.year,
         region: bestHit.regionAndCountry || candidate.region,
         varietal: candidate.varietal,
         provider: this.name,
@@ -663,17 +702,8 @@ class VivinoDirectProvider implements WineProfileProvider {
         ratingCount: wineMeta?.aggregateRating?.ratingCount ?? null,
         ratingSource: wineMeta?.aggregateRating?.ratingSource ?? null,
         imageUrl: normalizeExternalImageUrl(imageUrl) ?? null,
-        provenanceLabel: hasDirectTaste ? "Direct" : "Mapped",
-        taste: mapExternalTasteVector(
-          {
-            body: vivinoStructureToScale(tasteStructure?.intensity),
-            acidity: vivinoStructureToScale(tasteStructure?.acidity),
-            tannin: vivinoStructureToScale(tasteStructure?.tannin),
-            sweetness: vivinoStructureToScale(tasteStructure?.sweetness),
-          },
-          hasDirectTaste ? "direct" : "mapped",
-          hasDirectTaste ? 0.9 : 0.7,
-        ),
+        provenanceLabel: observedCount === 4 ? "Direct" : observedCount > 0 ? `Partial taste data (${observedCount}/4)` : "Taste data unavailable",
+        taste,
         tasteReviewCount: normalizeVivinoTasteReviewCount(
           tasteStructure?.user_structure_count,
         ),
@@ -685,9 +715,9 @@ class VivinoDirectProvider implements WineProfileProvider {
     };
   }
 
-  private async searchByName(query: string): Promise<SearchHit[]> {
+  private async searchByName(query: string, beforeRequest: ProviderRequestGuard): Promise<SearchHit[]> {
     try {
-      return await VivinoBrowser.getInstance().search(query);
+      return await VivinoBrowser.getInstance().search(query, beforeRequest);
     } catch (error) {
       if (error instanceof RetryableVivinoBrowserError) {
         throw new RetryableWineProfileLookupError(this.name, query, error);
@@ -696,7 +726,7 @@ class VivinoDirectProvider implements WineProfileProvider {
     }
   }
 
-  private async fetchWineMeta(bestHit: SearchHit): Promise<{
+  private async fetchWineMeta(bestHit: SearchHit, beforeRequest: ProviderRequestGuard): Promise<{
     aggregateRating: {
       rating: number | null;
       ratingCount: number | null;
@@ -704,7 +734,7 @@ class VivinoDirectProvider implements WineProfileProvider {
     } | null;
     imageUrl: string | null;
   } | null> {
-    const reviewsMeta = await this.fetchReviewsMeta(bestHit.wineId);
+    const reviewsMeta = await this.fetchReviewsMeta(bestHit.wineId, beforeRequest);
     const hasAggregateFromReviews = Boolean(reviewsMeta?.aggregateRating);
     const hasUsableImage = Boolean(
       pickPreferredVivinoImageUrl(bestHit.imageUrl, reviewsMeta?.imageUrl),
@@ -714,7 +744,7 @@ class VivinoDirectProvider implements WineProfileProvider {
     }
 
     if (hasAggregateFromReviews) {
-      const pageImageUrl = await this.fetchVintagePageImage(bestHit.vintagePageUrl);
+      const pageImageUrl = await this.fetchVintagePageImage(bestHit.vintagePageUrl, beforeRequest);
       return {
         aggregateRating: reviewsMeta?.aggregateRating ?? null,
         imageUrl: pickPreferredVivinoImageUrl(
@@ -726,7 +756,7 @@ class VivinoDirectProvider implements WineProfileProvider {
     }
 
     const scrapedMeta = await VivinoBrowser.getInstance().fetchVintagePageMeta(
-      bestHit.vintagePageUrl,
+      bestHit.vintagePageUrl, beforeRequest,
     );
     if (!reviewsMeta) {
       return scrapedMeta;
@@ -738,11 +768,11 @@ class VivinoDirectProvider implements WineProfileProvider {
     };
   }
 
-  private async fetchVintagePageImage(vintagePageUrl: string): Promise<string | null> {
+  private async fetchVintagePageImage(vintagePageUrl: string, beforeRequest: ProviderRequestGuard): Promise<string | null> {
     const response = await vivinoFetch(vintagePageUrl, {
       ...this.headers,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    });
+    }, beforeRequest);
     if (!response) return null;
 
     try {
@@ -752,12 +782,12 @@ class VivinoDirectProvider implements WineProfileProvider {
     }
   }
 
-  private async fetchReviewsMeta(wineId: number): Promise<VivinoWineMeta | null> {
+  private async fetchReviewsMeta(wineId: number, beforeRequest: ProviderRequestGuard): Promise<VivinoWineMeta | null> {
     const url = new URL(`https://www.vivino.com/api/wines/${wineId}/reviews`);
     url.searchParams.set("per_page", "1");
     url.searchParams.set("language", "en");
 
-    const response = await vivinoFetch(url, this.headers);
+    const response = await vivinoFetch(url, this.headers, beforeRequest);
     if (!response) return null;
 
     try {
@@ -770,9 +800,9 @@ class VivinoDirectProvider implements WineProfileProvider {
     }
   }
 
-  private async fetchTastes(wineId: number): Promise<VivinoTastesResponse | null> {
+  private async fetchTastes(wineId: number, beforeRequest: ProviderRequestGuard): Promise<VivinoTastesResponse | null> {
     const url = new URL(`https://www.vivino.com/api/wines/${wineId}/tastes`);
-    const response = await vivinoFetch(url, this.headers);
+    const response = await vivinoFetch(url, this.headers, beforeRequest);
     if (!response) return null;
 
     try {

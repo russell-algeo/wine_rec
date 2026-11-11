@@ -1,0 +1,408 @@
+[
+  {
+    "name": "Sancerre sample",
+    "input": "2022 Domaine de la Villaudiere Sancerre Sauvignon Blanc",
+    "source": "shared/test/fixtures/sample-ocr.txt; source rows transcribed from repository fixture",
+    "hit": {
+      "wineryName": "Domaine de la Villaudiere",
+      "wineName": "Sancerre Sauvignon Blanc",
+      "year": 2022,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Flowers sample",
+    "input": "2021 Flowers Pinot Noir Sonoma Coast",
+    "source": "shared/test/fixtures/sample-ocr.txt; source rows transcribed from repository fixture",
+    "hit": {
+      "wineryName": "Flowers",
+      "wineName": "Pinot Noir",
+      "year": 2021,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Ridge sample",
+    "input": "2021 Ridge Cabernet Sauvignon Paso Robles",
+    "source": "shared/test/fixtures/sample-ocr.txt; source rows transcribed from repository fixture",
+    "hit": {
+      "wineryName": "Ridge",
+      "wineName": "Cabernet Sauvignon",
+      "year": 2021,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Pierre Peters sample NV",
+    "input": "NV Pierre Peters Cuvee de Reserve Champagne",
+    "source": "shared/test/fixtures/sample-ocr.txt; source rows transcribed from repository fixture",
+    "hit": {
+      "wineryName": "Pierre Peters",
+      "wineName": "Cuvee de Reserve N.V.",
+      "year": null,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Salmon Run wrong blend",
+    "input": "Riesling, Salmon Run 2016\n$10 / $36\nFinger Lakes, New York",
+    "source": "Recorded 2026-11-10 public Venable menu snippet; no new site/provider request",
+    "hit": {
+      "wineryName": "Salmon Run",
+      "wineName": "Chardonnay-Riesling",
+      "year": 2016,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": true,
+    "grapeComparison": "conflict"
+  },
+  {
+    "name": "Salmon Run correct grape",
+    "input": "Riesling, Salmon Run 2016\n$10 / $36\nFinger Lakes, New York",
+    "source": "Recorded 2026-11-10 public Venable menu snippet; no new site/provider request",
+    "hit": {
+      "wineryName": "Salmon Run",
+      "wineName": "Riesling",
+      "year": 2016,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Il Conti alias",
+    "input": "Pinot grigio, il conti 2017\n$7 / $24\nVeneto, Italy",
+    "source": "Recorded 2026-11-10 public Venable menu snippet; no new site/provider request; Pinot Gris target is a synthetic alias control",
+    "hit": {
+      "wineryName": "Il Conti",
+      "wineName": "Pinot Gris",
+      "year": 2017,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Hook Ladder wrong year",
+    "input": "Chardonnay, Hook & Ladder 2015\n$11 / $44\nRussian River Valley, California",
+    "source": "Recorded 2026-11-10 public Venable menu snippet; no new site/provider request",
+    "hit": {
+      "wineryName": "Hook & Ladder",
+      "wineName": "Chardonnay",
+      "year": 2023,
+      "vintageText": null
+    },
+    "vintageComparison": "conflict",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Split grape prefix",
+    "input": "Syrah / Viognier, Example Estate 2020\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Syrah / Viognier",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Cabernet unresolved fragment",
+    "input": "Example Estate Cabernet / Merlot 2020\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Cabernet Sauvignon / Merlot",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unknown"
+  },
+  {
+    "name": "Cab Sauv abbreviation",
+    "input": "Example Estate Shiraz / Cab Sauv 2020\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Shiraz Cabernet Sauvignon",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Pinot unresolved fragment",
+    "input": "Example Estate Chardonnay / Pinot 2020\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Chardonnay Pinot Noir",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unknown"
+  },
+  {
+    "name": "Generic blend declaration",
+    "input": "Example Estate Syrah Blend 2020\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Syrah Viognier",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unknown"
+  },
+  {
+    "name": "Single-grape contradiction control",
+    "input": "Example Estate Chardonnay 2020\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Chardonnay Riesling",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": true,
+    "grapeComparison": "conflict"
+  },
+  {
+    "name": "Explicit NV",
+    "input": "Example Estate Brut NV\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "conflict",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Explicit N.V.",
+    "input": "Example Estate Brut N.V.\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "conflict",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Explicit [NV]",
+    "input": "Example Estate Brut [NV]\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "conflict",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Explicit (NV)",
+    "input": "Example Estate Brut (NV)\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "conflict",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Explicit N/V",
+    "input": "Example Estate Brut N/V\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "conflict",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Explicit non-vintage",
+    "input": "Example Estate Brut non-vintage\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "conflict",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Missing marker stays unknown",
+    "input": "Example Estate Brut\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "unconstrained",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Unknown hit for NV",
+    "input": "NV Example Estate Brut\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": null,
+      "vintageText": null
+    },
+    "vintageComparison": "unknown",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Preloaded NV text",
+    "input": "NV Example Estate Brut\n$40",
+    "source": "synthetic review control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Brut",
+      "year": null,
+      "vintageText": "N.V."
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unconstrained"
+  },
+  {
+    "name": "Unresolved PN fragment",
+    "input": "Example Estate Chardonnay / PN 2020\n$40",
+    "source": "Synthetic abbreviated-blend review control; PN is deliberately unresolved",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Chardonnay Pinot Noir",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unknown"
+  },
+  {
+    "name": "Bare Cabernet is incomplete",
+    "input": "Example Estate Cabernet 2020\n$40",
+    "source": "Synthetic reviewer ordering regression using actual parser output",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Cabernet Sauvignon / Merlot",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unknown"
+  },
+  {
+    "name": "Grape-first partial blend",
+    "input": "Cabernet / Merlot, Example Estate 2020\n$40\nFrance",
+    "source": "Synthetic reviewer ordering regression using actual parser output",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Cabernet Sauvignon / Merlot",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unknown"
+  },
+  {
+    "name": "Producer ampersand Hook & Ladder",
+    "input": "Hook & Ladder Chardonnay 2015\n$40",
+    "source": "Synthetic reviewer producer/list-delimiter control",
+    "hit": {
+      "wineryName": "Hook & Ladder",
+      "wineName": "Chardonnay",
+      "year": 2015,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Producer ampersand Charles & Charles",
+    "input": "Charles & Charles Cabernet Sauvignon 2020\n$40",
+    "source": "Synthetic reviewer producer/list-delimiter control",
+    "hit": {
+      "wineryName": "Charles & Charles",
+      "wineName": "Cabernet Sauvignon",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "compatible"
+  },
+  {
+    "name": "Unresolved leading PN fragment",
+    "input": "Example Estate PN / Chardonnay 2020\n$40",
+    "source": "Synthetic reviewer producer/list-delimiter control",
+    "hit": {
+      "wineryName": "Example Estate",
+      "wineName": "Pinot Noir Chardonnay",
+      "year": 2020,
+      "vintageText": null
+    },
+    "vintageComparison": "exact",
+    "grapeConflict": false,
+    "grapeComparison": "unknown"
+  }
+]

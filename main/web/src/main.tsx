@@ -9,7 +9,7 @@ import "./styles.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
-    <Analytics />
-    <SpeedInsights />
+    {import.meta.env.VITE_ISOLATED !== "true" ? <Analytics /> : null}
+    {import.meta.env.VITE_ISOLATED !== "true" ? <SpeedInsights /> : null}
   </React.StrictMode>,
 );

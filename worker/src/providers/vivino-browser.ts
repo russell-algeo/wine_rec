@@ -1,3 +1,4 @@
+import { ProviderRequestStoppedError, assertProviderAccessAllowed, isProviderChallengeTitle, PROVIDER_CHALLENGE_SCRIPT_PATTERN, type ProviderRequestGuard } from "./provider-access.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -102,6 +103,8 @@ export interface SearchHit {
   imageUrl: string | null;
   vintagePageUrl: string;
   year: number | null;
+  /** Original vintage text, preserving explicit NV independently of a null year. */
+  vintageText?: string | null;
 }
 
 export type VivinoRatingSource = "vintage" | "wine";
@@ -155,6 +158,8 @@ type VivinoVintagePageInformation = {
 type VivinoVintagePageEvaluation = {
   pageInformation: VivinoVintagePageInformation | null;
   imageUrl: string | null;
+  hasAwsWafChallenge?: boolean;
+  title?: string;
 };
 
 function defaultVivinoSearchPageEvaluation(): VivinoSearchPageEvaluation {
@@ -284,7 +289,7 @@ function shouldAbortServerlessRequest(url: string, resourceType: string): boolea
 
 // Keep browser-side evaluators as raw strings so tsx/esbuild helpers like `__name`
 // are not serialized into the page context and crash `page.evaluate(...)`.
-const SEARCH_PAGE_EVALUATION = String.raw`
+export const SEARCH_PAGE_EVALUATION = String.raw`
 (() => {
   const extractBackgroundImageUrl = (value) => {
     if (!value) return null;
@@ -408,6 +413,7 @@ const SEARCH_PAGE_EVALUATION = String.raw`
       imageUrl,
       vintagePageUrl,
       year,
+      vintageText: yearText || wineName,
     });
   }
 
@@ -462,6 +468,8 @@ const SEARCH_PAGE_EVALUATION = String.raw`
               ),
               vintagePageUrl: buildVintagePageUrl(match),
               year: normalizeYear(match && match.vintage && match.vintage.year),
+              vintageText: typeof (match && match.vintage && match.vintage.year) === "string"
+                ? match.vintage.year : null,
             };
           })
           .filter(Boolean);
@@ -476,7 +484,7 @@ const SEARCH_PAGE_EVALUATION = String.raw`
     preloadedHits,
     linkCount: resultLinks.length,
     hasPreloadedState: Boolean(rawPreloadedState),
-    hasAwsWafChallenge: /awswaf|challenge\.js/i.test(document.documentElement.outerHTML),
+    hasAwsWafChallenge: ${PROVIDER_CHALLENGE_SCRIPT_PATTERN}.test(document.documentElement.outerHTML),
     showsZeroWineMessage: /showing\s+0\s+wine/i.test(bodyText),
     title: document.title,
     url: window.location.href,
@@ -497,6 +505,8 @@ const VINTAGE_PAGE_META_EVALUATION = String.raw`
     document.querySelector('[class*="wineLabel-module__picture"] img');
 
   return {
+    hasAwsWafChallenge: ${PROVIDER_CHALLENGE_SCRIPT_PATTERN}.test(document.documentElement.outerHTML),
+    title: document.title,
     pageInformation: state
       ? {
           vintage: state.vintage
@@ -535,7 +545,7 @@ export class VivinoBrowser {
     return VivinoBrowser.instance;
   }
 
-  async search(query: string): Promise<SearchHit[]> {
+  async search(query: string, beforeRequest?: ProviderRequestGuard): Promise<SearchHit[]> {
     const searchUrl = `https://www.vivino.com/search/wines?q=${encodeURIComponent(query)}`;
     try {
       return await this.runBrowserTaskWithRetries(`search ${JSON.stringify(query)}`, async (page) => {
@@ -543,10 +553,12 @@ export class VivinoBrowser {
           evaluation: VivinoSearchPageEvaluation;
           hits: SearchHit[];
         }> => {
-          await page.goto(searchUrl, {
+          await beforeRequest?.();
+          const navigation = await page.goto(searchUrl, {
             waitUntil: "domcontentloaded",
             timeout: 15_000,
           });
+          assertProviderAccessAllowed({ onAccessBlocked: beforeRequest?.onAccessBlocked, status: navigation?.status(), headers: navigation?.headers() });
 
           await page
             .waitForSelector('a[data-testid="vintagePageLink"], a[href*="/w/"]', {
@@ -562,6 +574,7 @@ export class VivinoBrowser {
                   ...(rawEvaluation as Partial<VivinoSearchPageEvaluation>),
                 } as VivinoSearchPageEvaluation)
               : defaultVivinoSearchPageEvaluation();
+          assertProviderAccessAllowed({ onAccessBlocked: beforeRequest?.onAccessBlocked, hasChallenge: evaluation.hasAwsWafChallenge || isProviderChallengeTitle(evaluation.title) });
           const hits = selectVivinoSearchHits(evaluation).map((hit) => ({
             ...hit,
             imageUrl: pickPreferredVivinoImageUrl(hit.imageUrl),
@@ -629,6 +642,7 @@ export class VivinoBrowser {
         return hits;
       });
     } catch (error) {
+      if (error instanceof ProviderRequestStoppedError) throw error;
       if (error instanceof RetryableVivinoBrowserError) {
         if (error.reason.startsWith(VIVINO_ZERO_RESULT_EXPLORE_RETRY_PREFIX)) {
           console.log(
@@ -648,15 +662,17 @@ export class VivinoBrowser {
     }
   }
 
-  async fetchVintagePageMeta(vintagePageUrl: string): Promise<VivinoVintagePageMeta | null> {
+  async fetchVintagePageMeta(vintagePageUrl: string, beforeRequest?: ProviderRequestGuard): Promise<VivinoVintagePageMeta | null> {
     try {
       return await this.runBrowserTaskWithRetries(
         `vintage page fetch ${JSON.stringify(vintagePageUrl)}`,
         async (page) => {
-          await page.goto(vintagePageUrl, {
+          await beforeRequest?.();
+          const navigation = await page.goto(vintagePageUrl, {
             waitUntil: "domcontentloaded",
             timeout: 30_000,
           });
+          assertProviderAccessAllowed({ onAccessBlocked: beforeRequest?.onAccessBlocked, status: navigation?.status(), headers: navigation?.headers() });
 
           const rawEvaluation = await page.evaluate(VINTAGE_PAGE_META_EVALUATION);
           const evaluation =
@@ -664,6 +680,7 @@ export class VivinoBrowser {
               ? (rawEvaluation as VivinoVintagePageEvaluation)
               : { pageInformation: null, imageUrl: null };
 
+          assertProviderAccessAllowed({ onAccessBlocked: beforeRequest?.onAccessBlocked, hasChallenge: evaluation.hasAwsWafChallenge || isProviderChallengeTitle(evaluation.title) });
           const aggregateRating = pickVivinoAggregateRating(evaluation.pageInformation);
           return {
             aggregateRating:
@@ -675,6 +692,7 @@ export class VivinoBrowser {
         },
       );
     } catch (error) {
+      if (error instanceof ProviderRequestStoppedError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       console.log(
         "[vivino-browser] Vintage page fetch failed for %j: %s",
@@ -772,6 +790,7 @@ export class VivinoBrowser {
           page = await this.newPage(browser);
           return await task(page);
         } catch (error) {
+          if (error instanceof ProviderRequestStoppedError) throw error;
           const message = error instanceof Error ? error.message : String(error);
           const recoveryScope = this.classifyRecoverableBrowserError(message, browser, page);
           if (!recoveryScope) {

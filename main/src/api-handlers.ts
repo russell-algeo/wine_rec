@@ -1,5 +1,8 @@
+import { scope, scopedAnalysisId, scopedFlowControlKey, previewDeploymentOrigin } from "./deployment-scope.js";
+import { ProviderAccessBlockedError } from "./providers/provider-access.js";
 import { Client as QStashClient } from "@upstash/qstash";
-import { put, del } from "@vercel/blob";
+import { del } from "@vercel/blob";
+import { isPrivateUploadReference, readPrivateUpload, storeUpload, type StoredUpload } from "./services/upload-storage.js";
 import { z } from "zod";
 
 import {
@@ -28,18 +31,29 @@ import { createId } from "./id.js";
 
 const coordinatorWorkerJobPayloadSchema = z.object({
   mode: z.literal("coordinator").default("coordinator"),
+  deploymentNamespace: z.string().optional(),
   jobId: z.string(),
   sourceType: sourceTypeSchema,
   sourceFilename: z.string(),
   mimeType: z.string().optional(),
   fileBlobUrl: z.string().url().optional(),
+  privateBlobPathname: z.string().optional(),
   fileBase64: z.string().optional(), // kept for backward compat with in-flight messages
   sourceUrl: z.string().url().optional(),
   recognizedText: z.string().optional(),
+}).superRefine((payload, ctx) => {
+  if (payload.privateBlobPathname === undefined) return;
+  const upload = payload.sourceType === "upload-image" || payload.sourceType === "upload-pdf";
+  const mixed = payload.fileBlobUrl !== undefined || payload.fileBase64 !== undefined ||
+    payload.sourceUrl !== undefined || payload.recognizedText !== undefined;
+  if (!upload || mixed || !isPrivateUploadReference(payload.jobId, payload.privateBlobPathname)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid private upload reference", path: ["privateBlobPathname"] });
+  }
 });
 
 const jobWorkerJobPayloadSchema = z.object({
   mode: z.literal("worker"),
+  deploymentNamespace: z.string().optional(),
   jobId: z.string(),
   workerIndex: z.number().int().nonnegative(),
 });
@@ -181,6 +195,7 @@ function buildRouteUrl(baseUrl: string, endpoint: string): string {
 }
 
 function getCoordinatorBaseUrl(): string {
+  if (scope.namespace) return previewDeploymentOrigin(process.env.VERCEL_URL);
   return requireBaseUrl(
     firstDefinedBaseUrl(process.env.VERCEL_URL, process.env.WORKER_URL) ?? undefined,
     "VERCEL_URL or WORKER_URL is not configured",
@@ -188,6 +203,7 @@ function getCoordinatorBaseUrl(): string {
 }
 
 function getChunkWorkerBaseUrl(): string {
+  if (scope.namespace) return previewDeploymentOrigin(scope.role === "worker" ? process.env.VERCEL_URL : process.env.CHUNK_WORKER_BASE_URL);
   return requireBaseUrl(
     firstDefinedBaseUrl(process.env.CHUNK_WORKER_BASE_URL, process.env.WORKER_URL, process.env.VERCEL_URL)
       ?? undefined,
@@ -229,7 +245,7 @@ async function publishWorkerJob(
 ): Promise<{ messageId: string }> {
   const request = {
     url: getJobDestinationUrl(payload.mode),
-    body: payload,
+    body: { ...payload, ...(scope.namespace ? { deploymentNamespace: scope.namespace } : {}) },
     retries: options.retries ?? 0,
     ...(options.retryDelay ? { retryDelay: options.retryDelay } : {}),
     ...(options.delaySeconds && options.delaySeconds > 0
@@ -324,7 +340,7 @@ export async function createUploadAnalysis(input: {
     sourceType: inferSourceType(input.mimeType),
   }).sourceType;
   const mimeType = inferMimeType(input.filename, input.mimeType);
-  const id = createId();
+  const id = scopedAnalysisId(createId());
   const { createJob, updateJob } = await loadJobStore();
   const job = await createJob({
     id,
@@ -332,41 +348,48 @@ export async function createUploadAnalysis(input: {
     sourceFilename: input.filename,
   });
 
-  let fileBlobUrl: string | undefined;
+  let storedUpload: StoredUpload;
   try {
-    const blob = await put(`uploads/${id}`, input.buffer, {
-      access: "public",
-      contentType: mimeType,
-    });
-    fileBlobUrl = blob.url;
+    storedUpload = await storeUpload(id, input.buffer, mimeType);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to store upload";
     await updateJob(id, { status: "failed", queueMessageId: null, errorMessage: message });
     throw error;
   }
 
+  let messageId: string;
   try {
-    const { messageId } = await publishWorkerJob(
+    ({ messageId } = await publishWorkerJob(
       {
         mode: "coordinator",
         jobId: id,
         sourceType,
         sourceFilename: input.filename,
         mimeType,
-        fileBlobUrl,
+        ...storedUpload,
       },
       getCoordinatorPublishOptions(),
-    );
-    await updateJob(id, { queueMessageId: messageId });
+    ));
   } catch (error) {
-    await del(fileBlobUrl).catch(() => undefined);
     const message = error instanceof Error ? error.message : "Failed to enqueue analysis";
+    // A publish error can be ambiguous. Only remove the new source after the
+    // durable job state is terminal, so an accepted or retried delivery stops.
+    // If this write fails, retain the source rather than strand an in-flight job.
     await updateJob(id, {
       status: "failed",
       queueMessageId: null,
       errorMessage: message,
     });
+    await del(storedUpload.privateBlobPathname ?? storedUpload.fileBlobUrl).catch(() => undefined);
     throw error;
+  }
+
+  try {
+    await updateJob(id, { queueMessageId: messageId });
+  } catch {
+    // QStash already accepted the job. Tracking failure must not delete its
+    // input, mark it failed, or tell the caller to submit a duplicate upload.
+    console.warn("[uploads] Queue accepted; message tracking write failed", id);
   }
 
   return toCreateAnalysisResponse(analysisRunSchema.parse(job));
@@ -382,7 +405,7 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
     throw new RequestError(message, 400);
   }
 
-  const id = createId();
+  const id = scopedAnalysisId(createId());
   const sourceType = inferUrlSourceType(url.toString());
   const { createJob, updateJob } = await loadJobStore();
   const job = await createJob({
@@ -425,7 +448,7 @@ export async function createClientOcrAnalysis(input: {
     throw new RequestError("Recognized text is required", 400);
   }
 
-  const id = createId();
+  const id = scopedAnalysisId(createId());
   const { createJob, updateJob } = await loadJobStore();
   const job = await createJob({
     id,
@@ -522,7 +545,11 @@ export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
 }
 
 export function parseWorkerJobPayload(input: unknown): WorkerJobPayload {
-  return workerJobPayloadSchema.parse(input);
+  const payload = workerJobPayloadSchema.parse(input);
+  if ((payload.deploymentNamespace ?? "") !== scope.namespace) {
+    throw new z.ZodError([{ code: "custom", path: ["deploymentNamespace"], message: "Worker namespace does not match deployment" }]);
+  }
+  return payload;
 }
 
 async function assertJobActive(jobId: string, store?: JobStore): Promise<void> {
@@ -558,7 +585,7 @@ function getWorkerFlowControl(jobId: string): {
 } {
   const sanitizedJobId = jobId.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
-    key: `analysis.${sanitizedJobId}.worker`,
+    key: scopedFlowControlKey(`analysis.${sanitizedJobId}.worker`),
     parallelism: MAX_SERVERLESS_CONCURRENT_WORKERS,
   };
 }
@@ -708,7 +735,9 @@ async function extractAndPersistJobState(
   } else {
     let fileBuffer: Buffer | undefined;
 
-    if (payload.fileBlobUrl) {
+    if (payload.privateBlobPathname !== undefined) {
+      fileBuffer = await readPrivateUpload(payload.jobId, payload.privateBlobPathname);
+    } else if (payload.fileBlobUrl) {
       const response = await fetch(payload.fileBlobUrl);
       if (!response.ok) {
         throw new Error(`Failed to fetch upload from blob storage: ${response.status}`);
@@ -964,6 +993,48 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
   await syncJobFromCandidateWork(store, payload.jobId);
 }
 
+async function stopJobForProviderBlock(jobId: string, store: JobStore, error: ProviderAccessBlockedError): Promise<void> {
+  // Persist terminal state before asynchronous cleanup. Atomic store guards
+  // prevent late workers, completions, or redeliveries from reviving this job.
+  let persisted = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await store.updateJob(jobId, { status: "failed", queueMessageId: null, errorMessage: error.message });
+      persisted = true;
+      break;
+    } catch {
+      // Retry only this idempotent Redis write, never provider work. An uncertain
+      // first write is safe: subsequent writes preserve any terminal job state.
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+    }
+  }
+  if (!persisted) {
+    // ACK this delivery rather than cause QStash to recreate provider work. This
+    // is NOT a durable/global stop: other invocations may still reclaim leases.
+    // Operator recovery is required; do not automatically restart provider work.
+    console.error("[provider-access] Job stop unconfirmed after 3 persistence attempts; operator recovery required", jobId);
+    return;
+  }
+  try {
+    const job = await store.getJobState(jobId);
+    if (!job || job.status !== "failed") return; // Preserve a prior cancel/complete.
+    await store.clearJobCandidateQueue(jobId);
+    const workers = await store.listJobWorkers(jobId, job.workerCount);
+    const candidates = await store.listJobCandidateWork(jobId, job.candidates);
+    await Promise.all(workers.filter(worker => !["completed", "canceled"].includes(worker.status)).map(worker =>
+      store.updateJobWorker(jobId, worker.index, { status: "failed", queueMessageId: null, errorMessage: error.message })));
+    await Promise.all(candidates.filter(candidate => !["completed", "canceled"].includes(candidate.status)).map(candidate =>
+      store.updateJobCandidateWork(jobId, candidate.candidateId, {
+        status: "failed", leaseOwner: null, leaseExpiresAt: null, errorMessage: error.message,
+      })));
+    await Promise.all(workers.map(worker => deleteQueuedMessage(worker.queueMessageId)));
+  } catch {
+    // The terminal state is already durable. Cleanup failure must not turn the
+    // acknowledged provider block into another queue retry/provider attempt.
+    console.warn("[provider-access] Terminal job cleanup incomplete", jobId);
+  }
+}
+
 export async function processWorkerJob(input: unknown): Promise<void> {
   const payload = parseWorkerJobPayload(input);
   const store = await loadJobStore();
@@ -986,6 +1057,10 @@ export async function processWorkerJob(input: unknown): Promise<void> {
   } catch (error) {
     if (error instanceof JobInactiveError) {
       return;
+    }
+    if (error instanceof ProviderAccessBlockedError) {
+      await stopJobForProviderBlock(payload.jobId, store, error);
+      return; // ACK this delivery. Access denial must not become a QStash retry.
     }
 
     if (payload.mode === "worker") {
@@ -1020,14 +1095,14 @@ export async function processWorkerFailure(sourceBody: string): Promise<void> {
   let payload: WorkerJobPayload;
   try {
     const decoded = JSON.parse(Buffer.from(sourceBody, "base64").toString("utf8"));
-    payload = workerJobPayloadSchema.parse(decoded);
+    payload = parseWorkerJobPayload(decoded);
   } catch {
     return;
   }
 
   const store = await loadJobStore();
   const job = await store.getJobState(payload.jobId);
-  if (!job || job.status === "canceled" || job.status === "completed") {
+  if (!job || job.status === "canceled" || job.status === "completed" || job.status === "failed") {
     return;
   }
 

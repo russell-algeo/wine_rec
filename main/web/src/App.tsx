@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { SnapController } from './snap-controller';
 import { SnapNav } from './SnapNav';
+import { recommendationEvidence, recommendationDisplay } from './recommendation-evidence';
+import { compareRecommendationFit, hasComparableFit, hasComparableTaste } from '@wine-rec/contracts';
 
 import type {
   AnalysisRun,
@@ -73,6 +75,7 @@ function preferencesEqual(left: UserTastePreference, right: UserTastePreference)
 }
 
 function scoreRecommendation(preference: UserTastePreference, taste: TasteVector): number {
+  if (!hasComparableTaste(taste)) return 0;
   const weightedDistance =
     Math.abs(preference.body - taste.body) * preference.weights.body +
     Math.abs(preference.acidity - taste.acidity) * preference.weights.acidity +
@@ -290,11 +293,7 @@ function sortRecommendations(
   sortOrder: ResultSortOrder,
 ): AnalysisRun["recommendations"] {
   if (sortOrder === "recommended") {
-    return [...recommendations].sort((a, b) =>
-      b.fitScore !== a.fitScore
-        ? b.fitScore - a.fitScore
-        : b.matchConfidence - a.matchConfidence,
-    );
+    return [...recommendations].sort(compareRecommendationFit);
   }
 
   const discoveredOrder = new Map(
@@ -373,9 +372,9 @@ export function App() {
     ? [...analysis.recommendations]
         .map((rec) => ({
           ...rec,
-          fitScore: rec.profile ? scoreRecommendation(preferences, rec.profile.taste) : rec.fitScore,
+          fitScore: rec.profile && hasComparableFit(rec) ? scoreRecommendation(preferences, rec.profile.taste) : 0,
         }))
-        .sort((a, b) => b.fitScore !== a.fitScore ? b.fitScore - a.fitScore : b.matchConfidence - a.matchConfidence)
+        .sort(compareRecommendationFit)
     : analysis?.recommendations ?? [];
   const sortedRecommendations = analysis
     ? sortRecommendations(baseRecommendations, analysis.candidates, resultSortOrder)
@@ -852,6 +851,9 @@ export function App() {
       ) : null}
 
       <main className="page">
+        {import.meta.env.VITE_ISOLATED === "true" ? (
+          <p role="status" className="wine-uncertainty">Local test mode. Bundled OCR and estimated taste only; no Vivino lookup or hosted storage. Results clear on API restart.</p>
+        ) : null}
         {/* ── Hero ── */}
         <section className="hero-card">
           <h1>WINE REC</h1>
@@ -892,11 +894,11 @@ export function App() {
 
                 {urlPreview && (
                   <div className="url-preview-card">
-                    <img
+                    {import.meta.env.VITE_ISOLATED !== "true" ? <img
                       alt={`${urlPreview.domain} favicon`}
                       className="url-preview-favicon"
                       src={`https://www.google.com/s2/favicons?domain=${urlPreview.domain}&sz=32`}
-                    />
+                    /> : null}
                     <div className="url-preview-meta">
                       <span className="url-preview-title">{urlPreview.title ?? urlPreview.domain}</span>
                       <span className="url-preview-domain">{urlPreview.domain}</span>
@@ -1692,21 +1694,16 @@ function MatchedResultCard(props: {
     }
   }, [showTastingNotes]);
   const isInferred = isInferredRecommendation(recommendation);
-  const menuTitle = candidate?.rawText ?? recommendation.profile?.displayName ?? "Unmatched wine";
+  const evidence = recommendationEvidence(recommendation);
+  const display = recommendationDisplay(candidate, recommendation);
+  const menuTitle = display.title;
   const menuContext = formatMenuContext(candidate?.menuTab, candidate?.menuSection);
-  const matchedTitle =
-    recommendation.profile?.displayName && recommendation.profile.displayName !== menuTitle
-      ? recommendation.profile.displayName
-      : null;
+  const matchedTitle = display.matchedTitle;
   const imageUrl = recommendation.profile?.imageUrl ?? null;
   const imageLabel = recommendation.profile?.displayName ?? menuTitle;
   const detailSummary = isInferred
-    ? `Estimated from menu data${
-        recommendation.profile?.taste.confidence != null
-          ? ` · profile confidence ${Math.round(recommendation.profile.taste.confidence * 100)}%`
-          : ""
-      }`
-    : `${recommendation.profile?.provenanceLabel ?? "Unavailable"} · match ${Math.round(recommendation.matchConfidence * 100)}%`;
+    ? "Style estimate, not a verified bottle profile."
+    : `${recommendation.profile?.provenanceLabel ?? "Unavailable"} · identity score ${Math.round(recommendation.matchConfidence * 100)}/100 (not a probability)`;
   const rating = recommendation.profile?.rating ?? null;
   const ratingCount = recommendation.profile?.ratingCount ?? null;
   const ratingSource = recommendation.profile?.ratingSource ?? null;
@@ -1755,8 +1752,11 @@ function MatchedResultCard(props: {
             <div className="wine-name-block">
               {menuContext ? <p className="menu-context">{menuContext}</p> : null}
               <h3 className="wine-title">{menuTitle}</h3>
+              {display.menuDetails ? <p className="wine-subtitle">{display.menuDetails}</p> : null}
             </div>
-            {matchedTitle ? <p className="wine-subtitle">Matched to {matchedTitle}</p> : null}
+            {matchedTitle ? <p className="wine-subtitle">{recommendation.status === "matched" ? "Matched to" : "Possible match:"} {matchedTitle}</p> : null}
+            <p className="wine-uncertainty">{evidence.identityLabel} · {evidence.tasteLabel}</p>
+            <p className="wine-subtitle">{detailSummary}</p>
             {isInferred ? (
               <p className="wine-uncertainty">
                 No reliable Vivino match was found, so this taste profile is inferred from the
@@ -1776,8 +1776,8 @@ function MatchedResultCard(props: {
               {candidate?.price ?? "Price unavailable"}
             </p>
             <div className="score-badge">
-              <span>Fit</span>
-              <strong>{recommendation.fitScore}</strong>
+              <span>{evidence.fitLabel}</span>
+              <strong aria-label={evidence.canShowFit ? undefined : "Fit unavailable"}>{evidence.canShowFit ? recommendation.fitScore : "—"}</strong>
             </div>
           </div>
         </div>
@@ -1795,7 +1795,7 @@ function MatchedResultCard(props: {
               dimension={dimension}
               key={dimension}
               tone={isInferred ? "uncertain" : "default"}
-              value={recommendation.profile?.taste[dimension] ?? null}
+              value={evidence.isDimensionAvailable(dimension) ? recommendation.profile?.taste[dimension] ?? null : null}
             />
           ))}
         </div>

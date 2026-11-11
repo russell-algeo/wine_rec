@@ -7,8 +7,10 @@
     "web"
   ],
   "scripts": {
-    "dev:api": "node --import tsx src/server.ts",
-    "dev:api:watch": "tsx watch src/server.ts",
+    "dev:api": "npm run build:packages && TSX_TSCONFIG_PATH=tsconfig.runtime.json node --import tsx src/server.ts",
+    "dev:api:watch": "npm run build:packages && TSX_TSCONFIG_PATH=tsconfig.runtime.json tsx watch src/server.ts",
+    "dev:isolated": "npm run build:packages && node scripts/dev-isolated.mjs",
+    "dev:isolated:web": "VITE_ISOLATED=true VITE_API_BASE_URL=http://127.0.0.1:3001 npm run dev --workspace @wine-rec/web -- --host 127.0.0.1",
     "dev:web": "npm run dev --workspace @wine-rec/web",
     "build:packages": "npm run build --workspace @wine-rec/contracts && npm run build --workspace @wine-rec/core",
     "build:web": "npm run build --workspace @wine-rec/web",

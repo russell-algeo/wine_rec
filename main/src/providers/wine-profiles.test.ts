@@ -56,6 +56,31 @@ afterEach(() => {
 });
 
 describe("wine profile providers", () => {
+  it.each([
+    { structure: {}, count: 0, mode: "mapped", confidence: 0 },
+    { structure: { intensity: 4 }, count: 1, mode: "mapped", confidence: 0.225 },
+    { structure: { intensity: 4, acidity: 3, tannin: 4, sweetness: 1 }, count: 4, mode: "direct", confidence: 0.9 },
+  ])("reports $count measured taste dimensions honestly", async ({ structure, count, mode, confidence }) => {
+    const browser = VivinoBrowser.getInstance();
+    vi.spyOn(browser, "search").mockResolvedValue([{
+      wineId: 9007803, wineryName: "Stefano Occhetti", wineName: "Langhe Nebbiolo",
+      regionAndCountry: "Langhe, Italy", rating: 4.2, retailPrice: null,
+      imageUrl: "https://example.com/bottle.jpg", vintagePageUrl: "https://www.vivino.com/en/stefano-occhetti-langhe-nebbiolo/w/9007803", year: null,
+    }]);
+    vi.spyOn(browser, "fetchVintagePageMeta").mockResolvedValue({
+      aggregateRating: { rating: 4.2, ratingCount: 383, ratingSource: "wine" },
+      imageUrl: "https://example.com/bottle.jpg",
+    });
+    vi.stubGlobal("fetch", vi.fn(async input => new Response(JSON.stringify(
+      String(input).endsWith("/tastes") ? { tastes: { structure } } : {},
+    ), { headers: { "Content-Type": "application/json" } })));
+    const result = await getVivinoProvider().lookup(buildVivinoCandidate());
+    expect(result?.profile.taste.observedDimensions).toHaveLength(count);
+    expect(result?.profile.taste.sourceMode).toBe(mode);
+    expect(result?.profile.taste.confidence).toBe(confidence);
+    expect(result?.profile.provenanceLabel).toBe(count === 4 ? "Direct" : count ? "Partial taste data (1/4)" : "Taste data unavailable");
+  });
+
   it("registers only the active provider chain", () => {
     const providers = createWineProfileProviders();
 

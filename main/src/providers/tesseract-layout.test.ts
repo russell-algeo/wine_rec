@@ -45,6 +45,15 @@ function buildSyntheticTsv(words: Array<{
 }
 
 describe("tesseract layout normalization", () => {
+  it("accepts headerless JS-engine TSV without dropping its first word", () => {
+    const tsv = buildSyntheticTsv([
+      {line:1,word:1,left:10,top:10,width:50,text:"Maison"},
+      {line:1,word:2,left:70,top:10,width:50,text:"Rouge"},
+      {line:1,word:3,left:160,top:10,width:20,text:"25"},
+    ]);
+    expect(buildLayoutAwareTextFromTsv(tsv.split("\n").slice(1).join("\n"))).toBe(buildLayoutAwareTextFromTsv(tsv));
+  });
+
   it("reconstructs single bare-number price columns into menu blocks", () => {
     const tsv = buildSyntheticTsv([
       { line: 1, word: 1, left: 12, top: 12, width: 54, text: "karatta" },

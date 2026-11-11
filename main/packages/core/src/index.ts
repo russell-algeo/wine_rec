@@ -4,6 +4,7 @@ import type {
   WineCandidate,
   WineProfile,
 } from "@wine-rec/contracts";
+import { hasComparableTaste } from "@wine-rec/contracts";
 
 type MatchParts = Pick<
   WineCandidate,
@@ -464,24 +465,25 @@ export function inferTasteVector(candidate: Partial<WineCandidate>, profile?: Pa
   const region = normalizeField(candidate.region ?? profile?.region);
   const notes = normalizeField(candidate.notes);
 
-  let key = "default_white";
-  if (varietal.includes("sauvignon")) key = "sauvignon_blanc";
+  let key = "default_unknown";
+  if (varietal.includes("cabernet")) key = "cabernet_sauvignon";
+  else if (varietal.includes("sauvignon")) key = "sauvignon_blanc";
   else if (varietal.includes("riesling")) key = "riesling_dry";
   else if (varietal.includes("chardonnay")) key = "chardonnay";
   else if (varietal.includes("pinot noir")) key = "pinot_noir";
-  else if (varietal.includes("cabernet")) key = "cabernet_sauvignon";
   else if (varietal.includes("syrah") || varietal.includes("shiraz")) key = "syrah";
   else if (label.includes("champagne") || region.includes("champagne")) key = "champagne";
   else if (label.includes("prosecco") || region.includes("prosecco")) key = "prosecco";
   else if (label.includes("rose") || color.includes("rose")) key = "rose_dry";
   else if (color.includes("red")) key = "default_red";
   else if (color.includes("sparkling")) key = "default_sparkling";
+  else if (color.includes("white")) key = "default_white";
 
   const inferred = styleRubric[key] ?? {
-    body: 2,
-    acidity: 4,
-    tannin: 1,
-    sweetness: 1,
+    body: 3,
+    acidity: 3,
+    tannin: 3,
+    sweetness: 3,
   };
 
   let body = inferred.body;
@@ -520,7 +522,7 @@ export function inferTasteVector(candidate: Partial<WineCandidate>, profile?: Pa
     acidity: clampTaste(acidity),
     tannin: clampTaste(tannin),
     sweetness: clampTaste(sweetness),
-    confidence: 0.45,
+    confidence: key === "default_unknown" ? 0 : 0.45,
     sourceMode: "inferred",
   };
 }
@@ -530,13 +532,18 @@ export function mapExternalTasteVector(
   sourceMode: TasteVector["sourceMode"],
   confidence: number,
 ): TasteVector {
+  const dimensions = ["body", "acidity", "tannin", "sweetness"] as const;
+  const observedDimensions = dimensions.filter(dimension => Number.isFinite(input[dimension]));
+  const value = (dimension: typeof dimensions[number]) => observedDimensions.includes(dimension)
+    ? normalizeTasteValue(input[dimension]!) : 3;
   return {
-    body: normalizeTasteValue(input.body ?? 3),
-    acidity: normalizeTasteValue(input.acidity ?? 3),
-    tannin: normalizeTasteValue(input.tannin ?? 3),
-    sweetness: normalizeTasteValue(input.sweetness ?? 3),
-    sourceMode,
-    confidence,
+    body: value("body"),
+    acidity: value("acidity"),
+    tannin: value("tannin"),
+    sweetness: value("sweetness"),
+    sourceMode: observedDimensions.length === 4 ? sourceMode : "mapped",
+    confidence: confidence * observedDimensions.length / 4,
+    observedDimensions,
   };
 }
 
@@ -544,6 +551,7 @@ export function scoreRecommendation(
   preference: UserTastePreference,
   taste: TasteVector,
 ): number {
+  if (!hasComparableTaste(taste)) return 0;
   const weightedDistance =
     Math.abs(preference.body - taste.body) * preference.weights.body +
     Math.abs(preference.acidity - taste.acidity) * preference.weights.acidity +

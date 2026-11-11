@@ -237,7 +237,8 @@ export function buildLayoutAwareTextFromTsv(tsv: string): string {
 }
 
 function groupLinesFromTsv(tsv: string): LayoutLine[] {
-  const rows = tsv.split(/\r?\n/).slice(1);
+  // CLI TSV has a header; the JS engine returns headerless rows.
+  const rows = tsv.split(/\r?\n/);
   const wordBuckets = new Map<string, TesseractWord[]>();
 
   for (const row of rows) {

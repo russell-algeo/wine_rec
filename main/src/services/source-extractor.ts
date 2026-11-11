@@ -44,7 +44,7 @@ export async function extractSourceText(input: {
   );
 }
 
-export async function extractCandidatesFromUrl(sourceUrl: string): Promise<WineCandidate[]> {
+export async function extractCandidatesFromUrl(sourceUrl: string, options: { browserFallback?: boolean } = {}): Promise<WineCandidate[]> {
   const { url: resolvedUrl, html } = await fetchHtmlDocument(new URL(sourceUrl));
   let candidates = extractMenuCandidates(html);
 
@@ -67,7 +67,7 @@ export async function extractCandidatesFromUrl(sourceUrl: string): Promise<WineC
     return candidates;
   }
 
-  if (candidates.length > 0) {
+  if (candidates.length > 0 || options.browserFallback === false) {
     return candidates;
   }
 

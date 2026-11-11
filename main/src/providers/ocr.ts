@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFile, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { Worker as TesseractWorker } from "tesseract.js";
+import { TesseractWorkerPool } from "./tesseract-worker-pool.js";
 
 import { appConfig } from "../config.js";
 import { parseWineCandidates } from "../services/parser.js";
@@ -134,7 +134,10 @@ function scoreExtractedTextQuality(text: string): number {
   const confidenceSum = candidates.reduce((sum, candidate) => sum + candidate.extractionConfidence, 0);
   const noisePenalty = lines.filter((line) => lineLooksLikeNoise(line)).length * 0.18;
   const priceSignals = countLikelyPriceSignals(trimmed) * 0.2;
-  return confidenceSum + candidates.length * 0.35 + priceSignals - noisePenalty;
+  // A small tie-break favors observed section context; losing a priced wine
+  // remains much more costly than losing a heading.
+  const sectionCoverage = (candidates.filter((candidate) => candidate.menuSection).length / Math.max(1, candidates.length)) * 0.01;
+  return confidenceSum + candidates.length * 0.35 + priceSignals + sectionCoverage - noisePenalty;
 }
 
 async function buildImageVariants(input: {
@@ -294,28 +297,21 @@ class TesseractOcrProvider implements OcrProvider {
   }
 }
 
-// Worker pool — one worker per variant slot, persists across warm invocations.
-// Initialization costs ~1–3 s per worker (WASM load + language model); paid at most once per container.
-// Workers run independently so all variants can be recognized in parallel.
-const TESSERACT_WORKER_POOL_SIZE = 4;
-let _workerPoolPromise: Promise<TesseractWorker[]> | null = null;
-
-async function getTesseractJsWorkerPool(): Promise<TesseractWorker[]> {
-  if (!_workerPoolPromise) {
-    const { createWorker } = await import("tesseract.js");
-    const workerConfig = resolveTesseractJsWorkerConfig();
-
-    const initStart = Date.now();
-    console.log(`[ocr] initializing ${TESSERACT_WORKER_POOL_SIZE} workers`);
-    _workerPoolPromise = Promise.all(
-      Array.from({ length: TESSERACT_WORKER_POOL_SIZE }, () => createWorker("eng", 1, workerConfig)),
-    ).then((workers) => {
-      console.log(`[ocr] worker pool ready in ${Date.now() - initStart}ms`);
-      return workers;
-    });
+// Shared workers are leased through per-worker queues, including concurrent scans.
+const tesseractPool = new TesseractWorkerPool(async () => {
+  const { createWorker, PSM } = await import("tesseract.js");
+  const worker = await createWorker("eng", 1, resolveTesseractJsWorkerConfig());
+  try {
+    await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
+    return worker;
+  } catch (error) {
+    await worker.terminate().catch(() => undefined);
+    throw error;
   }
+}, 4);
 
-  return _workerPoolPromise;
+export async function shutdownTesseractJsWorkers(): Promise<void> {
+  await tesseractPool.close();
 }
 
 class TesseractJsOcrProvider implements OcrProvider {
@@ -351,21 +347,12 @@ class TesseractJsOcrProvider implements OcrProvider {
 
     const variantsToProcess = variants;
 
-    const t2 = Date.now();
-    const pool = await getTesseractJsWorkerPool();
-    console.log(`[ocr] worker pool acquired in ${Date.now() - t2}ms`);
-
-    const t3 = Date.now();
     const textResults = await Promise.all(
-      variantsToProcess.map(async (variant, index) => {
-        const tw = Date.now();
-        const worker = pool[index % pool.length]!;
-        const { data } = await worker.recognize(variant.buffer, {}, { tsv: true });
-        console.log(`[ocr] variant ${index} (${variant.label}) recognized in ${Date.now() - tw}ms`);
-        return buildLayoutAwareTextFromTsv(data.tsv ?? "").trim();
+      variantsToProcess.map(async (variant) => {
+        const tsv = await tesseractPool.recognize(variant.buffer);
+        return buildLayoutAwareTextFromTsv(tsv).trim();
       }),
     );
-    console.log(`[ocr] all variants recognized in ${Date.now() - t3}ms`);
 
     let best: { score: number; text: string } | null = null;
     for (const text of textResults) {

@@ -1,3 +1,4 @@
+import { ProviderAccessBlockedError } from "../providers/provider-access.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { UserTastePreference, WineCandidate, WineProfile } from "@wine-rec/contracts";
@@ -45,7 +46,7 @@ vi.mock("./repository.js", () => ({
 }));
 
 import { RetryableWineProfileLookupError } from "../providers/wine-profiles.js";
-import { AnalysisCanceledError, AnalysisRetryableError, runAnalysisPipeline } from "./pipeline.js";
+import { AnalysisCanceledError, AnalysisRetryableError, runAnalysisPipeline, runCandidateAnalysis } from "./pipeline.js";
 
 const defaultPreferences: UserTastePreference = {
   body: 3,
@@ -99,6 +100,22 @@ describe("analysis pipeline progress hooks", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("does not assign or rank fits from incomplete or uncertain bottle data", async () => {
+    const completeProfile = buildProfile({ taste: { ...buildProfile().taste, observedDimensions: ["body", "acidity", "tannin", "sweetness"] } });
+    createWineProfileProvidersMock.mockReturnValue([{ name: "test", isEnabled: true,
+      lookup: vi.fn(async (candidate: WineCandidate) => ({
+        profile: candidate.id === "legacy" ? buildProfile() : completeProfile,
+        matchScore: candidate.id === "uncertain" ? 0.7 : 0.99,
+      })),
+    }]);
+    extractSourceTextMock.mockResolvedValue("fixture");
+    parseWineCandidatesMock.mockReturnValue(["legacy", "uncertain", "verified"].map(id => ({ id })));
+    const result = await runAnalysisPipeline({ sourceType: "upload-image", filename: "menu.png", mimeType: "image/png", storagePath: "fixture" });
+    expect(result.recommendations[0]?.candidateId).toBe("verified");
+    expect(result.recommendations.find(rec => rec.candidateId === "legacy")?.fitScore).toBe(0);
+    expect(result.recommendations.find(rec => rec.candidateId === "uncertain")?.fitScore).toBe(0);
   });
 
   it("reports parsed candidates once and recommendation progress after each wine", async () => {
@@ -474,5 +491,30 @@ describe("analysis pipeline progress hooks", () => {
         },
       ),
     ).rejects.toBeInstanceOf(AnalysisRetryableError);
+  });
+});
+
+
+describe("terminal provider access in the pipeline", () => {
+  beforeEach(() => vi.clearAllMocks());
+  it("propagates a block unchanged without fallback, later candidates, or progress", async () => {
+    const blocked = new ProviderAccessBlockedError();
+    const primary = vi.fn(async () => { throw blocked; }); const fallback = vi.fn(); const progress = vi.fn();
+    createWineProfileProvidersMock.mockReturnValue([{ name: "vivino-direct", isEnabled: true, lookup: primary }, { name: "rule-based", isEnabled: true, lookup: fallback }]);
+    const candidates = ["first", "second"].map(id => ({ id } as WineCandidate));
+    await expect(runCandidateAnalysis({ candidates }, { onCandidateProcessed: progress }, { candidateConcurrency: 1 })).rejects.toBe(blocked);
+    expect(primary).toHaveBeenCalledTimes(1); expect(fallback).not.toHaveBeenCalled(); expect(progress).not.toHaveBeenCalled();
+  });
+  it("stops an already-waiting concurrent candidate before its next provider request", async () => {
+    const blocked = new ProviderAccessBlockedError(); let release!: () => void;
+    const wait = new Promise<void>(resolve => { release = resolve; }); const actualRequest = vi.fn();
+    const primary = vi.fn(async (candidate: WineCandidate, context: { beforeRequest: () => Promise<void> }) => {
+      if (candidate.id === "first") { queueMicrotask(release); throw blocked; }
+      await wait; await new Promise(resolve => setTimeout(resolve, 0));
+      await context.beforeRequest(); actualRequest(); return null;
+    });
+    createWineProfileProvidersMock.mockReturnValue([{ name: "vivino-direct", isEnabled: true, lookup: primary }]);
+    await expect(runCandidateAnalysis({ candidates: ["first", "second", "third"].map(id => ({ id } as WineCandidate)) }, {}, { candidateConcurrency: 2 })).rejects.toBe(blocked);
+    expect(actualRequest).not.toHaveBeenCalled(); expect(primary).toHaveBeenCalledTimes(2);
   });
 });
