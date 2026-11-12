@@ -16,6 +16,12 @@ type LayoutLine = {
 };
 
 const pricePattern = /^\$?\d{1,3}(?:\.\d{2})?$/;
+// Preservation only, not price recognition: anomalous boxes can still contain
+// real amounts with currency, column separators or footnote annotations.
+// Keep punctuation-formatted amounts (including a terminal period) and all
+// Unicode currency symbols even when the parser does not recognize the format.
+// Quotes/underscores remain excluded so the observed page-edge blobs still trim.
+const possibleAmountSuffixPattern = /^(?=.*\p{N})[\p{N}\p{Sc}\/|*†‡§¶#().,+−–—-]+$/u;
 const ignoredWords = new Set(["sold", "out", "seal"]);
 const inlineMenuPricePattern =
   /(?:NA|\$?\d+(?:\.\d{2})?)(?:\s*\/\s*(?:NA|\$?\d+(?:\.\d{2})?)){1,2}\s*$/i;
@@ -38,7 +44,29 @@ function isLikelyPriceWord(text: string): boolean {
 }
 
 function lineText(words: TesseractWord[]): string {
-  return words.map((word) => word.text).join(" ").trim();
+  return trimDetachedPriceArtifacts(words).map((word) => word.text).join(" ").trim();
+}
+
+// A photographed page edge can become a detached punctuation blob on the same
+// TSV line as a valid price. Keep real words, possible second amounts and nearby
+// annotations intact; only trim geometrically detached, non-price artifacts.
+function trimDetachedPriceArtifacts(words: TesseractWord[]): TesseractWord[] {
+  if (words.length < 4) return words;
+  const artifact = words.at(-1)!;
+  const price = words.at(-2)!;
+  // Even an out-of-range or annotated amount may be a real second price.
+  if (!isLikelyPriceWord(price.text) || /\p{L}/u.test(artifact.text) ||
+      possibleAmountSuffixPattern.test(artifact.text) ||
+      /^[\/|*†‡§¶#\p{Sc}]+$/u.test(artifact.text)) return words;
+  const titleWords = words.slice(0, -2).filter((word) => /\p{L}/u.test(word.text));
+  if (titleWords.length < 2) return words;
+  const gap = artifact.left - (price.left + price.width);
+  if (gap <= 2 * price.height) return words;
+  const digits = artifact.text.match(/\p{N}/gu) ?? [];
+  // Digit-bearing blobs need an additional size anomaly. Never repair or
+  // guess a digit inside the actual price token or discard another amount.
+  if (digits.length > 1 || (digits.length === 1 && artifact.height <= price.height * 2)) return words;
+  return words.slice(0, -1);
 }
 
 function wordCenter(word: TesseractWord): number {

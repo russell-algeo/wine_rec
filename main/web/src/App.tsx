@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { SnapController } from './snap-controller';
 import { SnapNav } from './SnapNav';
+import { createEagerUpload, type EagerUpload } from './eager-upload';
 import { recommendationEvidence, recommendationDisplay } from './recommendation-evidence';
 import { compareRecommendationFit, hasComparableFit, hasComparableTaste } from '@wine-rec/contracts';
 
@@ -365,8 +366,8 @@ export function App() {
     }
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const eagerUploadRef = useRef<Promise<CreateAnalysisResponse> | null>(null);
-  const eagerAnalysisIdRef = useRef<string | null>(null);
+  const eagerUploadRef = useRef<EagerUpload<CreateAnalysisResponse> | null>(null);
+  useEffect(() => () => { eagerUploadRef.current?.cancel(); }, []);
   const isLiveReranking = Boolean(analysis && !preferencesEqual(preferences, loadedPreferences));
   const baseRecommendations = isLiveReranking && analysis
     ? [...analysis.recommendations]
@@ -550,7 +551,7 @@ export function App() {
   // an eager upload was already started for it. The user will need to
   // click Next again to start a fresh one.
   useEffect(() => {
-    if (eagerAnalysisIdRef.current || eagerUploadRef.current) {
+    if (eagerUploadRef.current?.kind === "url") {
       cancelEagerAnalysis();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -571,8 +572,9 @@ export function App() {
     prepareAnalysis(confirmedPrefs);
 
     // Use the in-flight eager promise if available; otherwise start fresh (same as before)
-    let uploadPromise = eagerUploadRef.current;
-    if (!uploadPromise) {
+    let upload = eagerUploadRef.current;
+    if (!upload) {
+      let uploadPromise: Promise<CreateAnalysisResponse> | null = null;
       if (selectedFile) {
         const formData = new FormData();
         formData.set("file", selectedFile);
@@ -587,18 +589,21 @@ export function App() {
           body: JSON.stringify({ url: pendingUrl }),
         });
       }
+      if (uploadPromise) {
+        upload = trackEagerUpload(uploadPromise, selectedFile ? "file" : "url");
+      }
     }
 
-    if (!uploadPromise) return;
+    if (!upload) return;
 
     setBusy(true);
     setError(null);
 
     try {
-      const result = await uploadPromise;
+      const result = await upload.adopt();
+      if (!result) return; // Removed/replaced/unmounted while the upload response was pending.
       if (pendingUrl) setSourceUrl(pendingUrl);
-      eagerUploadRef.current = null;
-      eagerAnalysisIdRef.current = null;
+      if (eagerUploadRef.current === upload) eagerUploadRef.current = null;
       await launchAnalysis(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to start analysis");
@@ -610,6 +615,7 @@ export function App() {
   }
 
   function handleNewAnalysis() {
+    cancelEagerAnalysis();
     setOnboardingStep(1);
     setStepTwoIsConfirmMode(false);
     setError(null);
@@ -635,13 +641,16 @@ export function App() {
   }
 
   function cancelEagerAnalysis() {
-    const id = eagerAnalysisIdRef.current;
+    const upload = eagerUploadRef.current;
     eagerUploadRef.current = null;
-    eagerAnalysisIdRef.current = null;
-    if (id) {
-      // Best-effort, fire-and-forget
-      void getJson(`/api/analyses/${id}/cancel`, { method: "POST" }).catch(() => {});
-    }
+    upload?.cancel();
+  }
+
+  function trackEagerUpload(promise: Promise<CreateAnalysisResponse>, kind: "file" | "url") {
+    const upload = createEagerUpload(promise,
+      (id) => getJson(`/api/analyses/${id}/cancel`, { method: "POST" }), kind);
+    eagerUploadRef.current = upload;
+    return upload;
   }
 
   function prepareAnalysis(prefsToUse?: UserTastePreference) {
@@ -717,12 +726,7 @@ export function App() {
         method: "POST",
         body: formData,
       });
-      eagerUploadRef.current = promise;
-      void promise.then((result) => {
-        if (eagerUploadRef.current === promise) {
-          eagerAnalysisIdRef.current = result.analysisId;
-        }
-      }).catch(() => {});
+      trackEagerUpload(promise, "file");
     } else {
       setFilePreviewUrl(null);
     }
@@ -750,12 +754,7 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: pendingUrl }),
       });
-      eagerUploadRef.current = promise;
-      void promise.then((result) => {
-        if (eagerUploadRef.current === promise) {
-          eagerAnalysisIdRef.current = result.analysisId;
-        }
-      }).catch(() => {});
+      trackEagerUpload(promise, "url");
     }
   }
 
@@ -778,6 +777,7 @@ export function App() {
   }
 
   function resetIngestFlow() {
+    cancelEagerAnalysis();
     if (hasStoredPreferences) {
       const stored = loadPreferences();
       setModalPreferences({ body: stored.body, tannin: stored.tannin, sweetness: stored.sweetness, acidity: stored.acidity });

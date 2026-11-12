@@ -49,4 +49,14 @@ describe("offline fixture robustness controls", () => {
     candidates.forEach((c,i)=>expect(canonicalizeText(c.rawText)).toContain(canonicalizeText(red.names[i]!)));
   },60_000);
 
+  it("preserves photographed menu after bounded downsampling and JPEG compression", async () => {
+    const photo = fixtures[1]!;
+    const bytes = await fs.readFile(await findFixturePath(photo.prefix));
+    const buffer = await sharp(bytes).resize({width:554}).jpeg({quality:80}).toBuffer();
+    const candidates = await extract(buffer);
+    expect(candidates.map(c=>c.price)).toEqual(photo.prices);
+    candidates.forEach((c,i)=>expect(canonicalizeText(c.rawText)).toContain(canonicalizeText(photo.names[i]!)));
+    expect(candidates.map(c=>c.menuSection)).toEqual(["Sparkling","Sparkling",...Array(5).fill("White"),...Array(3).fill("Red"),"Sherry",...Array(3).fill("Sake"),"Sweet","Sweet"]);
+  },60_000);
+
 });
