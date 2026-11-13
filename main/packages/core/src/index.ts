@@ -5,6 +5,7 @@ import type {
   WineProfile,
 } from "@wine-rec/contracts";
 import { hasComparableTaste } from "@wine-rec/contracts";
+import { looksLikeNonWine, STYLE_VECTORS, styleKeyFromText } from "./style-knowledge.js";
 
 type MatchParts = Pick<
   WineCandidate,
@@ -458,28 +459,39 @@ export function normalizeTasteValue(value: number): number {
   return clampTaste(value);
 }
 
-export function inferTasteVector(candidate: Partial<WineCandidate>, profile?: Partial<WineProfile>): TasteVector {
-  const varietal = normalizeField(candidate.varietal ?? profile?.varietal);
-  const label = normalizeField(candidate.label ?? profile?.label);
+/**
+ * Chooses the most specific style evidence available: the parsed varietal,
+ * then the wine's own text (producer/label/region), then continuation notes,
+ * then the menu section heading, then a parsed colour. Returns the key and
+ * whether it came from the wine itself or only from weaker context.
+ */
+export function inferStyleKey(
+  candidate: Partial<WineCandidate>,
+  profile?: Partial<WineProfile>,
+): { key: string; specific: boolean } {
+  const varietal = candidate.varietal ?? profile?.varietal;
+  const own = [candidate.rawText, candidate.label ?? profile?.label, candidate.region ?? profile?.region].filter(Boolean).join(" ");
+  if (looksLikeNonWine(own) && !styleKeyFromText(own)) return { key: "default_unknown", specific: false };
+  const fromOwn = styleKeyFromText(own) ?? styleKeyFromText(varietal);
+  if (fromOwn) return { key: fromOwn, specific: true };
+  const fromNotes = styleKeyFromText(candidate.notes);
+  if (fromNotes) return { key: fromNotes, specific: true };
+  const fromSection = styleKeyFromText([candidate.menuSection, candidate.menuTab].filter(Boolean).join(" "));
+  if (fromSection) return { key: fromSection, specific: false };
   const color = normalizeField(candidate.color);
-  const region = normalizeField(candidate.region ?? profile?.region);
+  if (color.includes("champagne")) return { key: "champagne", specific: false };
+  if (color.includes("rose")) return { key: "rose_dry", specific: false };
+  if (color.includes("sparkling")) return { key: "default_sparkling", specific: false };
+  if (color.includes("orange")) return { key: "orange_wine", specific: false };
+  if (color.includes("red")) return { key: "default_red", specific: false };
+  if (color.includes("white")) return { key: "default_white", specific: false };
+  return { key: "default_unknown", specific: false };
+}
+
+export function inferTasteVector(candidate: Partial<WineCandidate>, profile?: Partial<WineProfile>): TasteVector {
   const notes = normalizeField(candidate.notes);
-
-  let key = "default_unknown";
-  if (varietal.includes("cabernet")) key = "cabernet_sauvignon";
-  else if (varietal.includes("sauvignon")) key = "sauvignon_blanc";
-  else if (varietal.includes("riesling")) key = "riesling_dry";
-  else if (varietal.includes("chardonnay")) key = "chardonnay";
-  else if (varietal.includes("pinot noir")) key = "pinot_noir";
-  else if (varietal.includes("syrah") || varietal.includes("shiraz")) key = "syrah";
-  else if (label.includes("champagne") || region.includes("champagne")) key = "champagne";
-  else if (label.includes("prosecco") || region.includes("prosecco")) key = "prosecco";
-  else if (label.includes("rose") || color.includes("rose")) key = "rose_dry";
-  else if (color.includes("red")) key = "default_red";
-  else if (color.includes("sparkling")) key = "default_sparkling";
-  else if (color.includes("white")) key = "default_white";
-
-  const inferred = styleRubric[key] ?? {
+  const { key, specific } = inferStyleKey(candidate, profile);
+  const inferred = STYLE_VECTORS[key] ?? styleRubric[key] ?? {
     body: 3,
     acidity: 3,
     tannin: 3,
@@ -522,7 +534,7 @@ export function inferTasteVector(candidate: Partial<WineCandidate>, profile?: Pa
     acidity: clampTaste(acidity),
     tannin: clampTaste(tannin),
     sweetness: clampTaste(sweetness),
-    confidence: key === "default_unknown" ? 0 : 0.45,
+    confidence: key === "default_unknown" ? 0 : specific ? 0.45 : 0.35,
     sourceMode: "inferred",
   };
 }
@@ -583,3 +595,5 @@ export function defaultPreference(): UserTastePreference {
     },
   };
 }
+
+export { STYLE_VECTORS, styleKeyFromText } from "./style-knowledge.js";
