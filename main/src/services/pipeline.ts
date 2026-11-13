@@ -10,7 +10,8 @@ import {
   RetryableWineProfileLookupError,
 } from "../providers/wine-profiles.js";
 import { parseWineCandidates } from "./parser.js";
-import { extractCandidatesFromUrl, extractSourceText } from "./source-extractor.js";
+import { extractCandidatesFromUrl, extractSourceTextWithAlternates } from "./source-extractor.js";
+import { annotatePriceConflicts } from "./price-conflicts.js";
 
 type AnalysisPipelineHooks = {
   shouldCancel?: () => Promise<boolean> | boolean;
@@ -256,8 +257,9 @@ export async function runAnalysisPipeline(input: {
   if (input.sourceUrl) {
     candidates = await extractCandidatesFromUrl(input.sourceUrl, options);
   } else {
-    extractedText = await extractSourceText(input);
-    candidates = parseWineCandidates(extractedText);
+    const extracted = await extractSourceTextWithAlternates(input);
+    extractedText = extracted.text;
+    candidates = annotatePriceConflicts(parseWineCandidates(extractedText), extracted.alternates);
   }
 
   await throwIfCanceled(hooks.shouldCancel);

@@ -35,6 +35,7 @@ vi.mock("../providers/wine-profiles.js", () => {
 
 vi.mock("./source-extractor.js", () => ({
   extractSourceText: extractSourceTextMock,
+  extractSourceTextWithAlternates: async (input: unknown) => ({ text: await extractSourceTextMock(input), alternates: [] }),
 }));
 
 vi.mock("./parser.js", () => ({

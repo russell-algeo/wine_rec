@@ -23,6 +23,13 @@ export interface OcrProvider {
     mimeType: string;
     buffer?: Buffer;
   }): Promise<string>;
+  /** Optional: the selected text plus the other OCR passes' texts. */
+  extractTextWithAlternates?(input: {
+    storagePath: string;
+    filename: string;
+    mimeType: string;
+    buffer?: Buffer;
+  }): Promise<{ text: string; alternates: string[] }>;
 }
 
 const execFileAsync = promisify(execFile);
@@ -325,8 +332,17 @@ class TesseractJsOcrProvider implements OcrProvider {
     filename: string;
     mimeType: string;
   }): Promise<string> {
+    return (await this.extractTextWithAlternates(input)).text;
+  }
+
+  async extractTextWithAlternates(input: {
+    buffer?: Buffer;
+    storagePath: string;
+    filename: string;
+    mimeType: string;
+  }): Promise<{ text: string; alternates: string[] }> {
     if (input.filename.toLowerCase().endsWith(".txt")) {
-      return readTextInput(input);
+      return { text: await readTextInput(input), alternates: [] };
     }
 
     if (input.mimeType === "application/pdf") {
@@ -354,16 +370,19 @@ class TesseractJsOcrProvider implements OcrProvider {
       }),
     );
 
-    let best: { score: number; text: string } | null = null;
-    for (const text of textResults) {
+    let best: { score: number; text: string; index: number } | null = null;
+    for (const [index, text] of textResults.entries()) {
       const score = scoreExtractedTextQuality(text);
       if (!best || score > best.score) {
-        best = { score, text };
+        best = { score, text, index };
       }
     }
 
     console.log(`[ocr] total extractText time: ${Date.now() - t0}ms`);
-    return best?.text ?? "";
+    return {
+      text: best?.text ?? "",
+      alternates: textResults.filter((_, index) => index !== best?.index),
+    };
   }
 }
 

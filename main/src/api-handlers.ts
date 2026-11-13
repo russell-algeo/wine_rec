@@ -27,7 +27,8 @@ import {
   runCandidateAnalysis,
 } from "./services/pipeline.js";
 import { parseWineCandidates } from "./services/parser.js";
-import { extractCandidatesFromUrl, extractSourceText } from "./services/source-extractor.js";
+import { extractCandidatesFromUrl, extractSourceTextWithAlternates } from "./services/source-extractor.js";
+import { annotatePriceConflicts } from "./services/price-conflicts.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
 import { createId } from "./id.js";
 
@@ -839,14 +840,15 @@ async function extractAndPersistJobState(
       fileBuffer = Buffer.from(payload.fileBase64, "base64");
     }
 
-    extractedText = await extractSourceText({
+    const extracted = await extractSourceTextWithAlternates({
       sourceType: payload.sourceType,
       filename: payload.sourceFilename,
       mimeType: payload.mimeType ?? "text/uri-list",
       storagePath: "",
       ...(fileBuffer ? { fileBuffer } : {}),
     });
-    candidates = parseWineCandidates(extractedText);
+    extractedText = extracted.text;
+    candidates = annotatePriceConflicts(parseWineCandidates(extractedText), extracted.alternates);
   }
 
   await assertJobActive(payload.jobId, store);

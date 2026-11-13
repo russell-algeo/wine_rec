@@ -74,6 +74,11 @@ export const wineCandidateSchema = z.object({
   region: z.string().nullable(),
   notes: z.string().nullable().optional(),
   extractionConfidence: z.number().min(0).max(1),
+  /**
+   * Different prices another OCR pass read for this exact row. Informational
+   * only: filtering and ranking keep using `price`.
+   */
+  priceAlternatives: z.array(z.string()).optional(),
 });
 
 export const wineMatchSchema = z.object({

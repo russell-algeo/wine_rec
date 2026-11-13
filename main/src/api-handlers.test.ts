@@ -383,6 +383,7 @@ vi.mock("./services/parser.js", () => ({
 vi.mock("./services/source-extractor.js", () => ({
   extractCandidatesFromUrl: extractCandidatesFromUrlMock,
   extractSourceText: extractSourceTextMock,
+  extractSourceTextWithAlternates: async (input: unknown) => ({ text: await extractSourceTextMock(input), alternates: [] }),
 }));
 
 vi.mock("./services/url-preview.js", () => ({

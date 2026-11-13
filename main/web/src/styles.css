@@ -1881,6 +1881,26 @@ h1 {
   color: var(--ink);
 }
 
+.detail-price-conflict {
+  margin: 0.35rem 0 0;
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  background: rgba(180, 83, 9, 0.1);
+  color: #92400e;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.price-tag.is-disputed {
+  outline: 1px dashed #b45309;
+  outline-offset: 2px;
+}
+
+.price-tag-flag {
+  color: #b45309;
+  font-weight: 700;
+}
+
 .detail-price-benchmark {
   margin: 0.2rem 0 0;
   font-size: 0.85rem;

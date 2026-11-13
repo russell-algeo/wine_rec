@@ -1104,8 +1104,15 @@ private struct ResultCard: View {
         parsePrice(candidate?.price)
     }
 
+    private var priceAlternatives: [String] {
+        candidate?.priceAlternatives ?? []
+    }
+
     private var priceBenchmark: PriceBenchmark? {
-        guard let restaurantPrice, let retailPrice = recommendation.profile?.retailPrice else {
+        // A disputed menu price would make the markup figure misleading.
+        guard priceAlternatives.isEmpty,
+              let restaurantPrice,
+              let retailPrice = recommendation.profile?.retailPrice else {
             return nil
         }
 
@@ -1277,6 +1284,12 @@ private struct ResultCard: View {
                             Text("\(candidate?.price ?? "Not listed") on the menu")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AppPalette.ink)
+
+                            if !priceAlternatives.isEmpty {
+                                Text("Check the menu: another read of this photo saw \(priceAlternatives.joined(separator: " or ")). The price filter still uses \(candidate?.price ?? "the listed price").")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(Color(red: 0.57, green: 0.25, blue: 0.05))
+                            }
 
                             if let priceBenchmark {
                                 HStack(spacing: 8) {

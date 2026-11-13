@@ -1624,8 +1624,12 @@ function ParsedMenuEntryCard(props: {
             </p>
           </div>
           <div className="result-summary">
-            <p className={`price-tag${candidate?.price ? "" : " is-missing"}`}>
+            <p
+              className={`price-tag${candidate?.price ? "" : " is-missing"}${candidate?.priceAlternatives?.length ? " is-disputed" : ""}`}
+              title={candidate?.priceAlternatives?.length ? `Another OCR read saw ${candidate.priceAlternatives.join(" or ")}; check the menu` : undefined}
+            >
               {candidate?.price ?? "Price unavailable"}
+              {candidate?.priceAlternatives?.length ? <span className="price-tag-flag" aria-label="Price uncertain, check the menu"> ?</span> : null}
             </p>
             <div className="score-badge">
               <span>Parse</span>
@@ -1727,8 +1731,11 @@ function MatchedResultCard(props: {
   );
   const restaurantPrice = parseCandidatePrice(candidate?.price);
   const retailPrice = recommendation.profile?.retailPrice ?? null;
+  const priceAlternatives = candidate?.priceAlternatives ?? [];
+  const hasPriceConflict = priceAlternatives.length > 0;
+  // A disputed menu price would make the markup figure misleading, so hide it.
   const priceBenchmark =
-    restaurantPrice !== null && retailPrice !== null
+    !hasPriceConflict && restaurantPrice !== null && retailPrice !== null
       ? computePriceBenchmark(restaurantPrice, retailPrice)
       : null;
 
@@ -1772,8 +1779,12 @@ function MatchedResultCard(props: {
                 ratingSource={ratingSource}
               />
             ) : null}
-            <p className={`price-tag${candidate?.price ? "" : " is-missing"}`}>
+            <p
+              className={`price-tag${candidate?.price ? "" : " is-missing"}${candidate?.priceAlternatives?.length ? " is-disputed" : ""}`}
+              title={candidate?.priceAlternatives?.length ? `Another OCR read saw ${candidate.priceAlternatives.join(" or ")}; check the menu` : undefined}
+            >
               {candidate?.price ?? "Price unavailable"}
+              {candidate?.priceAlternatives?.length ? <span className="price-tag-flag" aria-label="Price uncertain, check the menu"> ?</span> : null}
             </p>
             <div className="score-badge">
               <span>{evidence.fitLabel}</span>
@@ -1836,6 +1847,11 @@ function MatchedResultCard(props: {
                 <p className="detail-price-restaurant">
                   {candidate?.price ?? "Not listed"} on the menu
                 </p>
+                {hasPriceConflict ? (
+                  <p className="detail-price-conflict" role="note">
+                    Check the menu: another read of this photo saw {priceAlternatives.join(" or ")}. The price filter still uses {candidate?.price}.
+                  </p>
+                ) : null}
                 {priceBenchmark ? (
                   <p className={`detail-price-benchmark is-${priceBenchmark.tier}`}>
                     ~{formatPriceValue(priceBenchmark.retailPrice)} avg retail &middot; {priceBenchmark.multiplier.toFixed(1)}× markup

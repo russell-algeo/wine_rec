@@ -44,6 +44,26 @@ export async function extractSourceText(input: {
   );
 }
 
+/**
+ * Like extractSourceText, but also returns the other OCR passes' texts when
+ * the provider produces several, so exact-row price conflicts can be flagged.
+ */
+export async function extractSourceTextWithAlternates(input: {
+  sourceType: string;
+  filename: string;
+  mimeType: string;
+  storagePath: string;
+  sourceUrl?: string;
+  fileBuffer?: Buffer;
+}): Promise<{ text: string; alternates: string[] }> {
+  const ocrProvider = createOcrProvider();
+  const request = input.fileBuffer ? { ...input, buffer: input.fileBuffer } : input;
+  if (ocrProvider.extractTextWithAlternates) {
+    return ocrProvider.extractTextWithAlternates(request);
+  }
+  return { text: await ocrProvider.extractText(request), alternates: [] };
+}
+
 export async function extractCandidatesFromUrl(sourceUrl: string, options: { browserFallback?: boolean } = {}): Promise<WineCandidate[]> {
   const { url: resolvedUrl, html } = await fetchHtmlDocument(new URL(sourceUrl));
   let candidates = extractMenuCandidates(html);

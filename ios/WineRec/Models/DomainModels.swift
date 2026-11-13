@@ -154,6 +154,8 @@ struct WineCandidate: Codable, Identifiable {
     let region: String?
     let notes: String?
     let extractionConfidence: Double
+    /// Different prices another OCR pass read for this row. Informational only.
+    let priceAlternatives: [String]?
 }
 
 struct AnalysisRun: Codable, Identifiable {
