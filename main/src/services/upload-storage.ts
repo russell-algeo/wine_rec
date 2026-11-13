@@ -1,4 +1,4 @@
-import { get, put } from "@vercel/blob";
+import { del, get, put } from "@vercel/blob";
 
 export type StoredUpload =
   | { fileBlobUrl: string; privateBlobPathname?: never }
@@ -28,6 +28,25 @@ export function isPrivateUploadReference(jobId: string, pathname: string): boole
   }
 }
 
+/**
+ * Private uploads use their own store credential (BLOB_PRIVATE_READ_WRITE_TOKEN,
+ * injected by the private store's project connection) so the public store's
+ * BLOB_READ_WRITE_TOKEN keeps working for public mode and rollback.
+ */
+function privateStoreToken(): string | undefined {
+  return process.env.BLOB_PRIVATE_READ_WRITE_TOKEN?.trim() || undefined;
+}
+
+export async function deleteStoredUpload(stored: StoredUpload): Promise<void> {
+  if (stored.privateBlobPathname) {
+    const token = privateStoreToken();
+    if (token) await del(stored.privateBlobPathname, { token });
+    else await del(stored.privateBlobPathname);
+  } else if (stored.fileBlobUrl) {
+    await del(stored.fileBlobUrl);
+  }
+}
+
 export async function storeUpload(
   jobId: string,
   buffer: Buffer,
@@ -35,10 +54,12 @@ export async function storeUpload(
 ): Promise<StoredUpload> {
   const pathname = uploadBlobPathname(jobId);
   const access = uploadAccessMode();
+  const token = access === "private" ? privateStoreToken() : undefined;
   const blob = await put(pathname, buffer, {
     access,
     contentType,
     ...(access === "private" ? { addRandomSuffix: false } : {}),
+    ...(token ? { token } : {}),
   });
   if (access === "private") {
     if (blob.pathname !== pathname) {
@@ -55,7 +76,8 @@ export async function readPrivateUpload(jobId: string, pathname: string): Promis
   }
   // Deliberately independent of current upload mode: queued private jobs must
   // remain readable during rollback, using this deployment's matching credential.
-  const blob = await get(pathname, { access: "private" });
+  const token = privateStoreToken();
+  const blob = await get(pathname, { access: "private", ...(token ? { token } : {}) });
   if (!blob || blob.statusCode !== 200 || !blob.stream) {
     throw new Error("Private upload is unavailable");
   }

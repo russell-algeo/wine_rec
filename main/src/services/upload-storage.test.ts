@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const { putMock, getMock } = vi.hoisted(() => ({ putMock: vi.fn(), getMock: vi.fn() }));
-vi.mock("@vercel/blob", () => ({ put: putMock, get: getMock }));
-import { isPrivateUploadReference, readPrivateUpload, storeUpload, uploadAccessMode, uploadBlobPathname } from "./upload-storage.js";
+const { putMock, getMock, delMock } = vi.hoisted(() => ({ putMock: vi.fn(), getMock: vi.fn(), delMock: vi.fn() }));
+vi.mock("@vercel/blob", () => ({ put: putMock, get: getMock, del: delMock }));
+import { deleteStoredUpload, isPrivateUploadReference, readPrivateUpload, storeUpload, uploadAccessMode, uploadBlobPathname } from "./upload-storage.js";
 
 describe("upload storage isolation", () => {
   beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("BLOB_UPLOAD_ACCESS", undefined); });
@@ -20,6 +20,24 @@ describe("upload storage isolation", () => {
     expect(isPrivateUploadReference(id, `uploads/${id}`)).toBe(false);
     await expect(storeUpload(id, Buffer.from("fixture"), "image/png")).rejects.toThrow("Invalid upload job ID");
     expect(putMock).not.toHaveBeenCalled();
+  });
+  it("uses the private store's own credential for private put, get and delete", async () => {
+    vi.stubEnv("BLOB_UPLOAD_ACCESS", "private");
+    vi.stubEnv("BLOB_PRIVATE_READ_WRITE_TOKEN", "private-token");
+    putMock.mockResolvedValue({ pathname: "uploads/job-1" });
+    getMock.mockResolvedValue({ statusCode: 200, stream: new Response("x").body });
+    await storeUpload("job-1", Buffer.from("fixture"), "image/png");
+    expect(putMock.mock.calls[0]![2]).toMatchObject({ access: "private", token: "private-token" });
+    await readPrivateUpload("job-1", "uploads/job-1");
+    expect(getMock).toHaveBeenCalledWith("uploads/job-1", { access: "private", token: "private-token" });
+    await deleteStoredUpload({ privateBlobPathname: "uploads/job-1" });
+    expect(delMock).toHaveBeenCalledWith("uploads/job-1", { token: "private-token" });
+  });
+  it("keeps the default credential for public uploads even when a private token exists", async () => {
+    vi.stubEnv("BLOB_PRIVATE_READ_WRITE_TOKEN", "private-token");
+    putMock.mockResolvedValue({ pathname: "uploads/job-1-x", url: "https://example.invalid/p" });
+    await storeUpload("job-1", Buffer.from("fixture"), "image/png");
+    expect(putMock.mock.calls[0]![2]).not.toHaveProperty("token");
   });
   it("allows the complete generated-ID alphabet and boundary length", () => {
     expect(uploadBlobPathname("a".repeat(128))).toBe("uploads/" + "a".repeat(128));

@@ -3,7 +3,7 @@ const m = vi.hoisted(() => ({ eval: vi.fn(), update: vi.fn(), blob: vi.fn(), del
 vi.mock("./store/redis-client.js", () => ({ redis: { eval: m.eval } }));
 vi.mock("@vercel/blob", () => ({ del: m.del }));
 vi.mock("./providers/ocr.js", () => ({ createOcrProvider: () => ({ isEnabled: true }) }));
-vi.mock("./services/upload-storage.js", () => ({ storeUpload: m.blob, isPrivateUploadReference: () => true, readPrivateUpload: vi.fn() }));
+vi.mock("./services/upload-storage.js", () => ({ storeUpload: m.blob, deleteStoredUpload: async (s: { privateBlobPathname?: string; fileBlobUrl?: string }) => m.del(s.privateBlobPathname ?? s.fileBlobUrl), isPrivateUploadReference: () => true, readPrivateUpload: vi.fn() }));
 vi.mock("./store/job-store.js", () => ({
   createJob: async (input: object) => ({ ...input, status: "queued", queueMessageId: null, errorMessage: null,
     extractedText: null, candidates: [], recommendations: [], workerCount: 0,

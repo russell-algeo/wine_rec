@@ -4,7 +4,7 @@ import { PreviewBudgetError, previewBudgetConfig, reservePreviewPublication } fr
 import { ProviderAccessBlockedError } from "./providers/provider-access.js";
 import { Client as QStashClient } from "@upstash/qstash";
 import { del } from "@vercel/blob";
-import { isPrivateUploadReference, readPrivateUpload, storeUpload, type StoredUpload } from "./services/upload-storage.js";
+import { deleteStoredUpload, isPrivateUploadReference, readPrivateUpload, storeUpload, type StoredUpload } from "./services/upload-storage.js";
 import { z } from "zod";
 
 import {
@@ -404,7 +404,7 @@ export async function createUploadAnalysis(input: {
       queueMessageId: null,
       errorMessage: message,
     });
-    await del(storedUpload.privateBlobPathname ?? storedUpload.fileBlobUrl).catch(() => undefined);
+    await deleteStoredUpload(storedUpload).catch(() => undefined);
     throw error;
   }
 
