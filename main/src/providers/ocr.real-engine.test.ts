@@ -21,6 +21,11 @@ describe("real local Tesseract.js engine",()=>{
   candidates.forEach((c,i)=>expect(canonicalizeText(c.rawText)).toContain(canonicalizeText(fixture.names[i]!)));
   if(fixture.prices.length===3) expect(candidates.map(c=>c.menuSection)).toEqual(["RED","RED","RED"]);
   if(fixture.prices.length===8) expect(candidates.every(c=>c.menuSection===null)).toBe(true);
+  if(fixture.prices.length===16){
+   expect(candidates.filter(c=>c.region).length).toBeGreaterThanOrEqual(14);
+   expect(candidates.find(c=>c.producer==="Tissot")?.region).toBe("Jura, France");
+   expect(candidates.find(c=>c.producer==="Cameron")?.region).toBe("Dundee Hills, Oregon");
+  }
   if(fixture.prices.length===16) expect(candidates.map(c=>c.menuSection)).toEqual(["Sparkling","Sparkling",...Array(5).fill("White"),...Array(3).fill("Red"),"Sherry",...Array(3).fill("Sake"),"Sweet","Sweet"]);
  },60_000);
 });
@@ -55,6 +60,7 @@ describe("offline fixture robustness controls", () => {
     const buffer = await sharp(bytes).resize({width:554}).jpeg({quality:80}).toBuffer();
     const candidates = await extract(buffer);
     expect(candidates.map(c=>c.price)).toEqual(photo.prices);
+    expect(candidates.filter(c=>c.region).length).toBeGreaterThanOrEqual(13);
     candidates.forEach((c,i)=>expect(canonicalizeText(c.rawText)).toContain(canonicalizeText(photo.names[i]!)));
     expect(candidates.map(c=>c.menuSection)).toEqual(["Sparkling","Sparkling",...Array(5).fill("White"),...Array(3).fill("Red"),"Sherry",...Array(3).fill("Sake"),"Sweet","Sweet"]);
   },60_000);

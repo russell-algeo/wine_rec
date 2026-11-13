@@ -1,5 +1,6 @@
 import type { WineCandidate } from "@wine-rec/contracts";
 import { createId } from "../id.js";
+import { extractInlineRegion } from "./inline-region.js";
 
 const vintagePattern = /\b(19|20)\d{2}\b/;
 const abbreviatedVintagePattern = /[''`'](\d{2})\b/;
@@ -1016,10 +1017,14 @@ export function parseBlock(
   // Build a human-readable rawText. When we have structured varietal/region info
   // (either from inline pipes or from promoted note fragments), join with ", " so that
   // the display reads naturally: "Elodie Balme, Grenache/Carignan, Rhône, France".
+  const displayName = pipeData ? pipeData.name : normalizedTitle;
+  const foldForDisplay = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const alreadyShown = (value: string | null | undefined) =>
+    !!value && foldForDisplay(displayName).includes(foldForDisplay(value));
   const rawTextParts = [
-    pipeData ? pipeData.name : normalizedTitle,
-    effectiveVarietal,
-    effectiveRegion,
+    displayName,
+    alreadyShown(effectiveVarietal) ? null : effectiveVarietal,
+    alreadyShown(effectiveRegion) ? null : effectiveRegion,
   ].filter(Boolean);
   const rawText = styleRegionListing
     ? `${styleRegionListing.style} - ${styleRegionListing.region}`
@@ -1065,7 +1070,8 @@ export function parseBlock(
     vintage,
     color: styleRegionListing?.color ?? color,
     varietal,
-    region,
+    // Stronger existing region metadata wins; the literal inline suffix only fills a gap.
+    region: region ?? extractInlineRegion(rawText),
     notes,
     extractionConfidence,
   } satisfies WineCandidate;
