@@ -1,6 +1,6 @@
 import { ProviderAccessBlockedError, assertProviderResponseAllowed, type ProviderRequestGuard } from "./provider-access.js";
 import type { TastingNoteGroup, WineCandidate, WineProfile } from "@wine-rec/contracts";
-import { inferTasteVector, mapExternalTasteVector, scoreWineMatch } from "@wine-rec/core";
+import { inferStyleKey, inferTasteVector, mapExternalTasteVector, scoreWineMatch } from "@wine-rec/core";
 
 import { appConfig } from "../config.js";
 import { createId } from "../id.js";
@@ -64,6 +64,10 @@ const VIVINO_DIRECT_MATCH_THRESHOLD = 0.38;
 // rankMatch's exact bottle-match threshold (0.82).
 const VIVINO_UNVERIFIED_IDENTITY_MAX_SCORE = 0.81;
 const MIN_CONFIDENCE_FOR_RULE_BASED_INFERENCE = 0.68;
+// Rows without a grape name (e.g. "Monica di Sardegna", "Lisboa ... Tinto") get lower
+// extraction confidence, so they were never scored. When the wine's own text names a
+// recognised region, style or colour, that evidence is enough to rule out OCR noise.
+const MIN_CONFIDENCE_WITH_STYLE_EVIDENCE = 0.55;
 const styleListingLabels = new Set(["chilled red", "red", "white", "orange", "rose", "rosé", "sparkling"]);
 const searchNoiseTokens = new Set([
   "bottle",
@@ -823,7 +827,10 @@ class RuleBasedInferenceProvider implements WineProfileProvider {
       return null;
     }
 
-    if (candidate.extractionConfidence < MIN_CONFIDENCE_FOR_RULE_BASED_INFERENCE) {
+    if (
+      candidate.extractionConfidence < MIN_CONFIDENCE_FOR_RULE_BASED_INFERENCE &&
+      (candidate.extractionConfidence < MIN_CONFIDENCE_WITH_STYLE_EVIDENCE || !inferStyleKey(candidate).specific)
+    ) {
       return null;
     }
 

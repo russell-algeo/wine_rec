@@ -148,6 +148,32 @@ describe("wine profile providers", () => {
     await expect(provider.lookup(candidate)).resolves.toBeNull();
   });
 
+  it("scores grape-less wines when their own text names a recognised region or colour", async () => {
+    const provider = createWineProfileProviders().find((entry) => entry.name === "rule-based");
+    if (!provider) {
+      throw new Error("rule-based provider is not registered");
+    }
+    const base = {
+      price: "$48",
+      menuTab: null,
+      menuSection: null,
+      lineNumber: 0,
+      label: null,
+      vintage: null,
+      color: null,
+      varietal: null,
+      region: null,
+      notes: null,
+      extractionConfidence: 0.63,
+    } satisfies Partial<WineCandidate>;
+
+    const sardinia = await provider.lookup({ ...base, id: "c-monica", rawText: "Cardedu 'Praja' Monica di Sardegna", producer: "Cardedu" });
+    expect(sardinia?.profile.taste.confidence).toBeGreaterThan(0);
+
+    const unknown = await provider.lookup({ ...base, id: "c-unknown", rawText: "Bons Ventos Special Selection", producer: "Bons Ventos" });
+    expect(unknown).toBeNull();
+  });
+
   it("builds cleaned Vivino search variants for noisy photographed-menu candidates", () => {
     const queries = buildVivinoSearchQueries({
       id: "candidate-marinara",

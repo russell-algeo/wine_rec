@@ -82,6 +82,7 @@ export const GRAPES: Entry[] = [
   [["syrah", "shiraz"], "syrah"],
   [["petite sirah", "petite syrah", "durif"], "big_tannic_red"],
   [["grenache", "garnacha", "cannonau", "garnatxa"], "grenache"],
+  [["monica di sardegna"], "medium_red"],
   [["grenache blanc", "garnacha blanca"], "full_white"],
   [["tempranillo", "tinto fino", "tinta de toro", "tinta roriz", "aragonez", "ull de llebre"], "tempranillo"],
   [["malbec", "cot"], "malbec"],
