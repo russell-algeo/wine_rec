@@ -414,6 +414,8 @@ vi.mock("./store/job-store.js", () => ({
 
 import { AnalysisRetryableError } from "./services/pipeline.js";
 import {
+  cancelAnalysis,
+  CancellationUnconfirmedError,
   createUploadAnalysis,
   parseWorkerJobPayload,
   createClientOcrAnalysis,
@@ -1238,6 +1240,126 @@ describe("serverless worker orchestration", () => {
   it("keeps legacy Production payloads but rejects a Preview namespace", () => {
     expect(parseWorkerJobPayload({ mode: "worker", jobId: "analysis-1", workerIndex: 0 })).toMatchObject({ mode: "worker" });
     expect(() => parseWorkerJobPayload({ mode: "worker", jobId: "analysis-1", workerIndex: 0, deploymentNamespace: "preview:qa" })).toThrow("namespace");
+  });
+
+  describe("terminal-first cancellation", () => {
+    function seedActive() {
+      const one = buildCandidate("candidate-1");
+      const two = buildCandidate("candidate-2");
+      seedJobState(
+        buildJob({ candidates: [one, two], queueMessageId: "msg-job" }),
+        [buildWorker({ status: "processing" })],
+        [buildCandidateWork(one.id, 0, { status: "processing", leaseOwner: "worker-0" }), buildCandidateWork(two.id, 1)],
+      );
+    }
+
+    it("persists canceled before any queue or record cleanup", async () => {
+      seedActive();
+      const statusesAtCleanup: string[] = [];
+      clearJobCandidateQueueMock.mockImplementationOnce(async () => { statusesAtCleanup.push(storeState.job!.status); });
+      deleteMessageMock.mockImplementation(async () => { statusesAtCleanup.push(storeState.job!.status); });
+      const result = await cancelAnalysis("analysis-1");
+      expect(result?.status).toBe("canceled");
+      expect(statusesAtCleanup.length).toBeGreaterThan(0);
+      expect(statusesAtCleanup.every((status) => status === "canceled")).toBe(true);
+      expect(deleteMessageMock).toHaveBeenCalledWith("msg-job");
+      expect(storeState.workers.get(0)?.status).toBe("canceled");
+      expect(storeState.candidateWork.get("candidate-2")?.status).toBe("canceled");
+      deleteMessageMock.mockReset();
+    });
+
+    it("stays canceled when every cleanup step fails, and later deliveries do no work", async () => {
+      seedActive();
+      clearJobCandidateQueueMock.mockRejectedValueOnce(new Error("Synthetic queue failure"));
+      deleteMessageMock.mockRejectedValue(new Error("Synthetic QStash failure"));
+      updateJobWorkerMock.mockRejectedValueOnce(new Error("Synthetic worker write failure"));
+      const result = await cancelAnalysis("analysis-1");
+      expect(result?.status).toBe("canceled");
+      expect(storeState.job!.status).toBe("canceled");
+      await processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 });
+      expect(runCandidateAnalysisMock).not.toHaveBeenCalled();
+      expect(publishJSONMock).not.toHaveBeenCalled();
+      deleteMessageMock.mockReset();
+    });
+
+    it("reconciles an ambiguous write that applied before the response was lost", async () => {
+      seedActive();
+      updateJobMock.mockImplementationOnce(async (_id: string, updates: Partial<MockJob>) => {
+        storeState.job = { ...storeState.job!, ...updates };
+        throw new Error("Synthetic connection reset");
+      });
+      const result = await cancelAnalysis("analysis-1");
+      expect(result?.status).toBe("canceled");
+      expect(updateJobMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries a failed terminal write and succeeds", async () => {
+      seedActive();
+      updateJobMock.mockRejectedValueOnce(new Error("Synthetic Redis failure"));
+      const result = await cancelAnalysis("analysis-1");
+      expect(result?.status).toBe("canceled");
+      expect(updateJobMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("reports stop unconfirmed and performs no cleanup when the terminal write never lands", async () => {
+      seedActive();
+      updateJobMock
+        .mockRejectedValueOnce(new Error("Synthetic Redis failure 1"))
+        .mockRejectedValueOnce(new Error("Synthetic Redis failure 2"))
+        .mockRejectedValueOnce(new Error("Synthetic Redis failure 3"));
+      await expect(cancelAnalysis("analysis-1")).rejects.toBeInstanceOf(CancellationUnconfirmedError);
+      expect(storeState.job!.status).toBe("processing");
+      expect(clearJobCandidateQueueMock).not.toHaveBeenCalled();
+      expect(updateJobWorkerMock).not.toHaveBeenCalled();
+    });
+
+    it("preserves a competing completion that wins the race", async () => {
+      seedActive();
+      updateJobMock.mockImplementationOnce(async () => {
+        storeState.job = { ...storeState.job!, status: "completed" };
+      });
+      const result = await cancelAnalysis("analysis-1");
+      expect(result?.status).toBe("completed");
+      expect(clearJobCandidateQueueMock).not.toHaveBeenCalled();
+      expect(storeState.candidateWork.get("candidate-1")?.status).toBe("processing");
+    });
+
+    it("returns partial recommendations already produced", async () => {
+      seedActive();
+      const partial = buildRecommendation("candidate-1");
+      getJobMock.mockImplementationOnce(async () => ({ ...clone(storeState.job!), recommendations: [partial] }));
+      const result = await cancelAnalysis("analysis-1");
+      expect(result?.status).toBe("canceled");
+      expect(result?.recommendations).toHaveLength(1);
+    });
+
+    it("deletes a worker publication that settles after cancellation", async () => {
+      seedJobState(buildJob({ extractedText: null, candidates: [], recommendations: [], workerCount: 0 }), [], []);
+      extractCandidatesFromUrlMock.mockResolvedValue([buildCandidate("candidate-1")]);
+      publishJSONMock.mockImplementationOnce(async () => {
+        storeState.job = { ...storeState.job!, status: "canceled" };
+        return { messageId: "msg-late" };
+      });
+      vi.spyOn(Math, "random").mockReturnValue(0);
+      await processWorkerJob({
+        mode: "coordinator",
+        jobId: "analysis-1",
+        sourceType: "url-html",
+        sourceFilename: "https://example.com/menu",
+        sourceUrl: "https://example.com/menu",
+      }).catch(() => undefined);
+      expect(deleteMessageMock).toHaveBeenCalledWith("msg-late");
+      expect(storeState.job!.status).toBe("canceled");
+    });
+
+    it("bounds slow cleanup to the response budget", async () => {
+      seedActive();
+      listJobWorkersMock.mockImplementationOnce(() => new Promise(() => undefined));
+      const started = Date.now();
+      const result = await cancelAnalysis("analysis-1");
+      expect(result?.status).toBe("canceled");
+      expect(Date.now() - started).toBeLessThan(3_000);
+    });
   });
 
 });

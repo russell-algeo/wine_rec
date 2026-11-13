@@ -162,7 +162,15 @@ export async function buildApp(handlers: AppHandlers = {
 
   app.post("/api/analyses/:id/cancel", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
-    const analysis = await handlers.cancelAnalysis(params.id);
+    let analysis;
+    try {
+      analysis = await handlers.cancelAnalysis(params.id);
+    } catch (error) {
+      if (error instanceof Error && error.name === "CancellationUnconfirmedError") {
+        return reply.status(503).send({ message: error.message, stopConfirmed: false });
+      }
+      throw error;
+    }
     if (!analysis) {
       return reply.status(404).send({ message: "Analysis not found" });
     }

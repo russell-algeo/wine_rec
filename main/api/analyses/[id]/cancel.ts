@@ -20,7 +20,15 @@ export default async function handler(req: VercelRequestLike, res: VercelRespons
     return sendJson(res, 400, { message: "Analysis id is required" });
   }
 
-  const analysis = await cancelAnalysis(id);
+  let analysis;
+  try {
+    analysis = await cancelAnalysis(id);
+  } catch (error) {
+    if (error instanceof Error && error.name === "CancellationUnconfirmedError") {
+      return sendJson(res, 503, { message: error.message, stopConfirmed: false });
+    }
+    throw error;
+  }
   if (!analysis) {
     return sendJson(res, 404, { message: "Analysis not found" });
   }

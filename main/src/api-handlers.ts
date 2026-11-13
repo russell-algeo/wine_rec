@@ -281,6 +281,18 @@ async function publishWorkerJob(
   return { messageId: response.messageId };
 }
 
+/**
+ * Best-effort exact-message deletion for a publication that settled after the
+ * job became terminal. Returns true when the job is terminal (or missing).
+ */
+async function deleteIfJobTerminal(jobId: string, messageId: string, store: JobStore): Promise<boolean> {
+  const current = await store.getJobState(jobId).catch(() => undefined);
+  if (current === undefined) return false;
+  if (current && !isTerminalStatus(current.status)) return false;
+  await deleteQueuedMessage(messageId);
+  return true;
+}
+
 async function deleteQueuedMessage(messageId: string | null | undefined): Promise<void> {
   if (!messageId) {
     return;
@@ -500,6 +512,38 @@ export async function getAnalysisRun(id: string): Promise<AnalysisRun | null> {
   return job ? analysisRunSchema.parse(job) : null;
 }
 
+const CANCEL_TERMINAL_WRITE_ATTEMPTS = 3;
+const CANCEL_CLEANUP_BUDGET_MS = 2_000;
+
+export class CancellationUnconfirmedError extends Error {
+  constructor(readonly analysisId: string, readonly cause?: unknown) {
+    super("Stop could not be confirmed. The analysis may still be running.");
+    this.name = "CancellationUnconfirmedError";
+  }
+}
+
+function isTerminalStatus(status: string | undefined): boolean {
+  return status === "completed" || status === "failed" || status === "canceled";
+}
+
+async function withinBudget(work: Promise<unknown>, deadline: number): Promise<void> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    work.then(() => undefined, () => undefined),
+    new Promise<void>((resolve) => { timer = setTimeout(resolve, remaining); }),
+  ]);
+  if (timer) clearTimeout(timer);
+}
+
+/**
+ * Terminal-first cancellation. The authoritative `canceled` job state is
+ * persisted and re-read before any cleanup, so every worker/candidate Lua
+ * transition (which refuses terminal jobs) stops accepting work from that
+ * point on. Cleanup is best effort and bounded; a competing terminal result
+ * (completed/failed) that wins the race is preserved and returned.
+ */
 export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
   const {
     clearJobCandidateQueue,
@@ -517,44 +561,73 @@ export async function cancelAnalysis(id: string): Promise<AnalysisRun | null> {
     return null;
   }
 
-  if (existing.status === "completed" || existing.status === "failed" || existing.status === "canceled") {
-    return analysisRunSchema.parse(existing);
+  if (isTerminalStatus(existing.status)) {
+    return analysisRunSchema.parse(await getJob(id) ?? existing);
   }
 
-  const workers = existing.workerCount > 0 ? await listJobWorkers(id, existing.workerCount) : [];
-  const candidateWork = existing.candidates.length > 0 ? await listJobCandidateWork(id, existing.candidates) : [];
-
-  await deleteQueuedMessage(existing.queueMessageId);
-  await Promise.all(workers.map((worker) => deleteQueuedMessage(worker.queueMessageId)));
-  await clearJobCandidateQueue(id);
-  await Promise.all(
-    workers.map((worker) =>
-      updateJobWorker(id, worker.index, {
+  let terminal: typeof existing | null = null;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < CANCEL_TERMINAL_WRITE_ATTEMPTS && !terminal; attempt += 1) {
+    try {
+      await updateJob(id, {
         status: "canceled",
         queueMessageId: null,
         errorMessage: STOPPED_ANALYSIS_MESSAGE,
-      })),
-  );
-  await Promise.all(
-    candidateWork
-      .filter((record) => record.status !== "completed" && record.status !== "failed")
-      .map((record) =>
-        updateJobCandidateWork(id, record.candidateId, {
-          status: "canceled",
-          leaseOwner: null,
-          leaseExpiresAt: null,
-          errorMessage: STOPPED_ANALYSIS_MESSAGE,
-        })),
-  );
+      });
+    } catch (error) {
+      // The write may still have applied (ambiguous response); reconcile by reading back.
+      lastError = error;
+    }
+    try {
+      const current = await getJobState(id);
+      if (!current) return null;
+      if (isTerminalStatus(current.status)) terminal = current;
+    } catch (error) {
+      lastError = error;
+    }
+  }
 
-  await updateJob(id, {
-    status: "canceled",
-    queueMessageId: null,
-    errorMessage: STOPPED_ANALYSIS_MESSAGE,
-  });
+  if (!terminal) {
+    throw new CancellationUnconfirmedError(id, lastError);
+  }
 
-  const canceled = await getJob(id);
-  return canceled ? analysisRunSchema.parse(canceled) : null;
+  if (terminal.status === "canceled") {
+    const deadline = Date.now() + CANCEL_CLEANUP_BUDGET_MS;
+    const cleanup = (async () => {
+      const workers = existing.workerCount > 0 ? await listJobWorkers(id, existing.workerCount) : [];
+      const candidateWork = existing.candidates.length > 0 ? await listJobCandidateWork(id, existing.candidates) : [];
+      await Promise.allSettled([
+        deleteQueuedMessage(existing.queueMessageId),
+        ...workers.map((worker) => deleteQueuedMessage(worker.queueMessageId)),
+        clearJobCandidateQueue(id),
+        ...workers
+          .filter((worker) => worker.status !== "completed" && worker.status !== "canceled")
+          .map((worker) =>
+            updateJobWorker(id, worker.index, {
+              status: "canceled",
+              queueMessageId: null,
+              errorMessage: STOPPED_ANALYSIS_MESSAGE,
+            })),
+        ...candidateWork
+          .filter((record) => record.status !== "completed" && record.status !== "failed" && record.status !== "canceled")
+          .map((record) =>
+            updateJobCandidateWork(id, record.candidateId, {
+              status: "canceled",
+              leaseOwner: null,
+              leaseExpiresAt: null,
+              errorMessage: STOPPED_ANALYSIS_MESSAGE,
+            })),
+      ]);
+    })();
+    await withinBudget(cleanup, deadline);
+  }
+
+  try {
+    const hydrated = await getJob(id);
+    return analysisRunSchema.parse(hydrated ?? terminal);
+  } catch {
+    return analysisRunSchema.parse(terminal);
+  }
 }
 
 export function parseWorkerJobPayload(input: unknown): WorkerJobPayload {
@@ -689,6 +762,8 @@ async function requeueWorkerJob(
   if (!currentWorker || currentWorker.status === "completed" || currentWorker.status === "canceled") {
     return;
   }
+  // A cancellation may have landed while the worker record was being read.
+  await assertJobActive(payload.jobId, store);
 
   const { messageId } = await publishWorkerJob(
     {
@@ -698,6 +773,9 @@ async function requeueWorkerJob(
     },
     getWorkerPublishOptions(payload.jobId, delaySeconds),
   );
+  if (await deleteIfJobTerminal(payload.jobId, messageId, store)) {
+    return;
+  }
 
   await store.updateJobWorker(payload.jobId, payload.workerIndex, {
     status: "queued",
@@ -851,6 +929,9 @@ async function processCoordinatorJob(
         errorMessage: null,
       });
     }
+    // A cancellation that settled while the last publication was in flight
+    // must not leave that delivery queued.
+    await assertJobActive(payload.jobId, store);
   } catch (error) {
     await Promise.all(publishedWorkers.map((worker) => deleteQueuedMessage(worker.messageId)));
     throw error;
