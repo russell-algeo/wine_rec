@@ -13,6 +13,9 @@ describe("styleKeyFromText", () => {
     ["Buenagente (tinto fino)", "tempranillo"],
     ["Junmai Daiginjo, Niigata", "sake"],
     ["Cape Tawny Port, Calitzdorp", "port_tawny"],
+    ["Ota Shuzo 'Dokan Umeshu' Shiga, Japan", "umeshu"],
+    ["Asahara Shuzo 'Musashino Sparkling' Saitama, Japan", "sake_sparkling"],
+    ["Kirei Shuzo 'Hachiku' Hiroshima, Japan", "sake"],
   ])("%s -> %s", (text, key) => {
     expect(styleKeyFromText(text)).toBe(key);
   });

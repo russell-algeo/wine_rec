@@ -177,7 +177,10 @@ export const GRAPES: Entry[] = [
 ];
 
 /** Appellations and regions with their dominant style; alt applies a colour word. */
-export const APPELLATIONS: Entry[] = [
+export // "Shuzo" (brewery) only says the producer makes sake; it may also make umeshu.
+const SAKE_PRODUCER_HINT: Entry[] = [[["shuzo", "sake brewery"], "sake"]];
+
+const APPELLATIONS: Entry[] = [
   // France
   [["chablis"], "chardonnay_unoaked"],
   [["meursault", "puligny montrachet", "chassagne montrachet", "corton charlemagne", "montrachet", "pouilly fuisse", "macon", "maconnais", "saint veran", "st veran", "vire clesse", "saint aubin", "st aubin"], "chardonnay", { red: "pinot_noir" }],
@@ -287,7 +290,7 @@ export const APPELLATIONS: Entry[] = [
 export const STYLES: Entry[] = [
   [["nigori", "nigorizake"], "sake_nigori"],
   [["sparkling sake", "awa sake"], "sake_sparkling"],
-  [["junmai", "ginjo", "daiginjo", "honjozo", "sake", "nihonshu", "kimoto", "yamahai", "namazake", "shuzo"], "sake"],
+  [["junmai", "ginjo", "daiginjo", "honjozo", "sake", "nihonshu", "kimoto", "yamahai", "namazake"], "sake"],
   [["umeshu", "plum wine"], "umeshu"],
   [["orange wine", "skin contact", "skin fermented", "amber wine", "ramato", "macerated white"], "orange_wine"],
   [["pet nat", "petillant naturel", "pet nat rose", "col fondo", "ancestral"], "default_sparkling"],
@@ -333,7 +336,7 @@ export function normalizeStyleText(input: string | null | undefined): string {
 
 type Match = { start: number; end: number; key: string; tier: number; alt?: Entry[2] };
 
-const TIERS: Array<[Entry[], number]> = [[STYLES, 0], [GRAPES, 1], [APPELLATIONS, 2]];
+const TIERS: Array<[Entry[], number]> = [[STYLES, 0], [GRAPES, 1], [APPELLATIONS, 2], [SAKE_PRODUCER_HINT, 2]];
 // Sparkling-only places (Champagne, Cava, Franciacorta...) define the
 // style more than any grape listed beside them (Pinot Noir, Xarel-lo), so they rank with style words.
 const STYLE_DEFINING_KEYS = new Set(["champagne", "prosecco", "default_sparkling"]);
@@ -386,6 +389,8 @@ export function styleKeyFromText(input: string | null | undefined): string | nul
   if (matches.length > 0) {
     matches.sort((a, b) => a.tier - b.tier || a.start - b.start);
     const best = matches[0]!;
+    // "Musashino Sparkling" from a sake brewery is sparkling sake, not Champagne-style.
+    if (best.key === "default_sparkling" && matches.some((m) => m.key.startsWith("sake"))) return "sake_sparkling";
     return applyColour(best.key, best.alt, colourText);
   }
   return colourKeyFromText(colourText);
