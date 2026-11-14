@@ -1212,6 +1212,7 @@ h1 {
 
 .result-filter-notice {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.5rem;
   margin-top: 0.75rem;
@@ -1233,7 +1234,11 @@ h1 {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  white-space: nowrap;
+  /* Long counts ("8 entries use estimated…") must wrap, or they widen the
+     whole results panel past a phone screen. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .result-filter-notice.is-filtered .result-filter-notice-title {

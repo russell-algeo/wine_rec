@@ -328,7 +328,8 @@ export function App() {
   const [analysis, setAnalysis] = useState<AnalysisRun | null>(null);
   const [analysisNotice, setAnalysisNotice] = useState<string | null>(null);
   const [resultSortOrder, setResultSortOrder] = useState<ResultSortOrder>("recommended");
-  const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter>("exclude-inferred");
+  // null = automatic: hide estimates only when at least one verified profile exists.
+  const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter | null>(null);
   const [selectedResultSectionId, setSelectedResultSectionId] = useState(allResultSectionsId);
   const [maxPriceFilter, setMaxPriceFilter] = useState<number | null>(null);
   const [includePriceUnavailable, setIncludePriceUnavailable] = useState(true);
@@ -393,9 +394,14 @@ export function App() {
         (!includePriceUnavailable && priceFilterBounds.missingCount > 0)
       ),
   );
+  const hasVerifiedRecommendation = sortedRecommendations.some(
+    (recommendation) => !isFallbackProfileRecommendation(recommendation),
+  );
+  const effectiveProfileFilter: ResultProfileFilter =
+    resultProfileFilter ?? (hasVerifiedRecommendation ? "exclude-inferred" : "all");
   const profileFilteredRecommendations = filterRecommendationsByProfileSource(
     sortedRecommendations,
-    resultProfileFilter,
+    effectiveProfileFilter,
   );
   const candidateById = analysis
     ? new Map(analysis.candidates.map((candidate) => [candidate.id, candidate]))
@@ -616,6 +622,7 @@ export function App() {
 
   function handleNewAnalysis() {
     cancelEagerAnalysis();
+    setResultProfileFilter(null);
     setOnboardingStep(1);
     setStepTwoIsConfirmMode(false);
     setError(null);
@@ -1221,14 +1228,14 @@ export function App() {
                         <span>Taste data</span>
                         <div aria-label="Filter inferred and unmatched results" className="sort-toggle" role="group">
                           <button
-                            className={`sort-option${resultProfileFilter === "all" ? " is-active" : ""}`}
+                            className={`sort-option${effectiveProfileFilter === "all" ? " is-active" : ""}`}
                             onClick={() => setResultProfileFilter("all")}
                             type="button"
                           >
                             All profiles
                           </button>
                           <button
-                            className={`sort-option${resultProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
+                            className={`sort-option${effectiveProfileFilter === "exclude-inferred" ? " is-active" : ""}`}
                             onClick={() => setResultProfileFilter("exclude-inferred")}
                             type="button"
                           >
@@ -1238,14 +1245,14 @@ export function App() {
                       </div>
                     ) : null}
                     {analysis && fallbackRecommendationCount ? (
-                      <div className={`result-filter-notice${resultProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
+                      <div className={`result-filter-notice${effectiveProfileFilter === "exclude-inferred" ? " is-filtered" : ""}`}>
                         <p className="result-filter-notice-title">
-                          {resultProfileFilter === "exclude-inferred"
+                          {effectiveProfileFilter === "exclude-inferred"
                             ? `${fallbackRecommendationCount} inferred or unmatched ${fallbackRecommendationCount === 1 ? "entry" : "entries"} hidden`
                             : `${fallbackRecommendationCount} ${fallbackRecommendationCount === 1 ? "entry uses" : "entries use"} estimated or missing profile data`}
                         </p>
                         <p className="helper">
-                          {resultProfileFilter === "exclude-inferred"
+                          {effectiveProfileFilter === "exclude-inferred"
                             ? "These rows are excluded because we either could not confirm a reliable Vivino match or could not build a bottle profile at all."
                             : "When we cannot confirm a reliable Vivino match, we either infer the taste profile from the extracted wine details or show the parsed menu entry without a profile."}
                         </p>
@@ -1279,7 +1286,7 @@ export function App() {
                 </p>
               </div>
             ) : null}
-            {analysis && parsedOnlyRecommendationCount && resultProfileFilter === "all" ? (
+            {analysis && parsedOnlyRecommendationCount && effectiveProfileFilter === "all" ? (
               <div className="result-filter-notice">
                 <p className="result-filter-notice-title">
                   {parsedOnlyRecommendationCount} parsed menu {parsedOnlyRecommendationCount === 1 ? "entry needs" : "entries need"} review
