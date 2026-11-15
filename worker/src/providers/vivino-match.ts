@@ -1,4 +1,5 @@
 import type { WineCandidate } from "@wine-rec/contracts";
+import { styleKeyFromText } from "@wine-rec/core";
 
 /*
  * Wine-level identity scoring and search queries for Vivino hits.
@@ -22,7 +23,8 @@ const GENERIC_PRODUCER = new Set([
   "azienda", "agricola", "bodega", "bodegas", "cantina", "cantine", "castello", "cave", "caves", "cellar", "cellars",
   "chateau", "company", "domaine", "domaines", "estate", "estates", "famiglia", "famille", "family", "fattoria",
   "maison", "podere", "quinta", "tenuta", "tenute", "vigneti", "vignobles", "vina", "vinedos", "vineyard",
-  "vineyards", "weingut", "winery", "wines", "wine", "co", "sons", "fils", "freres", "herederos",
+  "vineyards", "weingut", "winery", "wines", "wine", "co", "sons", "fils", "freres", "herederos", "casa", "clos",
+  "bodegas", "cantina", "company", "and",
 ]);
 
 // Style and classification words: real evidence, but weaker than names.
@@ -45,6 +47,48 @@ const PLACE_WORDS = new Set([
   "usa", "us", "california", "ca", "oregon", "washington", "new", "zealand", "nz", "australia", "sa", "vic",
   "nsw", "wa", "argentina", "chile", "south", "africa", "greece", "hungary", "mexico", "uruguay", "lebanon",
   "england", "uk", "valley", "county", "coast", "hills", "mountains", "mountain", "region",
+  // Regions menus append after the wine; Vivino's search needs every word.
+  "napa", "sonoma", "carneros", "willamette", "paso", "robles", "santa", "barbara", "cruz", "lucia", "monterey",
+  "mendocino", "lodi", "edna", "russian", "river", "dundee", "columbia", "texas", "barossa", "eden", "mclaren",
+  "vale", "clare", "adelaide", "yarra", "margaret", "hunter", "heathcote", "marlborough", "hawkes", "otago",
+  "central", "mendoza", "uco", "colchagua", "maipo", "casablanca", "toscana", "tuscany", "piedmont", "piemonte",
+  "veneto", "sicilia", "sicily", "puglia", "campania", "umbria", "lombardia", "friuli", "langhe", "alto", "adige",
+  "bordeaux", "burgundy", "bourgogne", "rhone", "loire", "alsace", "champagne", "provence", "languedoc",
+  "roussillon", "beaujolais", "rioja", "ribera", "duero", "priorat", "rias", "baixas", "jerez", "douro", "mosel",
+  "rheingau", "pfalz", "wachau", "kamptal", "burgenland", "stellenbosch", "swartland", "zone", "northern",
+  "southern", "cote", "cotes", "or", "nuits", "beaune",
+]);
+
+// Grape names: on their own they don't name a particular wine.
+const GRAPE_WORDS = new Set([
+  "cabernet", "sauvignon", "merlot", "pinot", "noir", "gris", "grigio", "blanc", "chardonnay", "syrah", "shiraz",
+  "grenache", "garnacha", "tempranillo", "sangiovese", "nebbiolo", "barbera", "dolcetto", "malbec", "zinfandel",
+  "primitivo", "riesling", "gewurztraminer", "viognier", "chenin", "semillon", "muscat", "moscato", "malvasia",
+  "vermentino", "verdejo", "albarino", "godello", "gruner", "veltliner", "carmenere", "mourvedre", "monastrell",
+  "petite", "sirah", "franc", "gamay", "aglianico", "nero", "avola", "montepulciano", "corvina", "trebbiano",
+  "fiano", "greco", "falanghina", "refosco", "teroldego", "lagrein", "glera", "touriga", "nacional", "carignan",
+  "cinsault", "marsanne", "roussanne", "torrontes", "tannat", "pinotage", "furmint", "assyrtiko", "xinomavro",
+  "palomino", "pedro", "ximenez", "mencia", "bobal", "graciano", "macabeo", "xarello", "arneis", "cortese", "rebula", "ribolla",
+  "loureira", "viura", "tibouren", "rolle", "nerello", "mascalese", "friulano", "sagrantino", "cannonau",
+]);
+
+// Second words of grape names; on their own they don't tell grapes apart.
+const GRAPE_MODIFIERS = new Set(["blanc", "noir", "gris", "grigio", "franc", "petite", "sirah", "nero", "avola", "nacional",
+  "pedro", "ximenez", "sauvignon", "veltliner"]);
+
+// Tasting-note words some menus print after the wine. They are not part of
+// any wine's name and make Vivino's every-word search come back empty.
+const NOTE_WORDS = new Set([
+  "cherry", "cherries", "plum", "plums", "compote", "chocolate", "vanilla", "bean", "pineapple", "lemon", "verbena",
+  "silky", "curd", "nutmeg", "rich", "lime", "peel", "almond", "flinty", "cassis", "currant", "currants", "toast",
+  "tart", "mint", "sour", "dried", "herb", "herbs", "toasty", "spice", "spicy", "balsamic", "ripe", "fruit", "fruits",
+  "crushed", "rind", "tar", "walnut", "shell", "apricot", "kiwi", "herbaceous", "milk", "berry", "berries",
+  "blackberry", "raspberry", "strawberry", "citrus", "grapefruit", "peach", "pear", "apple", "honey", "floral",
+  "violet", "leather", "tobacco", "earthy", "mineral", "minerality", "oak", "oaky", "smoky", "pepper", "jammy",
+  "crisp", "bright", "fresh", "juicy", "bold", "smooth", "elegant", "velvety", "licorice", "cedar", "mocha", "coffee",
+  "cocoa", "caramel", "butter", "buttery", "creamy", "zesty", "tropical", "melon", "saline", "notes", "hints",
+  "aromas", "palate", "finish", "tannins", "acidity", "structured", "lush", "savory", "savoury", "zest", "blossom",
+  "brioche", "baked", "stone", "fig", "figs", "olive", "graphite", "clove", "cinnamon", "ginger", "jasmine",
 ]);
 
 const NOISE = new Set(["ml", "cl", "l", "magnum", "half", "bottle", "glass", "btl", "gls", "carafe", "price"]);
@@ -69,7 +113,7 @@ export function identityTokens(value: string | null | undefined, options: { syno
   const tokens = options.synonyms === false ? raw : raw.map(token => GRAPE_SYNONYMS[token] ?? token);
   return tokens.filter(token => {
     if (token.length <= 1) return false;
-    if (STOPWORDS.has(token) || NOISE.has(token)) return false;
+    if (STOPWORDS.has(token) || NOISE.has(token) || NOTE_WORDS.has(token)) return false;
     if (/^\d+$/.test(token)) return false; // prices, years, bin numbers
     if (/^\d+(?:ml|cl|l|oz)$/.test(token)) return false;
     return true;
@@ -102,9 +146,11 @@ function editDistanceAtMostOne(a: string, b: string): boolean {
 
 function tokensMatch(a: string, b: string): boolean {
   if (a === b) return true;
+  // A grape name is matched exactly: "Tempranello" (a winery) is not Tempranillo.
+  if (GRAPE_WORDS.has(a) || GRAPE_WORDS.has(b)) return false;
   // Tolerate one OCR or spelling slip on longer words (Grenoilles/Grenouilles).
   // The first two letters must agree: Joillot is not Boillot.
-  if (a.length >= 5 && b.length >= 5 && a.slice(0, 2) === b.slice(0, 2) && editDistanceAtMostOne(a, b)) return true;
+  if (a.length >= 7 && b.length >= 7 && a.slice(0, 2) === b.slice(0, 2) && editDistanceAtMostOne(a, b)) return true;
   // Joined forms: "dalba" vs "d alba" is handled by stopword removal; also
   // accept a long token that is a prefix of the other (Schloss/Schlossgut).
   return a.length >= 6 && b.length >= 6 && (a.startsWith(b) || b.startsWith(a));
@@ -143,8 +189,20 @@ export function candidateIdentityTokens(candidate: WineCandidate): string[] {
  * compare it separately to pick the right vintage of the same wine.
  */
 export function scoreVivinoIdentity(candidate: WineCandidate, hit: VivinoHitIdentity): number {
+  return scoreVivinoIdentityDetail(candidate, hit).score;
+}
+
+export interface VivinoIdentityDetail {
+  score: number;
+  /** Matched on the cuvée name alone because the menu row names no producer. */
+  withoutProducer: boolean;
+  /** The hit's cuvée words that matched the row (set when withoutProducer). */
+  cuveeTokens: string[];
+}
+
+export function scoreVivinoIdentityDetail(candidate: WineCandidate, hit: VivinoHitIdentity): VivinoIdentityDetail {
   const candidateTokens = candidateIdentityTokens(candidate);
-  if (!candidateTokens.length) return 0;
+  if (!candidateTokens.length) return { score: 0, withoutProducer: false, cuveeTokens: [] };
 
   const wineryTokens = identityTokens(hit.wineryName);
   // Vivino often repeats the winery inside the wine name; don't count it twice.
@@ -155,14 +213,30 @@ export function scoreVivinoIdentity(candidate: WineCandidate, hit: VivinoHitIden
   // hit's region; menus often leave them out, so they count for little.
   const nameWeights = (token: string) => regionTokens.includes(token) || PLACE_WORDS.has(token) ? 0.1 : tokenWeight(token, "name");
   const producer = weightedCoverage(wineryTokens, candidateTokens, "producer") ?? 0;
+  // Menus often leave the grape out, or give it only in the section heading
+  // ("PINOT NOIR" above the row). A grape the row doesn't name is weak
+  // evidence against a hit; a grape it names elsewhere is a conflict and is
+  // handled by the grape check before scoring.
+  const contextGrapes = identityTokens([candidate.menuSection, candidate.varietal].filter(Boolean).join(" "))
+    .filter(token => GRAPE_WORDS.has(token));
+  const rowNamesGrape = candidateTokens.some(token => GRAPE_WORDS.has(token)) || contextGrapes.length > 0;
+  const rowPool = [...candidateTokens, ...contextGrapes];
   let nameTotal = 0;
   let nameFound = 0;
   let nameMissing = 0;
+  let cuveeTotal = 0;
+  let cuveeFound = 0;
   for (const token of new Set(nameTokens)) {
-    const weight = nameWeights(token);
+    const grape = GRAPE_WORDS.has(token);
+    const weight = grape && !rowNamesGrape ? 0.3 : nameWeights(token);
     nameTotal += weight;
-    if (hasToken(candidateTokens, token)) nameFound += weight;
-    else if (weight === 1) nameMissing += 1;
+    const found = hasToken(rowPool, token);
+    if (found) nameFound += weight;
+    else if (weight === 1 && !grape) nameMissing += 1;
+    if (weight >= 0.3 && !STYLE_WORDS.has(token) && weight !== 0.1) {
+      cuveeTotal += 1;
+      if (found) cuveeFound += 1;
+    }
   }
   // A name made only of place words names no particular cuvée.
   const onlyPlaces = [...new Set(nameTokens)].every(token => nameWeights(token) <= 0.1);
@@ -174,22 +248,95 @@ export function scoreVivinoIdentity(candidate: WineCandidate, hit: VivinoHitIden
   const distinctiveWinery = wineryTokens.filter(token => tokenWeight(token, "producer") === 1);
   const producerSeen = distinctiveWinery.length === 0 || distinctiveWinery.some(token => hasToken(candidateTokens, token));
 
+  // Some lists give only the appellation and the cuvée ("Greco di Tufo -
+  // Giallo d'Arles"). When nearly every word of the row is in the hit and a
+  // real cuvée word (not a grape or place) matches, the missing producer is
+  // the list's omission, not another producer's wine.
+  const cuveeMatched = [...new Set(nameTokens)].filter(token =>
+    nameWeights(token) === 1 && !GRAPE_WORDS.has(token) && hasToken(candidateTokens, token));
+  const withoutProducer = !producerSeen && coverage >= 0.85 && nameMissing === 0 && cuveeMatched.length >= 1
+    // One shared word ("Stout") isn't enough when the hit's wine has more to its name.
+    && (cuveeFound === cuveeTotal || cuveeMatched.length >= 2);
+
   let score = 0.4 * producer + 0.35 * name + 0.25 * coverage;
-  if (!producerSeen) score *= 0.45;
+  if (withoutProducer) score = Math.min(0.8, 0.5 * name + 0.5 * coverage);
+  else if (!producerSeen) score *= 0.45;
   // Another cuvée of the right producer (Mâcon-Lugny for Mâcon-Uchizy,
   // "Edizione Limitata" for plain Tancredi): its own name words are missing.
   if (nameMissing >= 2) score = Math.min(score, 0.55);
   else if (nameMissing === 1 && name < 0.5) score = Math.min(score, 0.62);
+  // The row names only the producer and the hit is one of its varietal
+  // wines ("Van Duzer" vs "Van Duzer Riesling"): no word of the hit's wine
+  // name is on the row, so we can't tell which of the producer's wines it is.
+  if (cuveeTotal > 0 && cuveeFound === 0) score = Math.min(score, 0.58);
+  // The row names a grape the hit's wine name leaves out while naming others
+  // ("Tempranillo Grenache" against the producer's straight "Grenache").
+  const mainGrape = (token: string) => GRAPE_WORDS.has(token) && !GRAPE_MODIFIERS.has(token);
+  const hitGrapes = [...wineryTokens, ...nameTokens].filter(mainGrape);
+  if (hitGrapes.length && candidateTokens.filter(mainGrape).some(token => !hitGrapes.includes(token))) score = Math.min(score, 0.58);
+  // A quoted cuvée on the menu ("Chollet", « Les Combettes ») must be in the hit.
+  const quoted = quotedCuveeTokens(candidate.rawText);
+  if (quoted.length && !quoted.some(token => hasToken([...wineryTokens, ...nameTokens], token))) score = Math.min(score, 0.55);
   // Part of the producer name missing (Henri Boillot for J.M. Boillot).
-  if (producer < 0.6) score = Math.min(score, 0.58);
-  else if (producer < 0.75) score = Math.min(score, 0.7);
+  if (!withoutProducer) {
+    if (producer < 0.6) score = Math.min(score, 0.58);
+    else if (producer < 0.75) score = Math.min(score, 0.7);
+  }
   // Rosé is a different wine from the same producer's white or red.
   const hitRose = [...wineryTokens, ...nameTokens].some(token => ROSE_WORDS.has(token));
   const rowRose = candidateTokens.some(token => ROSE_WORDS.has(token));
   if (hitRose && !rowRose) score *= 0.6;
   else if (rowRose && !hitRose) score *= 0.75;
-  if (process.env.VIVINO_MATCH_DEBUG) console.log(`[vivino-match] ${hit.wineryName} | ${hit.wineName} producer=${producer.toFixed(2)} name=${name.toFixed(2)} coverage=${coverage.toFixed(2)} missing=${nameMissing} -> ${score.toFixed(2)}`);
-  return Math.max(0, Math.min(1, score));
+  if (process.env.VIVINO_MATCH_DEBUG) console.log(`[vivino-match] ${hit.wineryName} | ${hit.wineName} producer=${producer.toFixed(2)} name=${name.toFixed(2)} coverage=${coverage.toFixed(2)} missing=${nameMissing}${withoutProducer ? " no-producer" : ""} -> ${score.toFixed(2)}`);
+  return { score: Math.max(0, Math.min(1, score)), withoutProducer, cuveeTokens: withoutProducer ? cuveeMatched : [] };
+}
+
+/** Distinctive words inside quotes on the menu row: the cuvée's own name. */
+export function quotedCuveeTokens(rawText: string | null | undefined): string[] {
+  const text = rawText ?? "";
+  const segments: string[] = [];
+  for (const match of text.matchAll(/[‘“«„]\s*([^’”»“]{2,48}?)\s*[’”»“]|"([^"]{2,48})"|(?:^|[\s,(])'([^']{2,48})'(?=[\s,).]|$)/g)) {
+    segments.push(match[1] ?? match[2] ?? match[3] ?? "");
+  }
+  return identityTokens(segments.join(" ")).filter(token =>
+    !GRAPE_WORDS.has(token) && !PLACE_WORDS.has(token) && !STYLE_WORDS.has(token) && !GENERIC_PRODUCER.has(token));
+}
+
+const RED_STYLES = new Set(["light_red", "pinot_noir", "medium_red", "cabernet_sauvignon", "merlot", "syrah", "grenache",
+  "tempranillo", "malbec", "nebbiolo", "sangiovese", "barbera", "zinfandel", "big_tannic_red", "amarone", "default_red"]);
+const WHITE_STYLES = new Set(["sauvignon_blanc", "crisp_white", "light_white", "riesling_dry", "chardonnay",
+  "chardonnay_unoaked", "chenin_blanc", "pinot_grigio", "aromatic_white", "full_white", "medium_white", "default_white"]);
+
+function styleColour(text: string): "red" | "white" | null {
+  const key = styleKeyFromText(text);
+  return key && RED_STYLES.has(key) ? "red" : key && WHITE_STYLES.has(key) ? "white" : null;
+}
+
+/**
+ * Red against white from the row's own words and the hit's name and region
+ * ("Chardonnay, Lucien Le Moine" is not Lucien Le Moine Fleurie).
+ */
+export function hasColourConflict(candidate: WineCandidate, hit: VivinoHitIdentity): boolean {
+  const row = styleColour(candidate.rawText || [candidate.producer, candidate.label].filter(Boolean).join(" "));
+  if (!row) return false;
+  // The hit's own name only: a region's usual grape (Rutherford, Cabernet)
+  // says nothing about a white wine made there.
+  const found = styleColour(hit.wineName);
+  return Boolean(found && found !== row);
+}
+
+/**
+ * Producers among search hits whose wine name carries every cuvée word.
+ * A cuvée-only match is safe only when one producer makes that cuvée
+ * (Giallo d'Arles), not for a shared vineyard name (Les Amoureuses).
+ */
+export function producersWithCuvee(hits: VivinoHitIdentity[], cuveeTokens: string[]): Set<string> {
+  const producers = new Set<string>();
+  for (const hit of hits) {
+    const nameTokens = identityTokens(hit.wineName);
+    if (cuveeTokens.every(token => hasToken(nameTokens, token))) producers.add(normalizeIdentityText(hit.wineryName).trim());
+  }
+  return producers;
 }
 
 function compactQuery(tokens: string[], max: number): string | null {
@@ -203,7 +350,8 @@ function compactQuery(tokens: string[], max: number): string | null {
  */
 export function buildVivinoIdentityQueries(candidate: WineCandidate): string[] {
   const searchable = (value: string | null | undefined) =>
-    identityTokens(value, { synonyms: false }).filter(token => !PLACE_WORDS.has(token) && !STYLE_WORDS.has(token) && token !== "years");
+    identityTokens(value, { synonyms: false }).filter(token => !PLACE_WORDS.has(token) && !STYLE_WORDS.has(token)
+      && !GENERIC_PRODUCER.has(token) && token !== "years");
   const producerTokens = searchable(candidate.producer);
   const labelTokens = searchable(candidate.label);
   const rawTokens = searchable(candidate.rawText);
@@ -211,11 +359,21 @@ export function buildVivinoIdentityQueries(candidate: WineCandidate): string[] {
   const withoutRegion = (tokens: string[]) => tokens.filter(token => !regionTokens.has(token));
 
   const identity = withoutRegion([...producerTokens, ...labelTokens]);
-  const fallback = identity.length ? identity : withoutRegion(rawTokens);
-  const producerOnly = withoutRegion(producerTokens.filter(token => !GENERIC_PRODUCER.has(token)));
+  const tokens = identity.length ? identity : withoutRegion(rawTokens);
+  // Names first: Vivino's search needs every word, and a grape the menu
+  // adds ("Cabernet" before "Casa Lapostolle Cuvée Alexander") is often not
+  // in Vivino's wine name. A row of grapes alone names no wine.
+  const names = [...new Set(tokens.filter(token => !GRAPE_WORDS.has(token)))];
+  const grapes = [...new Set(tokens.filter(token => GRAPE_WORDS.has(token)))];
+  if (!names.length) return [];
+  const producerOnly = withoutRegion(producerTokens.filter(token => !GRAPE_WORDS.has(token)));
+  const quoted = quotedCuveeTokens(candidate.rawText);
+  const producerNames = producerOnly.filter(token => !quoted.includes(token)).slice(0, 2);
   const queries = [
-    compactQuery(fallback, 4),
-    compactQuery(fallback, 2),
+    compactQuery(names, 4),
+    quoted.length && producerNames.length ? compactQuery([...producerNames, ...quoted], 4) : null,
+    compactQuery(names, 2),
+    names.length <= 2 && grapes.length ? compactQuery([...names, grapes[0]!], 3) : null,
     compactQuery(producerOnly, 3),
   ].filter((query): query is string => Boolean(query));
   return [...new Set(queries)].slice(0, 3);

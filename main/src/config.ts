@@ -67,6 +67,8 @@ export const appConfig = {
   vivinoDirectFetchTastes: parseBoolean(process.env.VIVINO_DIRECT_FETCH_TASTES, true),
   /** Run Playwright browser headless (default true). Set false for debugging. */
   vivinoDirectHeadless: parseBoolean(process.env.VIVINO_DIRECT_HEADLESS, true),
+  // Vivino search lists only wines sold in the requester's market unless asked for the rest.
+  vivinoIncludeNonBuyable: parseBoolean(process.env.VIVINO_INCLUDE_NON_BUYABLE, true),
   /** Optional path to Chrome/Chromium executable. Playwright bundled Chromium is used if unset. */
   vivinoDirectChromeExecutable: parseString(process.env.VIVINO_DIRECT_CHROME_EXECUTABLE, ""),
 };

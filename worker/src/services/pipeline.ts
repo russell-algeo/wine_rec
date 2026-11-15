@@ -1,4 +1,4 @@
-import { ProviderRequestStoppedError, type ProviderRequestGuard } from "../providers/provider-access.js";
+import { ProviderAccessBlockedError, ProviderRequestStoppedError, type ProviderRequestGuard } from "../providers/provider-access.js";
 import type { Recommendation, SourceType, WineCandidate } from "@wine-rec/contracts";
 import type { UserTastePreference } from "@wine-rec/contracts";
 import { compareRecommendationFit } from "@wine-rec/contracts";
@@ -63,6 +63,7 @@ async function buildCandidateRecommendation(
   preference: UserTastePreference,
   providers: ReturnType<typeof createWineProfileProviders>,
   beforeRequest: ProviderRequestGuard,
+  blockedProviders: Set<string>,
 ): Promise<Recommendation> {
   let best:
     | {
@@ -74,12 +75,22 @@ async function buildCandidateRecommendation(
     | null = null;
 
   for (const provider of providers) {
-    if (!provider.isEnabled) continue;
+    if (!provider.isEnabled || blockedProviders.has(provider.name)) continue;
     let result: Awaited<ReturnType<typeof provider.lookup>>;
     try {
       await beforeRequest();
       result = await provider.lookup(candidate, { beforeRequest });
     } catch (error) {
+      if (error instanceof ProviderAccessBlockedError) {
+        // The provider refused us (rate limit or challenge). Send it nothing
+        // more in this run; keep the matches already made and finish the
+        // remaining wines with the next provider's estimates.
+        if (!blockedProviders.has(provider.name)) {
+          console.warn("[pipeline] %s refused access; continuing without it", provider.name);
+        }
+        blockedProviders.add(provider.name);
+        continue;
+      }
       if (error instanceof RetryableWineProfileLookupError) {
         throw new AnalysisRetryableError(candidate.id, error);
       }
@@ -127,6 +138,7 @@ export async function runCandidateAnalysis(input: {
 }> {
   const preference = defaultPreference();
   const providers = createWineProfileProviders();
+  const blockedProviders = new Set<string>();
   const existingRecommendations = input.existingRecommendations ?? [];
   const recommendationsByCandidateId = new Map(
     existingRecommendations.map((recommendation) => [recommendation.candidateId, recommendation]),
@@ -180,7 +192,7 @@ export async function runCandidateAnalysis(input: {
           if (fatalError) throw fatalError;
           await throwIfCanceled(hooks.shouldCancel);
           if (fatalError) throw fatalError;
-        });
+        }, blockedProviders);
       } catch (error) {
         fatalError ??= error;
         return;

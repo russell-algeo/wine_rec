@@ -496,26 +496,34 @@ describe("analysis pipeline progress hooks", () => {
 });
 
 
-describe("terminal provider access in the pipeline", () => {
+describe("provider access refusal in the pipeline", () => {
   beforeEach(() => vi.clearAllMocks());
-  it("propagates a block unchanged without fallback, later candidates, or progress", async () => {
+  it("stops calling the refusing provider and finishes every wine with the fallback", async () => {
     const blocked = new ProviderAccessBlockedError();
-    const primary = vi.fn(async () => { throw blocked; }); const fallback = vi.fn(); const progress = vi.fn();
+    const primary = vi.fn(async () => { throw blocked; });
+    const fallback = vi.fn(async () => null); const progress = vi.fn();
     createWineProfileProvidersMock.mockReturnValue([{ name: "vivino-direct", isEnabled: true, lookup: primary }, { name: "rule-based", isEnabled: true, lookup: fallback }]);
-    const candidates = ["first", "second"].map(id => ({ id } as WineCandidate));
-    await expect(runCandidateAnalysis({ candidates }, { onCandidateProcessed: progress }, { candidateConcurrency: 1 })).rejects.toBe(blocked);
-    expect(primary).toHaveBeenCalledTimes(1); expect(fallback).not.toHaveBeenCalled(); expect(progress).not.toHaveBeenCalled();
+    const candidates = ["first", "second", "third"].map(id => ({ id } as WineCandidate));
+    const result = await runCandidateAnalysis({ candidates }, { onCandidateProcessed: progress }, { candidateConcurrency: 1 });
+    expect(result.didCompleteAll).toBe(true);
+    expect(result.recommendations).toHaveLength(3);
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(fallback).toHaveBeenCalledTimes(3);
+    expect(progress).toHaveBeenCalledTimes(3);
   });
-  it("stops an already-waiting concurrent candidate before its next provider request", async () => {
-    const blocked = new ProviderAccessBlockedError(); let release!: () => void;
-    const wait = new Promise<void>(resolve => { release = resolve; }); const actualRequest = vi.fn();
-    const primary = vi.fn(async (candidate: WineCandidate, context: { beforeRequest: () => Promise<void> }) => {
-      if (candidate.id === "first") { queueMicrotask(release); throw blocked; }
-      await wait; await new Promise(resolve => setTimeout(resolve, 0));
-      await context.beforeRequest(); actualRequest(); return null;
+  it("keeps matches made before the refusal", async () => {
+    const blocked = new ProviderAccessBlockedError();
+    const profile = { taste: { sourceMode: "direct", body: 3, acidity: 3, tannin: 3, sweetness: 2 } };
+    const primary = vi.fn(async (candidate: WineCandidate) => {
+      if (candidate.id === "first") return { matchScore: 0.95, profile };
+      throw blocked;
     });
-    createWineProfileProvidersMock.mockReturnValue([{ name: "vivino-direct", isEnabled: true, lookup: primary }]);
-    await expect(runCandidateAnalysis({ candidates: ["first", "second", "third"].map(id => ({ id } as WineCandidate)) }, {}, { candidateConcurrency: 2 })).rejects.toBe(blocked);
-    expect(actualRequest).not.toHaveBeenCalled(); expect(primary).toHaveBeenCalledTimes(2);
+    const fallback = vi.fn(async () => null);
+    createWineProfileProvidersMock.mockReturnValue([{ name: "vivino-direct", isEnabled: true, lookup: primary }, { name: "rule-based", isEnabled: true, lookup: fallback }]);
+    const result = await runCandidateAnalysis({ candidates: ["first", "second", "third"].map(id => ({ id } as WineCandidate)) }, {}, { candidateConcurrency: 1 });
+    const first = result.recommendations.find(item => item.candidateId === "first");
+    expect(first?.status).toBe("matched");
+    expect(primary).toHaveBeenCalledTimes(2);
+    expect(fallback).toHaveBeenCalledTimes(2);
   });
 });

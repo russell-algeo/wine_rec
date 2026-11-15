@@ -544,6 +544,18 @@ export async function paceVivinoRequest(): Promise<void> {
   if (startAt > now) await new Promise(resolve => setTimeout(resolve, startAt - now));
 }
 
+/**
+ * Vivino's search page redirects to /explore, which by default lists only
+ * wines with shop offers in the requester's market. The explore page's own
+ * "include wines you can't buy" option widens it to the whole catalogue.
+ */
+export function vivinoSearchUrl(query: string, includeNonBuyable: boolean): string {
+  const q = encodeURIComponent(query);
+  return includeNonBuyable
+    ? `https://www.vivino.com/en/explore?search_term=${q}&include_non_buyable_wines=true`
+    : `https://www.vivino.com/search/wines?q=${q}`;
+}
+
 export class VivinoBrowser {
   private static instance: VivinoBrowser | null = null;
   private browser: Browser | null = null;
@@ -560,8 +572,8 @@ export class VivinoBrowser {
     return VivinoBrowser.instance;
   }
 
-  async search(query: string, beforeRequest?: ProviderRequestGuard): Promise<SearchHit[]> {
-    const searchUrl = `https://www.vivino.com/search/wines?q=${encodeURIComponent(query)}`;
+  async search(query: string, beforeRequest?: ProviderRequestGuard, options: { includeNonBuyable?: boolean } = {}): Promise<SearchHit[]> {
+    const searchUrl = vivinoSearchUrl(query, options.includeNonBuyable ?? false);
     try {
       return await this.runBrowserTaskWithRetries(`search ${JSON.stringify(query)}`, async (page) => {
         const evaluateSearchPage = async (waitTimeoutMs: number): Promise<{
