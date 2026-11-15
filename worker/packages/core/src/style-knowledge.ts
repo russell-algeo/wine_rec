@@ -148,7 +148,7 @@ export const GRAPES: Entry[] = [
   [["friulano", "tocai friulano", "sauvignonasse"], "light_white"],
   [["ribolla gialla", "ribolla", "rebula"], "light_white"],
   [["godello"], "medium_white"],
-  [["xarel lo", "xarello", "macabeo", "viura", "parellada"], "light_white"],
+  [["xarel lo", "xarello", "macabeo", "maccabeu", "maccabeo", "viura", "parellada"], "light_white"],
   [["aligote"], "crisp_white"],
   [["sylvaner", "silvaner"], "light_white"],
   [["furmint"], "crisp_white"],
@@ -239,6 +239,7 @@ const APPELLATIONS: Entry[] = [
   [["valdeorras"], "medium_white"],
   [["jumilla", "yecla", "alicante"], "big_tannic_red"],
   [["cava", "corpinnat"], "default_sparkling"],
+  [["ribeiro"], "light_white"],
   [["penedes"], "medium_white", { red: "medium_red" }],
   [["fino", "manzanilla", "en rama"], "sherry_fino"],
   [["amontillado"], "sherry_amontillado"],
@@ -391,6 +392,11 @@ export function styleKeyFromText(input: string | null | undefined): string | nul
     const best = matches[0]!;
     // "Musashino Sparkling" from a sake brewery is sparkling sake, not Champagne-style.
     if (best.key === "default_sparkling" && matches.some((m) => m.key.startsWith("sake"))) return "sake_sparkling";
+    // Rosé Champagne / rosé Cava is sparkling first: the bubbles shape the taste more than the colour.
+    if (best.key === "rose_dry") {
+      const sparkling = matches.find((m) => m.tier === 0 && STYLE_DEFINING_KEYS.has(m.key));
+      if (sparkling) return sparkling.key;
+    }
     return applyColour(best.key, best.alt, colourText);
   }
   return colourKeyFromText(colourText);

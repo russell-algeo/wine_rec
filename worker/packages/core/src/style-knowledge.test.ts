@@ -16,6 +16,11 @@ describe("styleKeyFromText", () => {
     ["Ota Shuzo 'Dokan Umeshu' Shiga, Japan", "umeshu"],
     ["Asahara Shuzo 'Musashino Sparkling' Saitama, Japan", "sake_sparkling"],
     ["Kirei Shuzo 'Hachiku' Hiroshima, Japan", "sake"],
+    ["NV Ayala Rosé Majeur, Montagne de Reims", "champagne"],
+    ["Cava Rosado Brut Reserva", "default_sparkling"],
+    ["Côtes de Provence Rosé", "rose_dry"],
+    ["IGP Côtes Catalanes « Maccabeu »", "light_white"],
+    ["DOC Ribeiro Castes Brancas", "light_white"],
   ])("%s -> %s", (text, key) => {
     expect(styleKeyFromText(text)).toBe(key);
   });
