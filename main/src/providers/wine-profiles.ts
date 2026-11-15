@@ -621,12 +621,18 @@ class VivinoDirectProvider implements WineProfileProvider {
     const plan = queries.flatMap(query => appConfig.vivinoIncludeNonBuyable
       ? [{ query, includeNonBuyable: false }, { query, includeNonBuyable: true }]
       : [{ query, includeNonBuyable: false }]);
-    const lookupStartedAt = Date.now();
-    const outOfTime = () => Date.now() - lookupStartedAt > appConfig.vivinoLookupBudgetMs;
+    // The clock starts once the first search is back, so a cold browser start
+    // doesn't eat the budget for the searches that follow.
+    let clockStartedAt: number | null = null;
+    const outOfTime = () => clockStartedAt !== null && Date.now() - clockStartedAt > appConfig.vivinoLookupBudgetMs;
     const bestIdentity = () => Math.max(0, ...[...hitsByWineId.values()].map(({ identity }) => identity));
     let searches = 0;
+    const pendingCuveeOnly = () => [...hitsByWineId.values()].some(entry =>
+      entry.withoutProducer && entry.identity >= VIVINO_CONFIDENT_IDENTITY);
     for (const { query, includeNonBuyable } of plan) {
       if (bestIdentity() >= VIVINO_DECISIVE_IDENTITY) break;
+      // A good cuvée-only match is settled by one check below, not more searching.
+      if (pendingCuveeOnly()) break;
       if (includeNonBuyable && bestIdentity() >= VIVINO_CONFIDENT_IDENTITY) continue;
       if (searches > 0 && (outOfTime() || searches >= appConfig.vivinoLookupMaxSearches)) {
         console.log("[vivino-direct] Search budget reached after %d search(es)", searches);
@@ -635,6 +641,7 @@ class VivinoDirectProvider implements WineProfileProvider {
       searches += 1;
       await beforeRequest();
       const hits = await this.searchByName(query, beforeRequest, includeNonBuyable);
+      clockStartedAt ??= Date.now();
       for (const hit of hits) {
         if (compareGrapeEvidence(candidate, hit) === "conflict" || hasColourConflict(candidate, hit)) continue;
         const { score: identity, withoutProducer, cuveeTokens } = scoreVivinoIdentityDetail(candidate, hit);

@@ -69,10 +69,11 @@ export const appConfig = {
   vivinoDirectHeadless: parseBoolean(process.env.VIVINO_DIRECT_HEADLESS, true),
   // Vivino search lists only wines sold in the requester's market unless asked for the rest.
   vivinoIncludeNonBuyable: parseBoolean(process.env.VIVINO_INCLUDE_NON_BUYABLE, true),
-  // A Vivino search takes ~12 s on a Vercel function. Stop starting new
-  // searches for one wine after this long, so a lookup ends inside the
-  // worker's 60 s limit; the best match found so far is used.
-  vivinoLookupBudgetMs: parseNumber(process.env.VIVINO_LOOKUP_BUDGET_MS, 20_000),
+  // A Vivino search takes ~9-12 s on a Vercel function. Counted from the
+  // first search's return, stop starting new searches for one wine after
+  // this long, so a lookup ends inside the worker's 60 s limit; the best
+  // match found so far is used.
+  vivinoLookupBudgetMs: parseNumber(process.env.VIVINO_LOOKUP_BUDGET_MS, 15_000),
   vivinoLookupMaxSearches: parseNumber(process.env.VIVINO_LOOKUP_MAX_SEARCHES, 3),
   /** Optional path to Chrome/Chromium executable. Playwright bundled Chromium is used if unset. */
   vivinoDirectChromeExecutable: parseString(process.env.VIVINO_DIRECT_CHROME_EXECUTABLE, ""),
