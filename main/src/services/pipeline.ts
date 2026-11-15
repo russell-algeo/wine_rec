@@ -135,6 +135,8 @@ export async function runCandidateAnalysis(input: {
 }, hooks: Pick<AnalysisPipelineHooks, "shouldCancel" | "shouldYield" | "onCandidateProcessed"> = {}, options: AnalysisPipelineOptions = {}): Promise<{
   recommendations: Recommendation[];
   didCompleteAll: boolean;
+  /** Providers that refused access during this run (their wines got the next provider's result). */
+  blockedProviders: string[];
 }> {
   const preference = defaultPreference();
   const providers = createWineProfileProviders();
@@ -246,6 +248,7 @@ export async function runCandidateAnalysis(input: {
   return {
     recommendations,
     didCompleteAll: recommendations.length === input.candidates.length,
+    blockedProviders: [...blockedProviders],
   };
 }
 

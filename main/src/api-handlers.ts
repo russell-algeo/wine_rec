@@ -58,6 +58,8 @@ const jobWorkerJobPayloadSchema = z.object({
   deploymentNamespace: z.string().optional(),
   jobId: z.string(),
   workerIndex: z.number().int().nonnegative(),
+  /** Hand-offs already made because Vivino refused access (see VIVINO_BLOCK_RETRY_*). */
+  providerBlockRetries: z.number().int().nonnegative().optional(),
 });
 
 const workerJobPayloadSchema = z.union([
@@ -76,6 +78,13 @@ function parsePositiveIntegerEnv(name: string, fallback: number): number {
   return Math.max(1, Math.floor(parsed));
 }
 
+function parseNonNegativeIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : fallback;
+}
+
 const SERVERLESS_WORKER_TIME_BUDGET_MS = parsePositiveIntegerEnv(
   "SERVERLESS_WORKER_TIME_BUDGET_MS",
   // The worker project is on Hobby without Fluid compute, so chunk-worker
@@ -84,6 +93,12 @@ const SERVERLESS_WORKER_TIME_BUDGET_MS = parsePositiveIntegerEnv(
   // search and its taste data), so only start a new wine in the first 18 s.
   18_000,
 );
+// Vivino's refusals (CloudFront 403 after bursts) cleared within minutes in
+// Nov 2026 tests. When one happens, put the wine back and hand the rest of
+// the menu to a fresh worker after this delay, a limited number of times;
+// after that the remaining wines get estimates.
+const VIVINO_BLOCK_RETRY_DELAY_SECONDS = parsePositiveIntegerEnv("VIVINO_BLOCK_RETRY_DELAY_SECONDS", 300);
+const VIVINO_BLOCK_RETRY_LIMIT = parseNonNegativeIntegerEnv("VIVINO_BLOCK_RETRY_LIMIT", 2);
 const MAX_SERVERLESS_CONCURRENT_WORKERS = parsePositiveIntegerEnv(
   "SERVERLESS_WORKER_MAX_PARALLEL",
   10,
@@ -759,6 +774,7 @@ async function requeueWorkerJob(
   payload: JobWorkerJobPayload,
   store: JobStore,
   delaySeconds = getWorkerRequeueDelaySeconds(),
+  providerBlockRetries = payload.providerBlockRetries ?? 0,
 ): Promise<void> {
   if (scope.namespace) throw new PreviewBudgetError("Preview smoke test stopped at the worker time limit; no handoff published");
   await assertJobActive(payload.jobId, store);
@@ -774,6 +790,7 @@ async function requeueWorkerJob(
       mode: "worker",
       jobId: payload.jobId,
       workerIndex: payload.workerIndex,
+      ...(providerBlockRetries > 0 ? { providerBlockRetries } : {}),
     },
     getWorkerPublishOptions(payload.jobId, delaySeconds),
   );
@@ -1023,7 +1040,7 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
       continue;
     }
 
-    const { recommendations } = await runCandidateAnalysis(
+    const { recommendations, blockedProviders } = await runCandidateAnalysis(
       {
         candidates: [candidate],
       },
@@ -1036,6 +1053,15 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
     );
 
     await assertJobActive(payload.jobId, store);
+    const blockRetries = payload.providerBlockRetries ?? 0;
+    if (blockedProviders?.includes("vivino-direct") && !scope.namespace && blockRetries < VIVINO_BLOCK_RETRY_LIMIT) {
+      // Keep the wines already matched; put this one back and let a fresh
+      // worker continue with Vivino once its refusal has cleared.
+      console.warn("[worker] Vivino refused access; handing the rest of job %s off in %d s", payload.jobId, VIVINO_BLOCK_RETRY_DELAY_SECONDS);
+      await store.requeueJobCandidate(payload.jobId, candidate.id, leaseOwner, "Vivino refused access; retrying later");
+      await requeueWorkerJob(payload, store, VIVINO_BLOCK_RETRY_DELAY_SECONDS, blockRetries + 1);
+      return;
+    }
     const recommendation = recommendations[0];
     if (!recommendation) {
       throw new Error(`Candidate ${candidate.id} finished without a recommendation.`);

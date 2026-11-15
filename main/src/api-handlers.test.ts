@@ -955,6 +955,47 @@ describe("serverless worker orchestration", () => {
     );
   });
 
+  it("puts a wine back and hands the menu to a later worker when Vivino refuses access", async () => {
+    const candidateOne = buildCandidate("candidate-1");
+    seedJobState(buildJob({ candidates: [candidateOne], workerCount: 1 }), [buildWorker()], [buildCandidateWork(candidateOne.id, 0)]);
+    claimNextJobCandidateMock.mockImplementationOnce(async () => {
+      const record: MockCandidateWork = { ...storeState.candidateWork.get(candidateOne.id)!, status: "processing", leaseOwner: "worker-0", attemptCount: 1 };
+      storeState.candidateWork.set(candidateOne.id, record);
+      return clone(record);
+    });
+    runCandidateAnalysisMock.mockResolvedValue({
+      recommendations: [buildRecommendation(candidateOne.id)], didCompleteAll: true, blockedProviders: ["vivino-direct"],
+    });
+    publishJSONMock.mockResolvedValue({ messageId: "msg-later" });
+
+    await processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0 });
+
+    expect(requeueJobCandidateMock).toHaveBeenCalledWith("analysis-1", candidateOne.id, "worker-0", expect.any(String));
+    expect(completeJobCandidateMock).not.toHaveBeenCalled();
+    expect(publishJSONMock).toHaveBeenCalledWith(expect.objectContaining({
+      body: { mode: "worker", jobId: "analysis-1", workerIndex: 0, providerBlockRetries: 1 },
+      delay: 300,
+    }));
+  });
+
+  it("gives the remaining wines estimates once the Vivino hand-offs are used up", async () => {
+    const candidateOne = buildCandidate("candidate-1");
+    seedJobState(buildJob({ candidates: [candidateOne], workerCount: 1 }), [buildWorker()], [buildCandidateWork(candidateOne.id, 0)]);
+    claimNextJobCandidateMock.mockImplementationOnce(async () => {
+      const record: MockCandidateWork = { ...storeState.candidateWork.get(candidateOne.id)!, status: "processing", leaseOwner: "worker-0", attemptCount: 1 };
+      storeState.candidateWork.set(candidateOne.id, record);
+      return clone(record);
+    });
+    runCandidateAnalysisMock.mockResolvedValue({
+      recommendations: [buildRecommendation(candidateOne.id)], didCompleteAll: true, blockedProviders: ["vivino-direct"],
+    });
+
+    await processWorkerJob({ mode: "worker", jobId: "analysis-1", workerIndex: 0, providerBlockRetries: 2 });
+
+    expect(requeueJobCandidateMock).not.toHaveBeenCalled();
+    expect(completeJobCandidateMock).toHaveBeenCalledWith("analysis-1", candidateOne.id, "worker-0", expect.anything());
+  });
+
   it("lets QStash retry retryable candidate failures and keeps the leased candidate in place", async () => {
     const candidateOne = buildCandidate("candidate-1");
     seedJobState(
