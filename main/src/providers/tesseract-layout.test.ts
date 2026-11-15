@@ -227,4 +227,42 @@ describe("tesseract layout normalization", () => {
     expect(normalizedNames).toContain(canonicalizeText("Melville Syrah Sta Rita Hills California 2021"));
     expect(normalizedNames).toContain(canonicalizeText("Ota Shuzo Dokan Umeshu Shiga Japan"));
   }, 15_000);
+
+  it("reads a two-column wine list one column at a time instead of gluing rows together", () => {
+    const words = [] as Parameters<typeof buildSyntheticTsv>[0];
+    for (let row = 0; row < 10; row += 1) {
+      const top = 40 + row * 30 + Math.round(row * 1.5); // slight tilt
+      const shift = Math.round(row * 2);
+      words.push(
+        { line: row + 1, word: 1, left: 20 + shift, top, width: 60, text: "Left" },
+        { line: row + 1, word: 2, left: 90 + shift, top, width: 80, text: `Wine${row}` },
+        { line: row + 1, word: 3, left: 330 + shift, top, width: 24, text: String(40 + row) },
+        { line: row + 1, word: 4, left: 400 + shift, top, width: 60, text: "Right" },
+        { line: row + 1, word: 5, left: 470 + shift, top, width: 80, text: `Cuvee${row}` },
+        { line: row + 1, word: 6, left: 720 + shift, top, width: 24, text: String(80 + row) },
+      );
+    }
+    const lines = buildPlainTextFromTsv(buildSyntheticTsv(words)).split("\n");
+    expect(lines.slice(0, 2)).toEqual(["Left Wine0 40", "Left Wine1 41"]);
+    expect(lines.slice(10, 12)).toEqual(["Right Cuvee0 80", "Right Cuvee1 81"]);
+    expect(lines).toHaveLength(20);
+  });
+
+  it("keeps a price followed by tasting notes on one row", () => {
+    const words = [] as Parameters<typeof buildSyntheticTsv>[0];
+    for (let row = 0; row < 10; row += 1) {
+      const top = 40 + row * 30;
+      words.push(
+        { line: row + 1, word: 1, left: 20, top, width: 60, text: "Sancerre" },
+        { line: row + 1, word: 2, left: 90, top, width: 80, text: `Domaine${row}` },
+        { line: row + 1, word: 3, left: 330, top, width: 24, text: String(40 + row) },
+        { line: row + 1, word: 4, left: 400, top, width: 60, text: "crisp" },
+        { line: row + 1, word: 5, left: 470, top, width: 80, text: "citrus" },
+        { line: row + 1, word: 6, left: 560, top, width: 60, text: "flint" },
+      );
+    }
+    const lines = buildPlainTextFromTsv(buildSyntheticTsv(words)).split("\n");
+    expect(lines[0]).toBe("Sancerre Domaine0 40 crisp citrus flint");
+    expect(lines).toHaveLength(10);
+  });
 });

@@ -13,6 +13,7 @@ type LayoutLine = {
   words: TesseractWord[];
   top: number;
   bottom: number;
+  column?: number | undefined;
 };
 
 const pricePattern = /^\$?\d{1,3}(?:\.\d{2})?$/;
@@ -295,15 +296,109 @@ function groupLinesFromTsv(tsv: string): LayoutLine[] {
     wordBuckets.set(lineKey, bucket);
   }
 
-  return [...wordBuckets.entries()]
-    .map(([key, words]) => ({
-      key,
-      words: words.sort((left, right) => left.left - right.left),
-      top: Math.min(...words.map((word) => word.top)),
-      bottom: Math.max(...words.map((word) => word.top + word.height)),
-    }))
-    .sort((left, right) => {
-      if (left.top !== right.top) return left.top - right.top;
-      return left.words[0]!.left - right.words[0]!.left;
-    });
+  const lines = [...wordBuckets.entries()]
+    .map(([key, words]) => makeLine(key, words))
+    .sort(compareLines);
+  return splitTwoColumnLayout(lines);
+}
+
+function makeLine(key: string, words: TesseractWord[], column?: number): LayoutLine {
+  return {
+    key,
+    words: words.sort((left, right) => left.left - right.left),
+    top: Math.min(...words.map((word) => word.top)),
+    bottom: Math.max(...words.map((word) => word.top + word.height)),
+    column,
+  };
+}
+
+function compareLines(left: LayoutLine, right: LayoutLine): number {
+  if ((left.column ?? 0) !== (right.column ?? 0)) return (left.column ?? 0) - (right.column ?? 0);
+  if (left.top !== right.top) return left.top - right.top;
+  return left.words[0]!.left - right.words[0]!.left;
+}
+
+// A price token that can end a wine row; years (19xx/20xx) are vintages, not prices.
+const rowEndPricePattern = /^[$€£]?\d{2,4}(?:[.,]\d{2})?[.,]?$/;
+const hasLetters = (word: TesseractWord) => /\p{L}{2,}/u.test(word.text);
+function isRowEndPrice(text: string): boolean {
+  const trimmed = text.trim();
+  return rowEndPricePattern.test(trimmed) && !/^(?:19|20)\d{2}$/.test(trimmed);
+}
+
+/**
+ * Two-column wine lists (left column "Wine ... 40", right column "Wine ... 85")
+ * come back from single-block OCR as one line per row spanning both columns,
+ * which glues two wines and their prices together. When many rows show a
+ * price followed by a wide gap and a new wine name at a consistent x position,
+ * split every line at that gutter and read the left column before the right.
+ * The gutter is fitted as a line (x = a + b*y) so tilted photos still split.
+ */
+function splitTwoColumnLayout(lines: LayoutLine[]): LayoutLine[] {
+  if (lines.length < 8) return lines;
+  const words = lines.flatMap((line) => line.words);
+  const pageLeft = Math.min(...words.map((word) => word.left));
+  const pageRight = Math.max(...words.map((word) => word.left + word.width));
+  const span = pageRight - pageLeft;
+  if (span <= 0) return lines;
+
+  const gaps: Array<{ x: number; y: number }> = [];
+  for (const line of lines) {
+    const heights = line.words.map((word) => word.height).sort((a, b) => a - b);
+    const height = heights[Math.floor(heights.length / 2)] ?? 0;
+    for (let index = 1; index + 1 < line.words.length; index += 1) {
+      const price = line.words[index]!;
+      const next = line.words[index + 1]!;
+      const gap = next.left - (price.left + price.width);
+      const x = price.left + price.width + gap / 2;
+      const relative = (x - pageLeft) / span;
+      if (relative < 0.2 || relative > 0.8 || gap < 1.5 * height) continue;
+      if (!isRowEndPrice(price.text)) continue;
+      if (!line.words.slice(0, index).some(hasLetters)) continue;
+      if (line.words.slice(index + 1).filter(hasLetters).length < 2) continue;
+      gaps.push({ x, y: (line.top + line.bottom) / 2 });
+      break;
+    }
+  }
+  if (gaps.length < Math.max(4, lines.length * 0.12)) return lines;
+
+  // Fit the gutter, dropping gaps far from the median, and refit once.
+  const sortedX = gaps.map((gap) => gap.x).sort((a, b) => a - b);
+  const medianX = sortedX[Math.floor(sortedX.length / 2)]!;
+  let inliers = gaps.filter((gap) => Math.abs(gap.x - medianX) <= span * 0.08);
+  if (inliers.length < Math.max(4, lines.length * 0.12)) return lines;
+  const fit = (points: typeof gaps) => {
+    const n = points.length;
+    const meanY = points.reduce((sum, point) => sum + point.y, 0) / n;
+    const meanX = points.reduce((sum, point) => sum + point.x, 0) / n;
+    const varY = points.reduce((sum, point) => sum + (point.y - meanY) ** 2, 0);
+    const slope = varY > 0 ? points.reduce((sum, point) => sum + (point.y - meanY) * (point.x - meanX), 0) / varY : 0;
+    const bounded = Math.max(-0.1, Math.min(0.1, slope));
+    return { slope: bounded, intercept: meanX - bounded * meanY };
+  };
+  let gutter = fit(inliers);
+  inliers = gaps.filter((gap) => Math.abs(gap.x - (gutter.intercept + gutter.slope * gap.y)) <= span * 0.04);
+  if (inliers.length < Math.max(4, lines.length * 0.12)) return lines;
+  gutter = fit(inliers);
+  const gutterAt = (y: number) => gutter.intercept + gutter.slope * y;
+
+  const split: LayoutLine[] = [];
+  let rightSegments = 0;
+  let rightSegmentsWithPrice = 0;
+  for (const line of lines) {
+    const x = gutterAt((line.top + line.bottom) / 2);
+    const left = line.words.filter((word) => word.left + word.width / 2 < x);
+    const right = line.words.filter((word) => word.left + word.width / 2 >= x);
+    if (left.length > 0) split.push(makeLine(`${line.key}:c0`, left, 0));
+    if (right.length > 0) {
+      split.push(makeLine(`${line.key}:c1`, right, 1));
+      if (right.some(hasLetters)) {
+        rightSegments += 1;
+        if (right.some((word) => isRowEndPrice(word.text))) rightSegmentsWithPrice += 1;
+      }
+    }
+  }
+  // Price-then-tasting-notes rows look similar; a real second column has its own prices.
+  if (rightSegments === 0 || rightSegmentsWithPrice / rightSegments < 0.4) return lines;
+  return split.sort(compareLines);
 }

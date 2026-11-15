@@ -11,7 +11,6 @@ import {
 } from "../providers/wine-profiles.js";
 import { parseWineCandidates } from "./parser.js";
 import { extractCandidatesFromUrl, extractSourceTextWithAlternates } from "./source-extractor.js";
-import { annotatePriceConflicts } from "./price-conflicts.js";
 
 type AnalysisPipelineHooks = {
   shouldCancel?: () => Promise<boolean> | boolean;
@@ -270,7 +269,7 @@ export async function runAnalysisPipeline(input: {
   } else {
     const extracted = await extractSourceTextWithAlternates(input);
     extractedText = extracted.text;
-    candidates = annotatePriceConflicts(parseWineCandidates(extractedText), extracted.alternates);
+    candidates = parseWineCandidates(extractedText);
   }
 
   await throwIfCanceled(hooks.shouldCancel);

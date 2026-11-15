@@ -28,7 +28,6 @@ import {
 } from "./services/pipeline.js";
 import { parseWineCandidates } from "./services/parser.js";
 import { extractCandidatesFromUrl, extractSourceTextWithAlternates } from "./services/source-extractor.js";
-import { annotatePriceConflicts } from "./services/price-conflicts.js";
 import { fetchUrlPreview } from "./services/url-preview.js";
 import { createId } from "./id.js";
 
@@ -852,7 +851,7 @@ async function extractAndPersistJobState(
       ...(fileBuffer ? { fileBuffer } : {}),
     });
     extractedText = extracted.text;
-    candidates = annotatePriceConflicts(parseWineCandidates(extractedText), extracted.alternates);
+    candidates = parseWineCandidates(extractedText);
   }
 
   await assertJobActive(payload.jobId, store);
