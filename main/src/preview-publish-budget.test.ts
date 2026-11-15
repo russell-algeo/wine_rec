@@ -24,6 +24,14 @@ describe("Preview publication admission", () => {
     const budget = await load(); vi.stubEnv("WINE_REC_PREVIEW_EXPIRES_AT", value);
     expect(() => budget.previewBudgetConfig()).toThrow(); expect(mocks.eval).not.toHaveBeenCalled();
   });
+  it("drops the smoke-test limits when Preview is set to run like Production", async () => {
+    const budget = await load(); vi.stubEnv("WINE_REC_PREVIEW_PRODUCTION_PARITY", "true");
+    vi.stubEnv("WINE_REC_PREVIEW_PUBLISH_LIMIT", ""); vi.stubEnv("WINE_REC_PREVIEW_EXPIRES_AT", "");
+    expect(budget.isPreviewSmokeTest()).toBe(false);
+    expect(budget.previewBudgetConfig()).toBeNull();
+    await expect(budget.reservePreviewPublication({ mode: "worker", jobId: "j", workerIndex: 3 })).resolves.toBeUndefined();
+    expect(mocks.eval).not.toHaveBeenCalled();
+  });
   it("leaves Production untouched even with invalid Preview settings", async () => {
     const budget = await load(""); vi.stubEnv("WINE_REC_PREVIEW_PUBLISH_LIMIT", "wrong");
     vi.stubEnv("WINE_REC_PREVIEW_EXPIRES_AT", "wrong");

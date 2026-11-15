@@ -80,6 +80,8 @@ Required runtime categories:
 
 The current Vercel configuration has several capacity settings scoped to production only. Preserve those scopes when changing an environment; do not assume preview receives the production budget or concurrency settings.
 
+A namespaced Preview (`WINE_REC_NAMESPACE`) is a small smoke test by default: one worker, no handoffs, no QStash retries and at most `WINE_REC_PREVIEW_PUBLISH_LIMIT` publications. Set `WINE_REC_PREVIEW_PRODUCTION_PARITY=true` on both Preview projects to drop those limits so Preview runs like Production; then also give Preview the Production capacity settings (`SERVERLESS_WORKER_MAX_PARALLEL`, `SERVERLESS_WORKER_INITIAL_JITTER_MAX_SECONDS`) and the worker project `CHUNK_WORKER_VERCEL_AUTOMATION_BYPASS_SECRET` so its handoffs reach the protected Preview worker. Redis keys stay namespaced either way.
+
 ## Local CLI setup
 
 The top-level repository is not a Vercel project root. Link each deploy root independently and only to the existing project with the same name:

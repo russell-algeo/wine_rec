@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { scope, scopedAnalysisId, scopedFlowControlKey, previewDeploymentOrigin } from "./deployment-scope.js";
-import { PreviewBudgetError, previewBudgetConfig, reservePreviewPublication } from "./preview-publish-budget.js";
+import { PreviewBudgetError, isPreviewSmokeTest, previewBudgetConfig, reservePreviewPublication } from "./preview-publish-budget.js";
 import { ProviderAccessBlockedError } from "./providers/provider-access.js";
 import { Client as QStashClient } from "@upstash/qstash";
 import { del } from "@vercel/blob";
@@ -176,7 +176,7 @@ function getQStashClient(): QStashClient {
   return new QStashClient({ token, ...(baseUrl ? { baseUrl } : {}),
     // retry:false still sends twice in QStash SDK 2.10.1. Explicit zero is
     // necessary; an ambiguous publish must never be retried by this client.
-    ...(scope.namespace ? { retry: { retries: 0 } } : {}),
+    ...(isPreviewSmokeTest() ? { retry: { retries: 0 } } : {}),
   });
 }
 
@@ -274,15 +274,15 @@ async function publishWorkerJob(
   const request = {
     url: destination,
     body: { ...payload, ...(scope.namespace ? { deploymentNamespace: scope.namespace } : {}) },
-    retries: scope.namespace ? 0 : options.retries ?? 0,
-    ...(scope.namespace ? { deduplicationId: createHash("sha256")
+    retries: isPreviewSmokeTest() ? 0 : options.retries ?? 0,
+    ...(isPreviewSmokeTest() ? { deduplicationId: createHash("sha256")
       .update(JSON.stringify([scope.namespace, payload.mode, payload.jobId])).digest("hex") } : {}),
-    ...(!scope.namespace && options.retryDelay ? { retryDelay: options.retryDelay } : {}),
+    ...(!isPreviewSmokeTest() && options.retryDelay ? { retryDelay: options.retryDelay } : {}),
     ...(options.delaySeconds && options.delaySeconds > 0
       ? { delay: options.delaySeconds }
       : {}),
     ...(options.flowControl ? { flowControl: options.flowControl } : {}),
-    ...(!scope.namespace && options.failureCallback ? { failureCallback: options.failureCallback } : {}),
+    ...(!isPreviewSmokeTest() && options.failureCallback ? { failureCallback: options.failureCallback } : {}),
   };
   const bypassSecret = getAutomationBypassSecret(payload.mode);
   const response = bypassSecret
@@ -682,7 +682,7 @@ function getWorkerLeaseOwner(workerIndex: number): string {
 }
 
 function getInitialWorkerCount(candidateCount: number): number {
-  return Math.min(Math.max(0, candidateCount), scope.namespace ? 1 : MAX_SERVERLESS_CONCURRENT_WORKERS);
+  return Math.min(Math.max(0, candidateCount), isPreviewSmokeTest() ? 1 : MAX_SERVERLESS_CONCURRENT_WORKERS);
 }
 
 function getWorkerFlowControl(jobId: string): {
@@ -692,7 +692,7 @@ function getWorkerFlowControl(jobId: string): {
   const sanitizedJobId = jobId.replace(/[^A-Za-z0-9._-]+/g, "-");
   return {
     key: scopedFlowControlKey(`analysis.${sanitizedJobId}.worker`),
-    parallelism: scope.namespace ? 1 : MAX_SERVERLESS_CONCURRENT_WORKERS,
+    parallelism: isPreviewSmokeTest() ? 1 : MAX_SERVERLESS_CONCURRENT_WORKERS,
   };
 }
 
@@ -777,7 +777,7 @@ async function requeueWorkerJob(
   delaySeconds = getWorkerRequeueDelaySeconds(),
   providerBlockRetries = payload.providerBlockRetries ?? 0,
 ): Promise<void> {
-  if (scope.namespace) throw new PreviewBudgetError("Preview smoke test stopped at the worker time limit; no handoff published");
+  if (isPreviewSmokeTest()) throw new PreviewBudgetError("Preview smoke test stopped at the worker time limit; no handoff published");
   await assertJobActive(payload.jobId, store);
   const currentWorker = await store.getJobWorker(payload.jobId, payload.workerIndex);
   if (!currentWorker || currentWorker.status === "completed" || currentWorker.status === "canceled") {
@@ -1055,7 +1055,7 @@ async function processJobWorker(payload: JobWorkerJobPayload, store: JobStore): 
 
     await assertJobActive(payload.jobId, store);
     const blockRetries = payload.providerBlockRetries ?? 0;
-    if (blockedProviders?.includes("vivino-direct") && !scope.namespace && blockRetries < VIVINO_BLOCK_RETRY_LIMIT) {
+    if (blockedProviders?.includes("vivino-direct") && !isPreviewSmokeTest() && blockRetries < VIVINO_BLOCK_RETRY_LIMIT) {
       // Keep the wines already matched; put this one back and let a fresh
       // worker continue with Vivino once its refusal has cleared.
       console.warn("[worker] Vivino refused access; handing the rest of job %s off in %d s", payload.jobId, VIVINO_BLOCK_RETRY_DELAY_SECONDS);
@@ -1190,7 +1190,7 @@ export async function processWorkerJob(input: unknown): Promise<void> {
       return; // ACK this delivery. Access denial must not become a QStash retry.
     }
 
-    if (scope.namespace) {
+    if (isPreviewSmokeTest()) {
       // Zero delivery retries/callbacks means errors must become visible terminal
       // states here. A crash or failed Redis write still needs operator recovery;
       // never manufacture another publication to hide a bounded-test failure.
@@ -1243,7 +1243,7 @@ export async function processWorkerFailure(sourceBody: string): Promise<void> {
   if (!job || job.status === "canceled" || job.status === "completed" || job.status === "failed") {
     return;
   }
-  if (scope.namespace) {
+  if (isPreviewSmokeTest()) {
     await store.updateJob(payload.jobId, { status: "failed", queueMessageId: null,
       errorMessage: "Preview smoke test stopped after a delivery failure; no retry published" });
     return;

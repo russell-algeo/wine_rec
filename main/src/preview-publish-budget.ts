@@ -7,8 +7,16 @@ import { scope, scopedRedisKey } from "./deployment-scope.js";
 export const MAX_PREVIEW_PUBLICATIONS = 6;
 export class PreviewBudgetError extends Error {}
 
+// WINE_REC_PREVIEW_PRODUCTION_PARITY=true turns the smoke-test limits off so a
+// namespaced Preview runs exactly like Production (parallel workers, timed
+// handoffs, QStash retries and failure callbacks, no publication budget).
+// Redis keys, analysis ids and flow-control keys stay namespaced either way.
+export function isPreviewSmokeTest(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(scope.namespace) && env.WINE_REC_PREVIEW_PRODUCTION_PARITY !== "true";
+}
+
 export function previewBudgetConfig(env: NodeJS.ProcessEnv = process.env) {
-  if (!scope.namespace) return null;
+  if (!isPreviewSmokeTest(env)) return null;
   const raw = env.WINE_REC_PREVIEW_PUBLISH_LIMIT ?? "";
   const limit = Number(raw);
   const expiresAt = env.WINE_REC_PREVIEW_EXPIRES_AT ?? "";
