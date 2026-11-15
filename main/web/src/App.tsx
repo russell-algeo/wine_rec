@@ -328,8 +328,7 @@ export function App() {
   const [analysis, setAnalysis] = useState<AnalysisRun | null>(null);
   const [analysisNotice, setAnalysisNotice] = useState<string | null>(null);
   const [resultSortOrder, setResultSortOrder] = useState<ResultSortOrder>("recommended");
-  // null = automatic: hide estimates only when at least one verified profile exists.
-  const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter | null>(null);
+  const [resultProfileFilter, setResultProfileFilter] = useState<ResultProfileFilter>("exclude-inferred");
   const [selectedResultSectionId, setSelectedResultSectionId] = useState(allResultSectionsId);
   const [maxPriceFilter, setMaxPriceFilter] = useState<number | null>(null);
   const [includePriceUnavailable, setIncludePriceUnavailable] = useState(true);
@@ -394,11 +393,11 @@ export function App() {
         (!includePriceUnavailable && priceFilterBounds.missingCount > 0)
       ),
   );
-  const hasVerifiedRecommendation = sortedRecommendations.some(
-    (recommendation) => !isFallbackProfileRecommendation(recommendation),
-  );
-  const effectiveProfileFilter: ResultProfileFilter =
-    resultProfileFilter ?? (hasVerifiedRecommendation ? "exclude-inferred" : "all");
+  // Estimates stay hidden by default (owner decision, Nov 15); the Taste data filter shows them.
+  const effectiveProfileFilter: ResultProfileFilter = resultProfileFilter;
+  const hiddenEstimateCount = effectiveProfileFilter === "exclude-inferred"
+    ? sortedRecommendations.filter(isFallbackProfileRecommendation).length
+    : 0;
   const profileFilteredRecommendations = filterRecommendationsByProfileSource(
     sortedRecommendations,
     effectiveProfileFilter,
@@ -622,7 +621,6 @@ export function App() {
 
   function handleNewAnalysis() {
     cancelEagerAnalysis();
-    setResultProfileFilter(null);
     setOnboardingStep(1);
     setStepTwoIsConfirmMode(false);
     setError(null);
@@ -1346,7 +1344,19 @@ export function App() {
               <p className="helper">This run was stopped before any recommendations were saved.</p>
             ) : null}
             {analysis?.status === "completed" && filteredRecommendations.length === 0 ? (
-              <p className="helper">No wines match the current result filters.</p>
+              hiddenEstimateCount > 0 && profileFilteredRecommendations.length === 0 ? (
+                <div className="result-filter-notice is-filtered">
+                  <p className="helper">
+                    No wine on this list has a verified Vivino profile. {hiddenEstimateCount} estimated{" "}
+                    {hiddenEstimateCount === 1 ? "wine is" : "wines are"} hidden.
+                  </p>
+                  <button className="sort-option" onClick={() => setResultProfileFilter("all")} type="button">
+                    Show estimated wines
+                  </button>
+                </div>
+              ) : (
+                <p className="helper">No wines match the current result filters.</p>
+              )
             ) : null}
             {visibleResultSections.map((section) => (
               <section className="result-section" key={section.id}>
