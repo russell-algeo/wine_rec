@@ -48,7 +48,8 @@ The worker project uses `worker/vercel.json`:
 - `npm install`
 - `npm run vercel-build`
 - function output rooted at `.`
-- worker and failure callback API routes have `maxDuration: 60`
+- `api/chunk-worker.ts` has `maxDuration: 300` (worker invocations run up to `SERVERLESS_WORKER_TIME_BUDGET_MS`, default 270 s, before handing off)
+- failure callback and other API routes have `maxDuration: 60`
 
 ## Environment contract
 

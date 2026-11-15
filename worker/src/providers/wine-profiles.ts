@@ -4,8 +4,10 @@ import { inferStyleKey, inferTasteVector, mapExternalTasteVector, scoreWineMatch
 
 import { appConfig } from "../config.js";
 import { createId } from "../id.js";
+import { buildVivinoIdentityQueries, scoreVivinoIdentity } from "./vivino-match.js";
 import { compareVintageEvidence, compareGrapeEvidence } from "./wine-identity-evidence.js";
 import {
+  paceVivinoRequest,
   pickPreferredVivinoImageUrl,
   RetryableVivinoBrowserError,
   VivinoBrowser,
@@ -59,10 +61,20 @@ type RawExternalProfile = {
   retailPrice?: number | null | undefined;
 };
 
-const VIVINO_DIRECT_MATCH_THRESHOLD = 0.38;
-// Incomplete vintage or grape evidence may be useful, but must stay below
-// rankMatch's exact bottle-match threshold (0.82).
-const VIVINO_UNVERIFIED_IDENTITY_MAX_SCORE = 0.81;
+// Wine-level identity thresholds (see vivino-match.ts), tuned on the dev
+// half of the shared wine-list corpus. Below MIN the wine is not shown as a
+// Vivino match at all, because a wrong wine's notes are worse than none.
+const VIVINO_MIN_IDENTITY = 0.6;
+const VIVINO_CONFIDENT_IDENTITY = 0.75;
+const VIVINO_DECISIVE_IDENTITY = 0.85;
+
+/** Map identity onto rankMatch's scale: confident identity counts as matched (>= 0.82). */
+export function vivinoIdentityToMatchScore(identity: number): number {
+  if (identity >= VIVINO_CONFIDENT_IDENTITY) {
+    return Math.min(1, 0.82 + (identity - VIVINO_CONFIDENT_IDENTITY) * 0.72);
+  }
+  return Math.max(0, 0.65 + (identity - VIVINO_MIN_IDENTITY) * (0.16 / (VIVINO_CONFIDENT_IDENTITY - VIVINO_MIN_IDENTITY)));
+}
 const MIN_CONFIDENCE_FOR_RULE_BASED_INFERENCE = 0.68;
 // Rows without a grape name (e.g. "Monica di Sardegna", "Lisboa ... Tinto") get lower
 // extraction confidence, so they were never scored. When the wine's own text names a
@@ -507,6 +519,7 @@ async function vivinoFetch(
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     await beforeRequest?.();
+    await paceVivinoRequest();
     try {
       const response = await fetch(url, { headers });
       await assertProviderResponseAllowed(response, beforeRequest?.onAccessBlocked);
@@ -593,42 +606,29 @@ class VivinoDirectProvider implements WineProfileProvider {
       return null;
     }
 
-    const queries = buildVivinoSearchQueries(candidate);
+    const queries = buildVivinoIdentityQueries(candidate);
     console.log("[vivino-direct] Searching with %d query variant(s): %s", queries.length, queries.join(" || "));
 
-    const hitsByWineId = new Map<number, { hit: SearchHit; score: number }>();
+    // Score every hit at wine level, then prefer the menu's vintage among
+    // hits for the same wine. A different shop vintage is still the same wine:
+    // Vivino's taste structure and flavour notes are per wine.
+    const hitsByWineId = new Map<number, { hit: SearchHit; identity: number; vintage: ReturnType<typeof compareVintageEvidence> }>();
+    const vintageRank = { exact: 3, unconstrained: 2, unknown: 1, conflict: 0 } as const;
     for (const query of queries) {
       await beforeRequest();
       const hits = await this.searchByName(query, beforeRequest);
       for (const hit of hits) {
-        // A strong name match cannot override an explicit vintage or grape contradiction.
-        const vintageComparison = compareVintageEvidence(candidate, hit);
-        const grapeComparison = compareGrapeEvidence(candidate, hit);
-        if (vintageComparison === "conflict" || grapeComparison === "conflict") {
-          continue;
-        }
-        const identityScore = scoreWineMatch(candidate, {
-          producer: hit.wineryName,
-          label: hit.wineName,
-          vintage: hit.year,
-          varietal: null,
-          region: hit.regionAndCountry,
-        });
-        const score = vintageComparison === "unknown" || grapeComparison === "unknown"
-          ? Math.min(identityScore, VIVINO_UNVERIFIED_IDENTITY_MAX_SCORE)
-          : identityScore;
+        if (compareGrapeEvidence(candidate, hit) === "conflict") continue;
+        const identity = scoreVivinoIdentity(candidate, hit);
+        const vintage = compareVintageEvidence(candidate, hit);
         const existing = hitsByWineId.get(hit.wineId);
-        const existingVintage = existing ? compareVintageEvidence(candidate, existing.hit) : null;
-        const gainsVintageEvidence = vintageComparison === "exact" && existingVintage === "unknown";
-        if (!existing || gainsVintageEvidence || (vintageComparison === existingVintage && score > existing.score)) {
-          hitsByWineId.set(hit.wineId, { hit, score });
+        if (!existing || vintageRank[vintage] > vintageRank[existing.vintage]
+            || (vintage === existing.vintage && identity > existing.identity)) {
+          hitsByWineId.set(hit.wineId, { hit, identity: Math.max(identity, existing?.identity ?? 0), vintage });
         }
       }
 
-      const hasDecisiveHit = [...hitsByWineId.values()].some(({ hit, score }) =>
-        score >= 0.72 && compareVintageEvidence(candidate, hit) !== "unknown"
-          && compareGrapeEvidence(candidate, hit) !== "unknown",
-      );
+      const hasDecisiveHit = [...hitsByWineId.values()].some(({ identity }) => identity >= VIVINO_DECISIVE_IDENTITY);
       if (hasDecisiveHit) {
         break;
       }
@@ -639,22 +639,30 @@ class VivinoDirectProvider implements WineProfileProvider {
       return null;
     }
 
-    // Step 2: Score all hits and pick the best match
-    const scored = [...hitsByWineId.values()].map(({ hit, score }) => ({ hit, score }));
-    scored.sort((a, b) => b.score - a.score);
-    const { hit: bestHit, score: matchScore } = scored[0]!;
+    // Step 2: pick the best wine; exact vintage breaks near-ties.
+    const scored = [...hitsByWineId.values()]
+      .map(entry => ({ ...entry, rank: entry.identity + (entry.vintage === "exact" ? 0.02 : 0) }))
+      .sort((a, b) => b.rank - a.rank);
+    const { hit: bestHit, identity, vintage: bestVintage } = scored[0]!;
+    // When Vivino only lists another vintage, show the wine without that
+    // vintage rather than claim the menu's bottle is a different year.
+    const sameVintage = bestVintage === "exact";
+    const displayWineName = sameVintage ? bestHit.wineName
+      : bestHit.wineName.replace(/\s+(?:(?:19|20)\d{2}|N\.?V\.?)\s*$/i, "").trim();
+    const matchScore = vivinoIdentityToMatchScore(identity);
     console.log(
-      "[vivino-direct] Best match (score=%s): %s %s",
+      "[vivino-direct] Best match (identity=%s, score=%s): %s %s",
+      identity.toFixed(3),
       matchScore.toFixed(3),
       bestHit.wineryName,
       bestHit.wineName,
     );
 
-    if (matchScore < VIVINO_DIRECT_MATCH_THRESHOLD) {
+    if (identity < VIVINO_MIN_IDENTITY) {
       console.log(
         "[vivino-direct] Best browser match below threshold (%s < %s), skipping",
-        matchScore.toFixed(3),
-        VIVINO_DIRECT_MATCH_THRESHOLD.toFixed(2),
+        identity.toFixed(3),
+        VIVINO_MIN_IDENTITY.toFixed(2),
       );
       return null;
     }
@@ -695,10 +703,10 @@ class VivinoDirectProvider implements WineProfileProvider {
       matchScore,
       profile: {
         id: createId(),
-        displayName: [bestHit.wineryName, bestHit.wineName].filter(Boolean).join(" "),
+        displayName: [bestHit.wineryName, displayWineName].filter(Boolean).join(" "),
         producer: bestHit.wineryName || candidate.producer,
-        label: bestHit.wineName || candidate.label,
-        vintage: bestHit.year,
+        label: displayWineName || candidate.label,
+        vintage: sameVintage ? bestHit.year : candidate.vintage,
         region: bestHit.regionAndCountry || candidate.region,
         varietal: candidate.varietal,
         provider: this.name,

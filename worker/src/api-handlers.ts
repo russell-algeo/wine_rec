@@ -79,7 +79,10 @@ function parsePositiveIntegerEnv(name: string, fallback: number): number {
 
 const SERVERLESS_WORKER_TIME_BUDGET_MS = parsePositiveIntegerEnv(
   "SERVERLESS_WORKER_TIME_BUDGET_MS",
-  50_000,
+  // chunk-worker runs with maxDuration 300 (Fluid compute). Each Vivino
+  // lookup needs a warm Chromium, so long invocations avoid paying the
+  // browser start again on every short hand-off.
+  270_000,
 );
 const MAX_SERVERLESS_CONCURRENT_WORKERS = parsePositiveIntegerEnv(
   "SERVERLESS_WORKER_MAX_PARALLEL",

@@ -55,7 +55,7 @@ export const appConfig = {
     process.env.VIVINO_DIRECT_USER_AGENT,
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
   ),
-  vivinoDirectDelayMs: parseNumber(process.env.VIVINO_DIRECT_DELAY_MS, 500),
+  vivinoDirectDelayMs: parseNumber(process.env.VIVINO_DIRECT_DELAY_MS, 1200),
   /** Maximum retries on HTTP 429 before giving up. */
   vivinoDirectMaxRetries: parseNumber(process.env.VIVINO_DIRECT_MAX_RETRIES, 3),
   /** Base backoff in ms for 429 retry (doubles each attempt). */

@@ -529,6 +529,21 @@ const VINTAGE_PAGE_META_EVALUATION = String.raw`
 })()
 `;
 
+let nextVivinoRequestAt = 0;
+
+/**
+ * Space out every Vivino request this process makes (page loads and API
+ * calls) by VIVINO_DIRECT_DELAY_MS. Vivino answers bursts with a CloudFront
+ * 403, which stops the whole analysis, so a steady pace keeps lookups working.
+ */
+export async function paceVivinoRequest(): Promise<void> {
+  const spacing = Math.max(0, appConfig.vivinoDirectDelayMs);
+  const now = Date.now();
+  const startAt = Math.max(now, nextVivinoRequestAt);
+  nextVivinoRequestAt = startAt + spacing;
+  if (startAt > now) await new Promise(resolve => setTimeout(resolve, startAt - now));
+}
+
 export class VivinoBrowser {
   private static instance: VivinoBrowser | null = null;
   private browser: Browser | null = null;
@@ -554,6 +569,7 @@ export class VivinoBrowser {
           hits: SearchHit[];
         }> => {
           await beforeRequest?.();
+          await paceVivinoRequest();
           const navigation = await page.goto(searchUrl, {
             waitUntil: "domcontentloaded",
             timeout: 15_000,
@@ -663,6 +679,7 @@ export class VivinoBrowser {
         `vintage page fetch ${JSON.stringify(vintagePageUrl)}`,
         async (page) => {
           await beforeRequest?.();
+          await paceVivinoRequest();
           const navigation = await page.goto(vintagePageUrl, {
             waitUntil: "domcontentloaded",
             timeout: 30_000,
