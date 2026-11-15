@@ -4,9 +4,6 @@
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
   "functions": {
-    "api/chunk-worker.ts": {
-      "maxDuration": 300
-    },
     "api/coordinator.ts": {
       "maxDuration": 300,
       "includeFiles": "{node_modules/tesseract.js,node_modules/tesseract.js-core,tessdata}/**"

@@ -5,7 +5,7 @@
   "outputDirectory": ".",
   "functions": {
     "api/chunk-worker.ts": {
-      "maxDuration": 300
+      "maxDuration": 60
     },
     "api/worker-failure.ts": {
       "maxDuration": 60
