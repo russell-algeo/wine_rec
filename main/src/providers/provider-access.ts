@@ -33,8 +33,13 @@ export function assertProviderAccessAllowed(input: {
 }
 
 // Do not classify an ordinary AWS WAF integration script as an interstitial.
+// Since Nov 2026 every normal Vivino page (search results, wine pages) loads
+// the AWS WAF *integration SDK* from `<id>.edge.sdk.awswaf.com/.../challenge.js`.
+// That script is not a challenge: the page is fully rendered with results.
+// A real interstitial loads challenge.js/captcha.js from another host (for
+// example `<id>.token.awswaf.com`) and carries `gokuProps` or `AwsWafCaptcha`.
 // These are conservative observed markers, not an exhaustive challenge detector.
-export const PROVIDER_CHALLENGE_SCRIPT_PATTERN = /<script\b[^>]*\bsrc\s*=\s*["'][^"']*\bchallenge\.js(?:[?"']|$)[^>]*>/i;
+export const PROVIDER_CHALLENGE_SCRIPT_PATTERN = /<script\b[^>]*\bsrc\s*=\s*["'](?![^"']*\.edge\.sdk\.awswaf\.com\/)[^"']*\b(?:challenge|captcha)\.js(?:[?"']|$)[^>]*>|\bwindow\.gokuProps\s*=|\bAwsWafCaptcha\.renderCaptcha\b/i;
 export const PROVIDER_CHALLENGE_TITLE_PATTERN = /\b(?:access\s+denied|captcha|security\s+check|verify\s+(?:that\s+)?you\s+are\s+human)\b/i;
 
 export function isProviderChallengeTitle(title: string | undefined): boolean {

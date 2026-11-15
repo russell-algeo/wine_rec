@@ -618,20 +618,15 @@ export class VivinoBrowser {
         }
 
         if (!hits.length && shouldRetryZeroResultExploreSearch(evaluation)) {
-          const diagnostics = JSON.stringify({
-            url: evaluation.url,
-            title: evaluation.title,
-            linkCount: evaluation.linkCount,
-            hasPreloadedState: evaluation.hasPreloadedState,
-            hasAwsWafChallenge: evaluation.hasAwsWafChallenge,
-            showsZeroWineMessage: evaluation.showsZeroWineMessage,
-          });
+          // An explicit "Showing 0 wines" explore page is a real empty result.
+          // Retrying it with fresh pages and a fresh browser never recovered a
+          // hit in live checks (Nov 2026) and tripled lookup time per wine.
           console.log(
-            "[vivino-browser] Zero-result explore page for %j, retrying with a fresh page: %s",
+            "[vivino-browser] Zero-result explore page for %j: %s",
             query,
-            diagnostics,
+            JSON.stringify({ url: evaluation.url, title: evaluation.title }),
           );
-          throw new Error(`${VIVINO_ZERO_RESULT_EXPLORE_RETRY_PREFIX}${diagnostics}`);
+          return [];
         }
 
         console.log(

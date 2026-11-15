@@ -39,6 +39,17 @@ describe("terminal access-boundary detection", () => {
     await expect(assertProviderResponseAllowed(data)).resolves.toBeUndefined();
     expect(await data.json()).toMatchObject({ wine: { name: "Example Estate" } });
   });
+  it("allows a normal Vivino page that loads the AWS WAF integration SDK challenge.js", async () => {
+    const normal = '<html><title>Wines, above $0</title><script>window.__awsWafIntegrationReady = new Promise(function (resolve) { window.__resolveAwsWafIntegration = resolve; });</script><script\n  type="text/javascript"\n  src="https://b9cbbfa2974c.edge.sdk.awswaf.com/b9cbbfa2974c/94b2e38dda14/challenge.js"\n  defer\n  onload="window.__resolveAwsWafIntegration()"></script><a href="/w/1196230">Margaux</a></html>';
+    await expect(assertProviderResponseAllowed(new Response(normal, { headers: { "content-type": "text/html" } }))).resolves.toBeUndefined();
+  });
+  it.each([
+    '<html><head><title></title><script>window.awsWafCookieDomainList = [];window.gokuProps = {"key":"x"};</script><script src="https://abc.token.awswaf.com/abc/def/challenge.js"></script></head><body><div id="challenge-container"></div></body></html>',
+    '<script src="https://abc.token.awswaf.com/abc/def/challenge.js"></script>',
+    '<script src="https://abc.token.awswaf.com/abc/def/captcha.js"></script><script>AwsWafCaptcha.renderCaptcha(el, {})</script>',
+  ])("still detects a real AWS WAF interstitial %#", async body => {
+    await expect(assertProviderResponseAllowed(new Response(body, { status: 200, headers: { "content-type": "text/html" } }))).rejects.toBeInstanceOf(ProviderAccessBlockedError);
+  });
   it("does not call ordinary missing data or rate limiting a challenge", async () => {
     expect(() => assertProviderAccessAllowed({ status: 404 })).not.toThrow();
     expect(() => assertProviderAccessAllowed({ status: 429 })).not.toThrow();
