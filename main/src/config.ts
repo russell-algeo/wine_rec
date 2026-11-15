@@ -73,8 +73,8 @@ export const appConfig = {
   // first search's return, stop starting new searches for one wine after
   // this long, so a lookup ends inside the worker's 60 s limit; the best
   // match found so far is used.
-  vivinoLookupBudgetMs: parseNumber(process.env.VIVINO_LOOKUP_BUDGET_MS, 15_000),
-  vivinoLookupMaxSearches: parseNumber(process.env.VIVINO_LOOKUP_MAX_SEARCHES, 3),
+  vivinoLookupBudgetMs: parseNumber(process.env.VIVINO_LOOKUP_BUDGET_MS, 60_000),
+  vivinoLookupMaxSearches: parseNumber(process.env.VIVINO_LOOKUP_MAX_SEARCHES, 7),
   /** Optional path to Chrome/Chromium executable. Playwright bundled Chromium is used if unset. */
   vivinoDirectChromeExecutable: parseString(process.env.VIVINO_DIRECT_CHROME_EXECUTABLE, ""),
 };

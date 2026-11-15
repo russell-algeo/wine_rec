@@ -87,11 +87,12 @@ function parseNonNegativeIntegerEnv(name: string, fallback: number): number {
 
 const SERVERLESS_WORKER_TIME_BUDGET_MS = parsePositiveIntegerEnv(
   "SERVERLESS_WORKER_TIME_BUDGET_MS",
-  // The worker project is on Hobby without Fluid compute, so chunk-worker
-  // is capped at maxDuration 60. A wine's Vivino lookup can take ~40 s
-  // (browser start, first search, VIVINO_LOOKUP_BUDGET_MS, one in-flight
-  // search and its taste data), so only start a new wine in the first 18 s.
-  18_000,
+  // chunk-worker runs on Fluid compute (worker/vercel.json "fluid": true)
+  // with maxDuration 300. A wine's Vivino lookup can take ~110 s worst case
+  // (browser start, up to VIVINO_LOOKUP_MAX_SEARCHES searches at ~12 s each
+  // inside VIVINO_LOOKUP_BUDGET_MS, one in-flight search and its taste data),
+  // so only start a new wine in the first 170 s.
+  170_000,
 );
 // Vivino's refusals (CloudFront 403 after bursts) cleared within minutes in
 // Nov 2026 tests. When one happens, put the wine back and hand the rest of

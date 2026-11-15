@@ -1,11 +1,12 @@
 {
+  "fluid": true,
   "framework": null,
   "installCommand": "npm install",
   "buildCommand": "npm run vercel-build",
   "outputDirectory": ".",
   "functions": {
     "api/chunk-worker.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "api/worker-failure.ts": {
       "maxDuration": 60
