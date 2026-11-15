@@ -60,7 +60,7 @@ describe("terminal access-boundary detection", () => {
 function fakeBrowserPage(evaluation: unknown, status = 200) {
   const page = {
     goto: vi.fn(async () => ({ status: () => status, headers: () => ({}) })),
-    waitForSelector: vi.fn(async () => null), evaluate: vi.fn(async () => evaluation),
+    waitForSelector: vi.fn(async () => null), waitForFunction: vi.fn(async () => null), evaluate: vi.fn(async () => evaluation),
     waitForTimeout: vi.fn(async () => undefined), close: vi.fn(async () => undefined), isClosed: () => false,
   };
   const browser = VivinoBrowser.getInstance();

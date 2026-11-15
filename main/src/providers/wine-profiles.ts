@@ -616,34 +616,40 @@ class VivinoDirectProvider implements WineProfileProvider {
     const vintageRank = { exact: 3, unconstrained: 2, unknown: 1, conflict: 0 } as const;
     // Vivino's default search lists wines sold in our market, ranked well.
     // Wines nobody sells here (older or allocated bottles) only appear when
-    // asked for, so search those only when the shop pass found no clear match.
-    const passes = appConfig.vivinoIncludeNonBuyable ? [false, true] : [false];
-    searchPasses: for (const includeNonBuyable of passes) {
-      if (includeNonBuyable && [...hitsByWineId.values()].some(({ identity }) => identity >= VIVINO_DECISIVE_IDENTITY)) break;
-      for (const query of queries) {
-        await beforeRequest();
-        const hits = await this.searchByName(query, beforeRequest, includeNonBuyable);
-        for (const hit of hits) {
-          if (compareGrapeEvidence(candidate, hit) === "conflict" || hasColourConflict(candidate, hit)) continue;
-          const { score: identity, withoutProducer, cuveeTokens } = scoreVivinoIdentityDetail(candidate, hit);
-          const vintage = compareVintageEvidence(candidate, hit);
-          const existing = hitsByWineId.get(hit.wineId);
-          if (!existing || vintageRank[vintage] > vintageRank[existing.vintage]
-              || (vintage === existing.vintage && identity > existing.identity)) {
-            const keepExisting = existing && existing.identity > identity;
-            hitsByWineId.set(hit.wineId, {
-              hit,
-              identity: keepExisting ? existing.identity : identity,
-              withoutProducer: keepExisting ? existing.withoutProducer : withoutProducer,
-              cuveeTokens: keepExisting ? existing.cuveeTokens : cuveeTokens,
-              vintage,
-            });
-          }
-        }
-
-        const hasDecisiveHit = [...hitsByWineId.values()].some(({ identity }) => identity >= VIVINO_DECISIVE_IDENTITY);
-        if (hasDecisiveHit) {
-          break searchPasses;
+    // asked for. Each query is tried in the shop listing first, then in the
+    // whole catalogue if no clear match has turned up yet.
+    const plan = queries.flatMap(query => appConfig.vivinoIncludeNonBuyable
+      ? [{ query, includeNonBuyable: false }, { query, includeNonBuyable: true }]
+      : [{ query, includeNonBuyable: false }]);
+    const lookupStartedAt = Date.now();
+    const outOfTime = () => Date.now() - lookupStartedAt > appConfig.vivinoLookupBudgetMs;
+    const bestIdentity = () => Math.max(0, ...[...hitsByWineId.values()].map(({ identity }) => identity));
+    let searches = 0;
+    for (const { query, includeNonBuyable } of plan) {
+      if (bestIdentity() >= VIVINO_DECISIVE_IDENTITY) break;
+      if (includeNonBuyable && bestIdentity() >= VIVINO_CONFIDENT_IDENTITY) continue;
+      if (searches > 0 && (outOfTime() || searches >= appConfig.vivinoLookupMaxSearches)) {
+        console.log("[vivino-direct] Search budget reached after %d search(es)", searches);
+        break;
+      }
+      searches += 1;
+      await beforeRequest();
+      const hits = await this.searchByName(query, beforeRequest, includeNonBuyable);
+      for (const hit of hits) {
+        if (compareGrapeEvidence(candidate, hit) === "conflict" || hasColourConflict(candidate, hit)) continue;
+        const { score: identity, withoutProducer, cuveeTokens } = scoreVivinoIdentityDetail(candidate, hit);
+        const vintage = compareVintageEvidence(candidate, hit);
+        const existing = hitsByWineId.get(hit.wineId);
+        if (!existing || vintageRank[vintage] > vintageRank[existing.vintage]
+            || (vintage === existing.vintage && identity > existing.identity)) {
+          const keepExisting = existing && existing.identity > identity;
+          hitsByWineId.set(hit.wineId, {
+            hit,
+            identity: keepExisting ? existing.identity : identity,
+            withoutProducer: keepExisting ? existing.withoutProducer : withoutProducer,
+            cuveeTokens: keepExisting ? existing.cuveeTokens : cuveeTokens,
+            vintage,
+          });
         }
       }
     }
@@ -661,6 +667,10 @@ class VivinoDirectProvider implements WineProfileProvider {
     // A match made on the cuvée name alone must be the only producer that
     // makes that cuvée. One extra search for the cuvée words checks it.
     if (withoutProducer && identity >= VIVINO_MIN_IDENTITY) {
+      if (outOfTime()) {
+        console.log("[vivino-direct] No time left to check a cuvée-only match, skipping");
+        return null;
+      }
       await beforeRequest();
       const cuveeHits = await this.searchByName(cuveeTokens.join(" "), beforeRequest, appConfig.vivinoIncludeNonBuyable);
       const producers = producersWithCuvee([...cuveeHits, ...scored.map(entry => entry.hit)], cuveeTokens);

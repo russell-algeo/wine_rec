@@ -48,7 +48,7 @@ The worker project uses `worker/vercel.json`:
 - `npm install`
 - `npm run vercel-build`
 - function output rooted at `.`
-- `api/chunk-worker.ts` has `maxDuration: 60` (Hobby without Fluid compute rejects more; invocations run up to `SERVERLESS_WORKER_TIME_BUDGET_MS`, default 50 s, before handing off)
+- `api/chunk-worker.ts` has `maxDuration: 60` (Hobby without Fluid compute rejects more; invocations run up to `SERVERLESS_WORKER_TIME_BUDGET_MS`, default 22 s, before handing off; a Vivino lookup stops starting new searches after `VIVINO_LOOKUP_BUDGET_MS`, default 20 s, or `VIVINO_LOOKUP_MAX_SEARCHES`, default 3)
 - failure callback and other API routes have `maxDuration: 60`
 
 ## Environment contract

@@ -588,10 +588,16 @@ export class VivinoBrowser {
           });
           assertProviderAccessAllowed({ onAccessBlocked: beforeRequest?.onAccessBlocked, status: navigation?.status(), headers: navigation?.headers() });
 
+          // Results render as wine links; an empty search says "Showing 0
+          // wines". Wait for whichever comes first rather than the full
+          // timeout on empty pages (each search costs ~12 s on a function).
           await page
-            .waitForSelector('a[data-testid="vintagePageLink"], a[href*="/w/"]', {
-              timeout: waitTimeoutMs,
-            })
+            .waitForFunction(
+              () => Boolean(document.querySelector('a[data-testid="vintagePageLink"], a[href*="/w/"]'))
+                || /showing\s+0\s+wine/i.test(document.body?.innerText ?? ""),
+              undefined,
+              { timeout: waitTimeoutMs, polling: 250 },
+            )
             .catch(() => null);
 
           const rawEvaluation = await page.evaluate(SEARCH_PAGE_EVALUATION);

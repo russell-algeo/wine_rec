@@ -80,8 +80,10 @@ function parsePositiveIntegerEnv(name: string, fallback: number): number {
 const SERVERLESS_WORKER_TIME_BUDGET_MS = parsePositiveIntegerEnv(
   "SERVERLESS_WORKER_TIME_BUDGET_MS",
   // The worker project is on Hobby without Fluid compute, so chunk-worker
-  // is capped at maxDuration 60; leave headroom before the hard limit.
-  50_000,
+  // is capped at maxDuration 60. A wine's Vivino lookup can take ~35 s
+  // (VIVINO_LOOKUP_BUDGET_MS plus one in-flight search and its taste data),
+  // so only start a new wine in the first 22 s of an invocation.
+  22_000,
 );
 const MAX_SERVERLESS_CONCURRENT_WORKERS = parsePositiveIntegerEnv(
   "SERVERLESS_WORKER_MAX_PARALLEL",
