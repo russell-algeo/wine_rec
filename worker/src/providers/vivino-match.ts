@@ -324,7 +324,9 @@ export function vivinoSpecificityBonus(candidate: WineCandidate, hit: VivinoHitI
     && !hasToken(wineryTokens, token));
   const named = rowCuvee.filter(token => hasToken(nameTokens, token)).length;
   const extras = nameTokens.filter(token => !hasToken(candidateTokens, token)).length;
-  return Math.min(0.01, 0.004 * named) - Math.min(0.01, 0.002 * extras);
+  // A named cuvée outweighs the exact-vintage nudge (+0.02): Bocelli Alcide
+  // listed as 2015 is still the menu's Alcide, not Bocelli's 2014 Sangiovese.
+  return (named ? 0.025 : 0) - Math.min(0.01, 0.002 * extras);
 }
 
 /** Distinctive words inside quotes on the menu row: the cuvée's own name. */

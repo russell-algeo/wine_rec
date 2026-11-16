@@ -129,7 +129,8 @@ describe("buildVivinoIdentityQueries", () => {
 
   it("breaks score ties toward the row's own cuvée and away from extra vineyard words", () => {
     const bocelli = row("Sangiovese Blend, Bocelli, Alcide (Toscana IGT) '14", "Sangiovese Blend", "Bocelli");
-    expect(vivinoSpecificityBonus(bocelli, hit("Bocelli", "Alcide"))).toBeGreaterThan(vivinoSpecificityBonus(bocelli, hit("Bocelli", "Sangiovese")));
+    expect(vivinoSpecificityBonus(bocelli, hit("Bocelli", "Alcide")) - vivinoSpecificityBonus(bocelli, hit("Bocelli", "Sangiovese")))
+      .toBeGreaterThan(0.02); // beats the exact-vintage nudge
     const latour = row("Louis Latour Puligny-Montrachet Cote-d'Or 2022", "Louis Latour", "Puligny-Montrachet");
     expect(vivinoSpecificityBonus(latour, hit("Louis Latour", "Puligny-Montrachet")))
       .toBeGreaterThan(vivinoSpecificityBonus(latour, hit("Louis Latour", "Puligny-Montrachet 1er Cru Sous le Puits")));
