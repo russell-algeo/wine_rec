@@ -5,7 +5,7 @@ import { inferStyleKey, inferTasteVector, mapExternalTasteVector, scoreWineMatch
 import { appConfig } from "../config.js";
 import { createId } from "../id.js";
 import { readVivinoMatch, rememberVivinoMatch } from "./vivino-match-cache.js";
-import { buildVivinoIdentityQueries, hasColourConflict, producersWithCuvee, scoreVivinoIdentityDetail } from "./vivino-match.js";
+import { buildVivinoIdentityQueries, hasColourConflict, producersWithCuvee, scoreVivinoIdentityDetail, vivinoSpecificityBonus } from "./vivino-match.js";
 import { compareVintageEvidence, compareGrapeEvidence } from "./wine-identity-evidence.js";
 import {
   paceVivinoRequest,
@@ -707,7 +707,7 @@ class VivinoDirectProvider implements WineProfileProvider {
 
     // Step 2: pick the best wine; exact vintage breaks near-ties.
     const scored = [...hitsByWineId.values()]
-      .map(entry => ({ ...entry, rank: entry.identity + (entry.vintage === "exact" ? 0.02 : 0) }))
+      .map(entry => ({ ...entry, rank: entry.identity + (entry.vintage === "exact" ? 0.02 : 0) + vivinoSpecificityBonus(candidate, entry.hit) }))
       .sort((a, b) => b.rank - a.rank || a.hit.wineId - b.hit.wineId);
     const { hit: bestHit, identity, vintage: bestVintage, withoutProducer, cuveeTokens } = scored[0]!;
     // A match made on the cuvée name alone must be the only producer that

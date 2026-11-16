@@ -11,7 +11,7 @@ import { scopedRedisKey } from "../deployment-scope.js";
 // Only matches are remembered, never misses: a miss may just be an unlucky
 // search, and should get a fresh chance next time. Bump the version whenever
 // matching rules change so older decisions are not reused.
-export const VIVINO_MATCH_CACHE_VERSION = 2;
+export const VIVINO_MATCH_CACHE_VERSION = 3;
 const TTL_SECONDS = 30 * 24 * 60 * 60;
 
 export function vivinoMatchCacheKey(candidate: Pick<WineCandidate, "rawText" | "menuSection" | "varietal" | "vintage">): string {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WineCandidate } from "@wine-rec/contracts";
-import { buildVivinoIdentityQueries, hasColourConflict, producersWithCuvee, scoreVivinoIdentity, scoreVivinoIdentityDetail } from "./vivino-match.js";
+import { buildVivinoIdentityQueries, hasColourConflict, producersWithCuvee, scoreVivinoIdentity, scoreVivinoIdentityDetail, vivinoSpecificityBonus } from "./vivino-match.js";
 
 function row(rawText: string, producer: string | null, label: string | null, extra: Partial<WineCandidate> = {}): WineCandidate {
   return {
@@ -125,5 +125,13 @@ describe("buildVivinoIdentityQueries", () => {
     const sancerre = row("2024 J. de Villebois Sancerre, Loire Valley", "J. de Villebois", "Sancerre");
     expect(scoreVivinoIdentityDetail(sancerre, hit("Domaine J. de Villebois", "Pouilly Fumé", "Pouilly-Fumé, France")).appellationGuess).toBe(true);
     expect(scoreVivinoIdentityDetail(sancerre, hit("Domaine J. de Villebois", "Sancerre", "Sancerre, France")).appellationGuess).toBe(false);
+  });
+
+  it("breaks score ties toward the row's own cuvée and away from extra vineyard words", () => {
+    const bocelli = row("Sangiovese Blend, Bocelli, Alcide (Toscana IGT) '14", "Sangiovese Blend", "Bocelli");
+    expect(vivinoSpecificityBonus(bocelli, hit("Bocelli", "Alcide"))).toBeGreaterThan(vivinoSpecificityBonus(bocelli, hit("Bocelli", "Sangiovese")));
+    const latour = row("Louis Latour Puligny-Montrachet Cote-d'Or 2022", "Louis Latour", "Puligny-Montrachet");
+    expect(vivinoSpecificityBonus(latour, hit("Louis Latour", "Puligny-Montrachet")))
+      .toBeGreaterThan(vivinoSpecificityBonus(latour, hit("Louis Latour", "Puligny-Montrachet 1er Cru Sous le Puits")));
   });
 });

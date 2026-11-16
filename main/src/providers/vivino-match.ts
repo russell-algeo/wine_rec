@@ -307,6 +307,26 @@ export function scoreVivinoIdentityDetail(candidate: WineCandidate, hit: VivinoH
   return { score: Math.max(0, Math.min(1, score)), withoutProducer, cuveeTokens: withoutProducer ? cuveeMatched : [], appellationGuess };
 }
 
+/**
+ * Tie-breaker between hits with the same identity score, so the choice
+ * doesn't depend on which order Vivino listed them in. Prefers the hit that
+ * names more of the row's own cuvée words (Bocelli "Alcide" over Bocelli
+ * "Sangiovese" for "Sangiovese Blend, Bocelli, Alcide") and adds fewer words
+ * of its own (plain "Puligny-Montrachet" over "Puligny-Montrachet 1er Cru
+ * Sous le Puits" for a row that names no vineyard). Small enough never to
+ * outweigh a real score difference.
+ */
+export function vivinoSpecificityBonus(candidate: WineCandidate, hit: VivinoHitIdentity): number {
+  const candidateTokens = candidateIdentityTokens(candidate);
+  const wineryTokens = identityTokens(hit.wineryName);
+  const nameTokens = [...new Set(identityTokens(hit.wineName).filter(token => !wineryTokens.includes(token)))];
+  const rowCuvee = candidateTokens.filter(token => tokenWeight(token, "candidate") === 1 && !GRAPE_WORDS.has(token)
+    && !hasToken(wineryTokens, token));
+  const named = rowCuvee.filter(token => hasToken(nameTokens, token)).length;
+  const extras = nameTokens.filter(token => !hasToken(candidateTokens, token)).length;
+  return Math.min(0.01, 0.004 * named) - Math.min(0.01, 0.002 * extras);
+}
+
 /** Distinctive words inside quotes on the menu row: the cuvée's own name. */
 export function quotedCuveeTokens(rawText: string | null | undefined): string[] {
   const text = rawText ?? "";
