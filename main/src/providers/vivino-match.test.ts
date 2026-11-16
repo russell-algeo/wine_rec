@@ -115,4 +115,15 @@ describe("buildVivinoIdentityQueries", () => {
   it("returns nothing for a section heading with no name", () => {
     expect(buildVivinoIdentityQueries(row("Blanc de Blancs", "Blanc de", "Blancs"))).toEqual([]);
   });
+
+  it("doesn't take a shared first name as the producer", () => {
+    const pommard = row("Pommard 1er Cru, Jean-Marc Boillot, Les Rugiens '01", "Pommard 1er Cru", "Jean-Marc Boillot");
+    expect(scoreVivinoIdentity(pommard, hit("Jean-Marc Vincent", "Auxey-Duresses 1er Cru 'Les Bréterins'", "Auxey-Duresses Premier Cru, France"))).toBeLessThan(0.6);
+  });
+
+  it("flags an appellation-only wine name the row doesn't mention", () => {
+    const sancerre = row("2024 J. de Villebois Sancerre, Loire Valley", "J. de Villebois", "Sancerre");
+    expect(scoreVivinoIdentityDetail(sancerre, hit("Domaine J. de Villebois", "Pouilly Fumé", "Pouilly-Fumé, France")).appellationGuess).toBe(true);
+    expect(scoreVivinoIdentityDetail(sancerre, hit("Domaine J. de Villebois", "Sancerre", "Sancerre, France")).appellationGuess).toBe(false);
+  });
 });

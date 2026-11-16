@@ -41,4 +41,13 @@ describe("repeatable Vivino lookups", () => {
     expect(vivinoMatchCacheKey({ ...candidate, vintage: 2022 })).not.toBe(key);
     expect(vivinoMatchCacheKey({ ...candidate, menuSection: "RED WINES" })).not.toBe(key);
   });
+
+  it("won't pick one of a producer's appellation wines when the row names none of them", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 404 })));
+    const leMoine: WineCandidate = { ...candidate, rawText: "Chardonnay, Lucien Le Moine '15", producer: "Chardonnay", label: "Lucien Le Moine", vintage: 2015, menuSection: null, color: null };
+    const withRegion = (wineId: number, wineName: string) => ({ ...hit(wineId, "Lucien le Moine", wineName), regionAndCountry: `${wineName}, France` });
+    vi.spyOn(VivinoBrowser.getInstance(), "search").mockResolvedValue([withRegion(11, "Bonnes-Mares Grand Cru"), withRegion(12, "Clos Saint-Denis Grand Cru")]);
+    const provider = createWineProfileProviders().find(value => value.name === "vivino-direct")!;
+    expect(await provider.lookup(leMoine)).toBeNull();
+  });
 });

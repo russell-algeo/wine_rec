@@ -624,7 +624,7 @@ class VivinoDirectProvider implements WineProfileProvider {
     // Score every hit at wine level, then prefer the menu's vintage among
     // hits for the same wine. A different shop vintage is still the same wine:
     // Vivino's taste structure and flavour notes are per wine.
-    const hitsByWineId = new Map<number, { hit: SearchHit; identity: number; withoutProducer: boolean; cuveeTokens: string[]; vintage: ReturnType<typeof compareVintageEvidence> }>();
+    const hitsByWineId = new Map<number, { hit: SearchHit; identity: number; withoutProducer: boolean; appellationGuess: boolean; cuveeTokens: string[]; vintage: ReturnType<typeof compareVintageEvidence> }>();
     const vintageRank = { exact: 3, unconstrained: 2, unknown: 1, conflict: 0 } as const;
     // Vivino's default search lists wines sold in our market, ranked well.
     // Wines nobody sells here (older or allocated bottles) only appear when
@@ -671,7 +671,7 @@ class VivinoDirectProvider implements WineProfileProvider {
       }
       for (const hit of hits) {
         if (compareGrapeEvidence(candidate, hit) === "conflict" || hasColourConflict(candidate, hit)) continue;
-        const { score: identity, withoutProducer, cuveeTokens } = scoreVivinoIdentityDetail(candidate, hit);
+        const { score: identity, withoutProducer, cuveeTokens, appellationGuess } = scoreVivinoIdentityDetail(candidate, hit);
         const vintage = compareVintageEvidence(candidate, hit);
         const existing = hitsByWineId.get(hit.wineId);
         if (!existing || vintageRank[vintage] > vintageRank[existing.vintage]
@@ -681,6 +681,7 @@ class VivinoDirectProvider implements WineProfileProvider {
             hit,
             identity: keepExisting ? existing.identity : identity,
             withoutProducer: keepExisting ? existing.withoutProducer : withoutProducer,
+            appellationGuess: keepExisting ? existing.appellationGuess : appellationGuess,
             cuveeTokens: keepExisting ? existing.cuveeTokens : cuveeTokens,
             vintage,
           });
@@ -691,6 +692,17 @@ class VivinoDirectProvider implements WineProfileProvider {
     if (!hitsByWineId.size) {
       console.log("[vivino-direct] No results from browser search");
       return null;
+    }
+
+    // A producer with several appellation wines (a négociant's Bonnes-Mares,
+    // Clos Saint-Denis, Fleurie...) can't be pinned to one of them when the
+    // row names none: that is a guess, not a match.
+    const wineryKey = (hit: SearchHit) => hit.wineryName.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    for (const entry of hitsByWineId.values()) {
+      if (!entry.appellationGuess) continue;
+      const siblings = [...hitsByWineId.values()].filter(other =>
+        other.hit.wineId !== entry.hit.wineId && wineryKey(other.hit) === wineryKey(entry.hit));
+      if (siblings.length) entry.identity = Math.min(entry.identity, 0.58);
     }
 
     // Step 2: pick the best wine; exact vintage breaks near-ties.

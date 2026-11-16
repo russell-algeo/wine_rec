@@ -40,6 +40,15 @@ const STYLE_WORDS = new Set([
 
 const ROSE_WORDS = new Set(["rose", "rosado", "rosato", "rosat"]);
 
+// First names shared by many winemakers: "Jean-Marc" Boillot is not
+// "Jean-Marc" Vincent. A shared first name alone never proves the producer.
+const GIVEN_NAMES = new Set([
+  "jean", "marc", "pierre", "paul", "louis", "jacques", "michel", "philippe", "francois", "claude", "henri", "andre",
+  "bernard", "alain", "daniel", "patrick", "christophe", "olivier", "nicolas", "marie", "anne", "luc", "yves", "rene",
+  "joseph", "georges", "charles", "maurice", "lucien", "jo", "jm", "jl", "jp", "giuseppe", "giovanni", "francesco",
+  "antonio", "luigi", "mario", "paolo", "jose", "juan", "john", "james", "david", "peter", "michael", "robert",
+]);
+
 // Place names that menus add after the wine; they rarely appear in a
 // Vivino wine name and must not cost the candidate coverage.
 const PLACE_WORDS = new Set([
@@ -198,11 +207,17 @@ export interface VivinoIdentityDetail {
   withoutProducer: boolean;
   /** The hit's cuvée words that matched the row (set when withoutProducer). */
   cuveeTokens: string[];
+  /**
+   * The hit's wine name is only an appellation the row doesn't mention
+   * (Lucien Le Moine "Bonnes-Mares" for "Chardonnay, Lucien Le Moine").
+   * Fine when the producer makes one wine; a guess when it makes several.
+   */
+  appellationGuess: boolean;
 }
 
 export function scoreVivinoIdentityDetail(candidate: WineCandidate, hit: VivinoHitIdentity): VivinoIdentityDetail {
   const candidateTokens = candidateIdentityTokens(candidate);
-  if (!candidateTokens.length) return { score: 0, withoutProducer: false, cuveeTokens: [] };
+  if (!candidateTokens.length) return { score: 0, withoutProducer: false, cuveeTokens: [], appellationGuess: false };
 
   const wineryTokens = identityTokens(hit.wineryName);
   // Vivino often repeats the winery inside the wine name; don't count it twice.
@@ -245,7 +260,7 @@ export function scoreVivinoIdentityDetail(candidate: WineCandidate, hit: VivinoH
 
   // A hit whose distinctive winery words are absent from the row is another
   // producer's wine, however well the appellation matches.
-  const distinctiveWinery = wineryTokens.filter(token => tokenWeight(token, "producer") === 1);
+  const distinctiveWinery = wineryTokens.filter(token => tokenWeight(token, "producer") === 1 && !GIVEN_NAMES.has(token));
   const producerSeen = distinctiveWinery.length === 0 || distinctiveWinery.some(token => hasToken(candidateTokens, token));
 
   // Some lists give only the appellation and the cuvée ("Greco di Tufo -
@@ -288,7 +303,8 @@ export function scoreVivinoIdentityDetail(candidate: WineCandidate, hit: VivinoH
   if (hitRose && !rowRose) score *= 0.6;
   else if (rowRose && !hitRose) score *= 0.75;
   if (process.env.VIVINO_MATCH_DEBUG) console.log(`[vivino-match] ${hit.wineryName} | ${hit.wineName} producer=${producer.toFixed(2)} name=${name.toFixed(2)} coverage=${coverage.toFixed(2)} missing=${nameMissing}${withoutProducer ? " no-producer" : ""} -> ${score.toFixed(2)}`);
-  return { score: Math.max(0, Math.min(1, score)), withoutProducer, cuveeTokens: withoutProducer ? cuveeMatched : [] };
+  const appellationGuess = onlyPlaces && nameTokens.length > 0 && !nameTokens.some(token => hasToken(candidateTokens, token));
+  return { score: Math.max(0, Math.min(1, score)), withoutProducer, cuveeTokens: withoutProducer ? cuveeMatched : [], appellationGuess };
 }
 
 /** Distinctive words inside quotes on the menu row: the cuvée's own name. */
