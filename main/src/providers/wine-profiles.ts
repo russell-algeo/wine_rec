@@ -4,6 +4,7 @@ import { inferStyleKey, inferTasteVector, mapExternalTasteVector, scoreWineMatch
 
 import { appConfig } from "../config.js";
 import { createId } from "../id.js";
+import { readVivinoMatch, rememberVivinoMatch } from "./vivino-match-cache.js";
 import { buildVivinoIdentityQueries, hasColourConflict, producersWithCuvee, scoreVivinoIdentityDetail } from "./vivino-match.js";
 import { compareVintageEvidence, compareGrapeEvidence } from "./wine-identity-evidence.js";
 import {
@@ -66,6 +67,8 @@ type RawExternalProfile = {
 // Vivino match at all, because a wrong wine's notes are worse than none.
 const VIVINO_MIN_IDENTITY = 0.6;
 const VIVINO_CONFIDENT_IDENTITY = 0.75;
+// Extra catalogue searches when Vivino ignores the "wines you can't buy" switch.
+const VIVINO_NON_BUYABLE_RETRIES = 2;
 const VIVINO_DECISIVE_IDENTITY = 0.85;
 
 /** Map identity onto rankMatch's scale: confident identity counts as matched (>= 0.82). */
@@ -589,7 +592,16 @@ class VivinoDirectProvider implements WineProfileProvider {
     guard.onAccessBlocked = error => { this.blocked ??= error; };
     try {
       await guard();
-      return await this.lookupCandidate(candidate, guard);
+      if (this.isEnabled && !isAnonymousStyleListingCandidate(candidate)) {
+        const remembered = await readVivinoMatch<CandidateProfileResult>(candidate);
+        if (remembered?.profile) {
+          console.log("[vivino-direct] Reusing remembered match: %s", remembered.profile.displayName);
+          return { ...remembered, profile: { ...remembered.profile, id: createId() } };
+        }
+      }
+      const result = await this.lookupCandidate(candidate, guard);
+      if (result) await rememberVivinoMatch(candidate, result);
+      return result;
     } catch (error) {
       if (error instanceof ProviderAccessBlockedError) this.blocked = error;
       throw error;
@@ -629,6 +641,12 @@ class VivinoDirectProvider implements WineProfileProvider {
     let searches = 0;
     const pendingCuveeOnly = () => [...hitsByWineId.values()].some(entry =>
       entry.withoutProducer && entry.identity >= VIVINO_CONFIDENT_IDENTITY);
+    // Vivino honours "include wines you can't buy" only some of the time and
+    // otherwise serves the shop listing again. When the catalogue search comes
+    // back identical to the shop search for the same query, ask again (a
+    // couple of times) so the result doesn't depend on that coin flip.
+    const shopResults = new Map<string, string>();
+    const hitIdsKey = (hits: SearchHit[]) => hits.map(hit => hit.wineId).sort((a, b) => a - b).join(",");
     for (const { query, includeNonBuyable } of plan) {
       if (bestIdentity() >= VIVINO_DECISIVE_IDENTITY) break;
       // A good cuvée-only match is settled by one check below, not more searching.
@@ -640,8 +658,17 @@ class VivinoDirectProvider implements WineProfileProvider {
       }
       searches += 1;
       await beforeRequest();
-      const hits = await this.searchByName(query, beforeRequest, includeNonBuyable);
+      let hits = await this.searchByName(query, beforeRequest, includeNonBuyable);
       clockStartedAt ??= Date.now();
+      if (!includeNonBuyable) {
+        shopResults.set(query, hitIdsKey(hits));
+      } else {
+        for (let retry = 0; retry < VIVINO_NON_BUYABLE_RETRIES && shopResults.get(query) === hitIdsKey(hits) && !outOfTime(); retry += 1) {
+          console.log("[vivino-direct] Catalogue search for %j matched the shop listing, asking again", query);
+          await beforeRequest();
+          hits = await this.searchByName(query, beforeRequest, true);
+        }
+      }
       for (const hit of hits) {
         if (compareGrapeEvidence(candidate, hit) === "conflict" || hasColourConflict(candidate, hit)) continue;
         const { score: identity, withoutProducer, cuveeTokens } = scoreVivinoIdentityDetail(candidate, hit);
@@ -669,7 +696,7 @@ class VivinoDirectProvider implements WineProfileProvider {
     // Step 2: pick the best wine; exact vintage breaks near-ties.
     const scored = [...hitsByWineId.values()]
       .map(entry => ({ ...entry, rank: entry.identity + (entry.vintage === "exact" ? 0.02 : 0) }))
-      .sort((a, b) => b.rank - a.rank);
+      .sort((a, b) => b.rank - a.rank || a.hit.wineId - b.hit.wineId);
     const { hit: bestHit, identity, vintage: bestVintage, withoutProducer, cuveeTokens } = scored[0]!;
     // A match made on the cuvée name alone must be the only producer that
     // makes that cuvée. One extra search for the cuvée words checks it.
