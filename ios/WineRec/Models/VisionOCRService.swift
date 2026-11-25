@@ -34,24 +34,21 @@ struct VisionOCRService {
                 }
 
                 let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
-                let lines = observations
-                    .compactMap { observation -> (text: String, y: CGFloat, x: CGFloat)? in
-                        guard let candidate = observation.topCandidates(1).first else {
-                            return nil
-                        }
-                        let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !text.isEmpty else {
-                            return nil
-                        }
-                        return (text, observation.boundingBox.minY, observation.boundingBox.minX)
+                // Vision's boxes are relative to the upright image, which image.size describes.
+                let imageWidth = Double(image.size.width)
+                let imageHeight = Double(image.size.height)
+                let observationWords = observations.compactMap { observation -> [OCRWord]? in
+                    guard let candidate = observation.topCandidates(1).first else {
+                        return nil
                     }
-                    .sorted {
-                        if abs($0.y - $1.y) > 0.015 {
-                            return $0.y > $1.y
-                        }
-                        return $0.x < $1.x
-                    }
-                    .map(\.text)
+                    return VisionTextLayout.words(
+                        in: candidate,
+                        observationBox: observation.boundingBox,
+                        imageWidth: imageWidth,
+                        imageHeight: imageHeight
+                    )
+                }
+                let lines = OCRLayout.readingOrderLines(observations: observationWords, imageHeight: imageHeight)
 
                 let recognizedText = lines.joined(separator: "\n")
                 guard !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

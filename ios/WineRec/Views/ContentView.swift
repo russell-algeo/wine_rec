@@ -614,7 +614,10 @@ struct ContentView: View {
             candidates: analysis?.candidates ?? [],
             sortOrder: resultSortOrder
         )
-        let inferredRecommendationCount = sortedRecommendations.filter(isInferredRecommendation).count
+        // Matches the web: estimates and unmatched rows count as fallback profiles.
+        let inferredRecommendationCount = sortedRecommendations.filter(isFallbackProfileRecommendation).count
+        // Estimates stay hidden by default (owner decision, Nov 15); the Taste data filter shows them.
+        let hiddenEstimateCount = resultProfileFilter == .excludeInferred ? inferredRecommendationCount : 0
         let candidateById = Dictionary(uniqueKeysWithValues: (analysis?.candidates ?? []).map { ($0.id, $0) })
         let priceBounds = getPriceFilterBounds(candidates: analysis?.candidates ?? [])
         let effectiveMaxPrice = priceBounds.map { maxPriceFilter ?? $0.max }
@@ -738,11 +741,11 @@ struct ContentView: View {
                 if resultFiltersOpen, inferredRecommendationCount > 0 {
                     StatusNotice(
                         title: resultProfileFilter == .excludeInferred
-                            ? "\(inferredRecommendationCount) inferred \(inferredRecommendationCount == 1 ? "profile hidden" : "profiles hidden")"
-                            : "\(inferredRecommendationCount) \(inferredRecommendationCount == 1 ? "wine uses" : "wines use") estimated taste data",
+                            ? "\(inferredRecommendationCount) inferred or unmatched \(inferredRecommendationCount == 1 ? "entry" : "entries") hidden"
+                            : "\(inferredRecommendationCount) \(inferredRecommendationCount == 1 ? "entry uses" : "entries use") estimated or missing profile data",
                         message: resultProfileFilter == .excludeInferred
-                            ? "These wines are excluded because Vivino did not return a reliable match."
-                            : "When we cannot confirm a Vivino match, the app estimates the taste profile from the extracted wine details.",
+                            ? "These rows are excluded because we either could not confirm a reliable Vivino match or could not build a bottle profile at all."
+                            : "When we cannot confirm a reliable Vivino match, we either infer the taste profile from the extracted wine details or show the parsed menu entry without a profile.",
                         tint: AppPalette.accentRed.opacity(0.08),
                         stroke: AppPalette.accentRed.opacity(0.16)
                     )
@@ -768,9 +771,13 @@ struct ContentView: View {
                         .font(.subheadline)
                         .foregroundStyle(AppPalette.muted)
                 } else if analysis?.status == .completed && priceFiltered.isEmpty {
-                    Text("No wines match the current result filters.")
-                        .font(.subheadline)
-                        .foregroundStyle(AppPalette.muted)
+                    if hiddenEstimateCount > 0 && profileFiltered.isEmpty {
+                        hiddenEstimatesNotice(count: hiddenEstimateCount)
+                    } else {
+                        Text("No wines match the current result filters.")
+                            .font(.subheadline)
+                            .foregroundStyle(AppPalette.muted)
+                    }
                 }
 
                 ForEach(visibleResultSections) { section in
@@ -1001,6 +1008,29 @@ struct ContentView: View {
         }
     }
 
+    /// Matches the web's empty state when every wine on the list is an estimate.
+    private func hiddenEstimatesNotice(count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("No wine on this list has a verified Vivino profile. \(count) estimated \(count == 1 ? "wine is" : "wines are") hidden.")
+                .font(.subheadline)
+                .foregroundStyle(AppPalette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("hidden-estimates-notice")
+
+            chipButton(title: "Show estimated wines", isSelected: false) {
+                resultProfileFilter = .all
+            }
+            .accessibilityIdentifier("show-estimated-wines-button")
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppPalette.accentRed.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AppPalette.accentRed.opacity(0.16), lineWidth: 1)
+        )
+    }
+
     private func chipButton(
         title: String,
         subtitle: String? = nil,
@@ -1104,14 +1134,8 @@ private struct ResultCard: View {
         parsePrice(candidate?.price)
     }
 
-    private var priceAlternatives: [String] {
-        candidate?.priceAlternatives ?? []
-    }
-
     private var priceBenchmark: PriceBenchmark? {
-        // A disputed menu price would make the markup figure misleading.
-        guard priceAlternatives.isEmpty,
-              let restaurantPrice,
+        guard let restaurantPrice,
               let retailPrice = recommendation.profile?.retailPrice else {
             return nil
         }
@@ -1284,12 +1308,6 @@ private struct ResultCard: View {
                             Text("\(candidate?.price ?? "Not listed") on the menu")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AppPalette.ink)
-
-                            if !priceAlternatives.isEmpty {
-                                Text("Check the menu: another read of this photo saw \(priceAlternatives.joined(separator: " or ")). The price filter still uses \(candidate?.price ?? "the listed price").")
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(Color(red: 0.57, green: 0.25, blue: 0.05))
-                            }
 
                             if let priceBenchmark {
                                 HStack(spacing: 8) {
@@ -2461,6 +2479,11 @@ private func isInferredRecommendation(_ recommendation: Recommendation) -> Bool 
     recommendation.profile?.taste.sourceMode == .inferred
 }
 
+// Matches the web's isFallbackProfileRecommendation: no profile at all, or an estimated one.
+private func isFallbackProfileRecommendation(_ recommendation: Recommendation) -> Bool {
+    recommendation.profile == nil || isInferredRecommendation(recommendation)
+}
+
 private func filterRecommendationsByProfileSource(
     recommendations: [Recommendation],
     filter: ResultProfileFilter
@@ -2469,7 +2492,7 @@ private func filterRecommendationsByProfileSource(
         return recommendations
     }
 
-    return recommendations.filter { !isInferredRecommendation($0) }
+    return recommendations.filter { !isFallbackProfileRecommendation($0) }
 }
 
 private func filterRecommendationsByPrice(

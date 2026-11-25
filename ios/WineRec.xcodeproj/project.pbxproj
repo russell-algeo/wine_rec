@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		03C8449348212C034350A070 /* VisionOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E402CE5448EBD8A6FF12F04C /* VisionOCRService.swift */; };
+		B2E1D8B3C4F5061728394A5B /* OCRLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D0C7A2B3E4F5061728394A /* OCRLayout.swift */; };
+		D4031AD5E61728394A5B6C7D /* VisionTextLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F2E9C4D5061728394A5B6C /* VisionTextLayout.swift */; };
 		508601ED8080348D51DBFF63 /* WineRecApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDECCAA5D6ABBD39F86F8425 /* WineRecApp.swift */; };
 		5C4FA5F460DA5C11A71A87A3 /* WineRecUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AF75CE0EF5A731FB0A71F20 /* WineRecUITests.swift */; };
 		7143A0403CC72618146EA0A9 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51294050E7B50B77B65D1EC /* AppModel.swift */; };
@@ -37,6 +39,8 @@
 		A93C929681741EE7AD88FFAA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B0F831C9F0F3BFCBACB33629 /* WineRecUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WineRecUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E402CE5448EBD8A6FF12F04C /* VisionOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionOCRService.swift; sourceTree = "<group>"; };
+		A1D0C7A2B3E4F5061728394A /* OCRLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRLayout.swift; sourceTree = "<group>"; };
+		C3F2E9C4D5061728394A5B6C /* VisionTextLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionTextLayout.swift; sourceTree = "<group>"; };
 		E51294050E7B50B77B65D1EC /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		FDECCAA5D6ABBD39F86F8425 /* WineRecApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WineRecApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -94,7 +98,9 @@
 				3444851063480FF269A86066 /* APIClient.swift */,
 				E51294050E7B50B77B65D1EC /* AppModel.swift */,
 				5F8FF8812A5C4A405B97C78A /* DomainModels.swift */,
+				A1D0C7A2B3E4F5061728394A /* OCRLayout.swift */,
 				E402CE5448EBD8A6FF12F04C /* VisionOCRService.swift */,
+				C3F2E9C4D5061728394A5B6C /* VisionTextLayout.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -198,7 +204,9 @@
 				7143A0403CC72618146EA0A9 /* AppModel.swift in Sources */,
 				D20F1C99E685B8DBA6B097E9 /* ContentView.swift in Sources */,
 				FC50A08FA59C485456E4A6E3 /* DomainModels.swift in Sources */,
+				B2E1D8B3C4F5061728394A5B /* OCRLayout.swift in Sources */,
 				03C8449348212C034350A070 /* VisionOCRService.swift in Sources */,
+				D4031AD5E61728394A5B6C7D /* VisionTextLayout.swift in Sources */,
 				508601ED8080348D51DBFF63 /* WineRecApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -1,0 +1,113 @@
+name: iOS app
+
+# Builds the iPhone app and runs its UI tests on a simulator, against a local
+# isolated API (no Production analyses, no Vivino, no Redis or Blob). Uploads
+# screenshots, the test result bundle and the API log.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/ios-*"]
+    paths: ["ios/**", "main/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-14
+    timeout-minutes: 75
+    env:
+      ARTIFACTS: ${{ github.workspace }}/artifacts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: main/package-lock.json
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun simctl list devices available | grep -E "iPhone" | head -20
+
+      - name: Swift logic checks (no simulator)
+        run: |
+          mkdir -p "$ARTIFACTS"
+          swiftc ios/WineRec/Models/DomainModels.swift ios/Tests/TasteEvidenceCheck.swift -o /tmp/taste-evidence-check
+          /tmp/taste-evidence-check
+          swiftc ios/WineRec/Models/OCRLayout.swift ios/Tests/OCRLayoutCheck.swift -o /tmp/ocr-layout-check
+          /tmp/ocr-layout-check
+
+      - name: Apple Vision reading order on fixture images
+        run: |
+          swiftc ios/WineRec/Models/OCRLayout.swift ios/WineRec/Models/VisionTextLayout.swift \
+            ios/Tests/VisionLayoutProbe.swift -o /tmp/vision-layout-probe
+          /tmp/vision-layout-probe ios/WineRecUITests/Fixtures/two-column-wine-list.jpg \
+            --expect-two-columns "Txakolina" "Vietti" | tee "$ARTIFACTS/vision-two-column.txt"
+          for image in shared/test/fixtures/*.png; do
+            /tmp/vision-layout-probe "$image"
+          done | tee "$ARTIFACTS/vision-single-column.txt"
+
+      - name: Start the isolated local API
+        working-directory: main
+        run: |
+          npm ci --no-audit --no-fund
+          nohup npm run dev:isolated > "$ARTIFACTS/isolated-api.log" 2>&1 &
+          for attempt in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:3001/api/health/providers > /dev/null; then
+              echo "API is up"; exit 0
+            fi
+            sleep 2
+          done
+          cat "$ARTIFACTS/isolated-api.log"
+          exit 1
+
+      - name: Serve the local wine-list page
+        run: |
+          nohup python3 -m http.server 8099 --bind 127.0.0.1 \
+            --directory ios/WineRecUITests/Fixtures > "$ARTIFACTS/fixture-server.log" 2>&1 &
+          sleep 2
+          curl -sf http://127.0.0.1:8099/wine-list.html > /dev/null
+
+      - name: Build and run UI tests on the iPhone simulator
+        env:
+          TEST_RUNNER_WINE_REC_UI_TEST_API_BASE_URL: http://127.0.0.1:3001
+          TEST_RUNNER_WINE_REC_UI_TEST_WINE_LIST_URL: http://127.0.0.1:8099/wine-list.html
+          TEST_RUNNER_WINE_REC_UI_TEST_ESTIMATES_ONLY: "1"
+          TEST_RUNNER_WINE_REC_EXTERNAL_TEST_IMAGE_PATH: ${{ github.workspace }}/ios/WineRecUITests/Fixtures/two-column-wine-list.jpg
+          TEST_RUNNER_WINE_REC_SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/screenshots
+        run: |
+          set -o pipefail
+          device=$(xcrun simctl list devices available | grep -oE "iPhone 15( Pro)? \(" | head -1 | sed 's/ ($//')
+          device=${device:-iPhone 15}
+          echo "Simulator: $device"
+          xcodebuild test \
+            -project ios/WineRec.xcodeproj \
+            -scheme WineRec \
+            -destination "platform=iOS Simulator,name=$device" \
+            -resultBundlePath "$ARTIFACTS/WineRec.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee "$ARTIFACTS/xcodebuild.log" | grep -E "error:|warning: .*WineRec|Test Case|Executed|\*\* "
+
+      - name: Summarize test results
+        if: always()
+        run: |
+          if [ -d "$ARTIFACTS/WineRec.xcresult" ]; then
+            xcrun xcresulttool get test-results summary --path "$ARTIFACTS/WineRec.xcresult" 2>/dev/null \
+              || xcrun xcresulttool get --format json --path "$ARTIFACTS/WineRec.xcresult" | head -c 4000
+          fi
+          ls -la "$ARTIFACTS/screenshots" 2>/dev/null || true
+          tail -40 "$ARTIFACTS/isolated-api.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-test-results
+          path: artifacts
+          retention-days: 14

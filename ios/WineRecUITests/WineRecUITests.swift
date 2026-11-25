@@ -7,13 +7,19 @@ final class WineRecUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app.launchArguments = ["-ui-testing-reset-state"]
-        app.launchEnvironment["WINE_REC_API_BASE_URL"] = "https://wine-rec.vercel.app"
+        // CI points these at a local isolated API (main: npm run dev:isolated) so test runs
+        // never send analyses to Production. Without the override they use Production as before.
+        let runnerEnvironment = ProcessInfo.processInfo.environment
+        app.launchEnvironment["WINE_REC_API_BASE_URL"] =
+            runnerEnvironment["WINE_REC_UI_TEST_API_BASE_URL"] ?? "https://wine-rec.vercel.app"
         if name.contains("TasteGetStartedUrlAndCancelFlow") {
-            app.launchEnvironment["WINE_REC_UI_TEST_PREFILL_URL"] = "https://grahamwine.co/collections/pinot-noir"
+            app.launchEnvironment["WINE_REC_UI_TEST_PREFILL_URL"] =
+                runnerEnvironment["WINE_REC_UI_TEST_WINE_LIST_URL"] ?? "https://grahamwine.co/collections/pinot-noir"
         }
         if name.contains("PhotoLibraryVisionOcrSubmissionResultsAndFilters")
             || name.contains("CameraEntryPointUsesVisionOcrSubmissionPathInSimulator")
             || name.contains("CaptureActualFlowScreenshots")
+            || name.contains("HiddenEstimatesNotice")
         {
             app.launchEnvironment["WINE_REC_UI_TEST_FIXTURE_IMAGE_PATH"] = fixtureImagePath()
         }
@@ -60,6 +66,33 @@ final class WineRecUITests: XCTestCase {
         tap(app.buttons["analyze-button"])
 
         waitForCompletedResults()
+    }
+
+    /// Mirrors the web's Nov 15 change: when every wine is an estimate, the default
+    /// "hide inferred" filter leaves an empty list with a one-tap way to show them.
+    /// Needs an API that only returns estimates, like the isolated local API.
+    func testHiddenEstimatesNoticeShowsEstimatedWines() throws {
+        guard ProcessInfo.processInfo.environment["WINE_REC_UI_TEST_ESTIMATES_ONLY"] == "1" else {
+            throw XCTSkip("Set WINE_REC_UI_TEST_ESTIMATES_ONLY=1 with an API that returns only estimated profiles.")
+        }
+        let screenshotDirectory = ProcessInfo.processInfo.environment["WINE_REC_SCREENSHOT_DIR"] ?? defaultScreenshotDirectory()
+
+        tap(app.buttons["get-started-button"])
+        importFixtureImageOrOpenPicker("Photos")
+        XCTAssertTrue(app.staticTexts["Selected photo.jpg"].waitForExistence(timeout: 30))
+        tap(app.buttons["analyze-button"])
+
+        let showEstimates = app.buttons["show-estimated-wines-button"].firstMatch
+        XCTAssertTrue(showEstimates.waitForExistence(timeout: 240), "Hidden-estimates notice did not appear")
+        XCTAssertTrue(app.staticTexts["hidden-estimates-notice"].exists)
+        XCTAssertFalse(resultCards().firstMatch.exists, "Estimated wines should be hidden by default")
+        try captureScreenshot(named: "ios-ui-results-estimates-hidden.png", in: screenshotDirectory)
+
+        showEstimates.tap()
+        XCTAssertTrue(resultCards().firstMatch.waitForExistence(timeout: 10), "Show estimated wines did not reveal results")
+        XCTAssertFalse(showEstimates.exists)
+        sleep(1)
+        try captureScreenshot(named: "ios-ui-results-estimates-shown.png", in: screenshotDirectory)
     }
 
     func testCaptureVisualParityScreenshots() throws {
@@ -165,11 +198,23 @@ final class WineRecUITests: XCTestCase {
         selectFirstPhotoFromPresentedPicker()
     }
 
-    private func waitForCompletedResults() {
-        let resultCard = app.descendants(matching: .any)
+    private func resultCards() -> XCUIElementQuery {
+        app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "result-card-"))
-            .firstMatch
-        XCTAssertTrue(resultCard.waitForExistence(timeout: 240))
+    }
+
+    private func waitForCompletedResults() {
+        let resultCard = resultCards().firstMatch
+        let showEstimates = app.buttons["show-estimated-wines-button"].firstMatch
+        let deadline = Date().addingTimeInterval(240)
+        while Date() < deadline && !resultCard.exists && !showEstimates.exists {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        // Lists where every wine is an estimate show the hidden-estimates notice first.
+        if !resultCard.exists && showEstimates.exists {
+            showEstimates.tap()
+        }
+        XCTAssertTrue(resultCard.waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "Failed")).firstMatch.exists)
     }
 
