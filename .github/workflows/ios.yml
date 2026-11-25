@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   ios:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 75
     env:
       ARTIFACTS: ${{ github.workspace }}/artifacts
@@ -84,8 +84,8 @@ jobs:
           TEST_RUNNER_WINE_REC_SCREENSHOT_DIR: ${{ github.workspace }}/artifacts/screenshots
         run: |
           set -o pipefail
-          device=$(xcrun simctl list devices available | grep -oE "iPhone 15( Pro)? \(" | head -1 | sed 's/ ($//')
-          device=${device:-iPhone 15}
+          device=$(xcrun simctl list devices available | grep -oE "iPhone [0-9]+( Pro)? \(" | sort -t' ' -k2 -n | tail -1 | sed 's/ ($//')
+          device=${device:-iPhone 16}
           echo "Simulator: $device"
           xcodebuild test \
             -project ios/WineRec.xcodeproj \
