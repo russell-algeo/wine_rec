@@ -13,8 +13,11 @@ struct APIClient {
     }
 
     func fetchURLPreview(url: String) async throws -> URLPreview {
-        let encoded = url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? url
-        return try await requestJSON(path: "/api/preview?url=\(encoded)", as: URLPreview.self)
+        // appending(path:) would percent-encode the "?", so build the query separately.
+        var components = URLComponents(url: baseURL.appending(path: "/api/preview"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "url", value: url)]
+        guard let requestURL = components?.url else { throw URLError(.badURL) }
+        return try await performJSON(request: URLRequest(url: requestURL), as: URLPreview.self)
     }
 
     func upload(fileURL: URL) async throws -> CreateAnalysisResponse {

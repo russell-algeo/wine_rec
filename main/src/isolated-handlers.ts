@@ -14,6 +14,9 @@ export function createIsolatedHandlers(): { handlers: AppHandlers; drain: () => 
       || !["tesseract-js", "tesseract", "mock"].includes(appConfig.ocrProvider)) {
     throw new Error("Use npm run dev:isolated to select local-only providers");
   }
+  // Optional pause while a run shows as processing, so UI tests can press Stop
+  // before the local pipeline finishes. Off unless set.
+  const processingDelayMs = Math.max(0, Number(process.env.WINE_REC_ISOLATED_PROCESSING_DELAY_MS ?? 0) || 0);
   const runs = new Map<string, AnalysisRun>();
   const pending = new Set<Promise<void>>();
   type Hooks = Parameters<typeof runAnalysisPipeline>[1];
@@ -38,6 +41,8 @@ export function createIsolatedHandlers(): { handlers: AppHandlers; drain: () => 
     task = Promise.resolve().then(async () => {
       if (canceled()) return;
       update({ status: "processing" });
+      if (processingDelayMs > 0) await new Promise(resolve => setTimeout(resolve, processingDelayMs));
+      if (canceled()) return;
       try {
         const result = await processInput({
           shouldCancel: canceled,
