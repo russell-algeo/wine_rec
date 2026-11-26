@@ -18,6 +18,8 @@ import {
   type Recommendation,
   type WineCandidate,
 } from "@wine-rec/contracts";
+import type { ClientOcrLayout } from "@wine-rec/contracts";
+import { chooseClientOcrText } from "./providers/client-ocr-text.js";
 
 import { createOcrProvider } from "./providers/ocr.js";
 import { createWineProfileProviders } from "./providers/wine-profiles.js";
@@ -486,12 +488,13 @@ export async function createUrlAnalysis(input: { url: string }): Promise<CreateA
 export async function createClientOcrAnalysis(input: {
   sourceFilename: string;
   recognizedText: string;
+  layout?: ClientOcrLayout;
 }): Promise<CreateAnalysisResponse> {
   previewBudgetConfig();
-  const recognizedText = input.recognizedText.trim();
-  if (!recognizedText) {
+  if (!input.recognizedText.trim()) {
     throw new RequestError("Recognized text is required", 400);
   }
+  const { text: recognizedText } = chooseClientOcrText(input.recognizedText, input.layout);
 
   const id = scopedAnalysisId(createId());
   const { createJob, updateJob } = await loadJobStore();

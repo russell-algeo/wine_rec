@@ -16,6 +16,67 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  vision-ocr:
+    # Runs the app's own Apple Vision code on wine-list images, then scores what
+    # the server parses from the old text-only request and from the current
+    # text-plus-word-boxes request. Fails if word boxes make any case worse.
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      OUT: ${{ runner.temp }}/ocr
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: main/package-lock.json
+
+      - name: Install the server code
+        working-directory: main
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:packages
+
+      - name: Build the Vision dump tool from the app's sources
+        run: |
+          swiftc ios/WineRec/Models/OCRLayout.swift ios/WineRec/Models/VisionTextLayout.swift \
+            ios/WineRec/Models/VisionOCRCore.swift ios/Tests/VisionOCRDump.swift -o /tmp/vision-ocr-dump
+
+      - name: Read every case image with Apple Vision
+        working-directory: main
+        run: |
+          TSX_TSCONFIG_PATH=tsconfig.runtime.json npx tsx scripts/client-ocr-eval.ts prepare "$OUT"
+          /tmp/vision-ocr-dump --out "$OUT/dumps-app" "$OUT"/images/*
+          /tmp/vision-ocr-dump --out "$OUT/dumps-no-lc" --no-language-correction "$OUT"/images/*
+
+      - name: Score app settings (language correction on)
+        working-directory: main
+        run: TSX_TSCONFIG_PATH=tsconfig.runtime.json npx tsx scripts/client-ocr-eval.ts eval "$OUT/dumps-app" --verbose
+
+      - name: Score with language correction off
+        working-directory: main
+        run: TSX_TSCONFIG_PATH=tsconfig.runtime.json npx tsx scripts/client-ocr-eval.ts eval "$OUT/dumps-no-lc" --verbose
+
+      - name: Print the Vision dumps
+        if: always()
+        run: |
+          echo "=== VISION DUMPS BASE64 BEGIN"
+          tar -czf - -C "$OUT" dumps-app dumps-no-lc | base64 -b 76
+          echo "=== VISION DUMPS BASE64 END"
+
+      - name: Fail if word boxes made any case worse
+        working-directory: main
+        run: TSX_TSCONFIG_PATH=tsconfig.runtime.json npx tsx scripts/client-ocr-eval.ts eval "$OUT/dumps-app" --check
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vision-ocr-dumps
+          path: ${{ runner.temp }}/ocr
+          retention-days: 14
+
   ios:
     runs-on: macos-15
     timeout-minutes: 75

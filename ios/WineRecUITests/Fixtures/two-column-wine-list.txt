@@ -1,0 +1,31 @@
+Wines by the Bottle
+White
+Domaine Vacheron Sancerre 2022 68
+Loire Valley, France
+Christian Moreau Chablis 2021 72
+Burgundy, France
+Domaine de la Pépière Muscadet 2023 45
+Loire Valley, France
+Trimbach Riesling 2020 58
+Alsace, France
+Pieropan Soave Classico 2022 52
+Veneto, Italy
+Hirsch Grüner Veltliner 2021 55
+Kamptal, Austria
+Ameztoi Txakolina 2023 47
+Getariako, Spain
+Red
+Vietti Barolo Castiglione 2019 140
+Piedmont, Italy
+López de Heredia Tondonia 2012 95
+Rioja, Spain
+Jean Foillard Morgon 2022 70
+Beaujolais, France
+Benanti Etna Rosso 2021 75
+Sicily, Italy
+Bernard Baudry Chinon 2021 66
+Loire Valley, France
+Domaine Tempier Bandol 2020 98
+Provence, France
+G.D. Vajra Barbera d'Alba 2022 57
+Piedmont, Italy

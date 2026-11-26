@@ -51,13 +51,18 @@ struct APIClient {
         )
     }
 
-    func createAnalysis(fromRecognizedText recognizedText: String, sourceFilename: String) async throws -> CreateAnalysisResponse {
+    func createAnalysis(
+        fromRecognizedText recognizedText: String,
+        sourceFilename: String,
+        layout: ClientOCRLayout? = nil
+    ) async throws -> CreateAnalysisResponse {
         try await requestJSON(
             path: "/api/client-ocr",
             method: "POST",
             body: try JSONEncoder().encode(ClientOCRRequest(
                 sourceFilename: sourceFilename,
-                recognizedText: recognizedText
+                recognizedText: recognizedText,
+                layout: layout
             )),
             contentType: "application/json",
             as: CreateAnalysisResponse.self
@@ -158,9 +163,11 @@ struct APIClient {
     }
 }
 
-private struct ClientOCRRequest: Encodable {
+struct ClientOCRRequest: Encodable {
     let sourceFilename: String
     let recognizedText: String
+    /// Word boxes for the server's layout pass; older servers ignore it.
+    let layout: ClientOCRLayout?
 }
 
 private struct APIErrorEnvelope: Decodable {

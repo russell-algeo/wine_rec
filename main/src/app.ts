@@ -141,6 +141,7 @@ export async function buildApp(handlers: AppHandlers = {
         await handlers.createClientOcrAnalysis({
           sourceFilename: parsed.sourceFilename,
           recognizedText: parsed.recognizedText,
+          ...(parsed.layout ? { layout: parsed.layout } : {}),
         }),
       );
     } catch (error) {

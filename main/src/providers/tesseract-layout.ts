@@ -147,15 +147,71 @@ function findColumnIndex(word: TesseractWord, columnStarts: number[]): number {
   return 0;
 }
 
-export function buildPlainTextFromTsv(tsv: string): string {
-  return groupLinesFromTsv(tsv)
+function plainTextFromLines(lines: LayoutLine[]): string {
+  return lines
     .map((line) => lineText(line.words))
     .filter(Boolean)
     .join("\n");
 }
 
+export function buildPlainTextFromTsv(tsv: string): string {
+  return plainTextFromLines(groupLinesFromTsv(tsv));
+}
+
 export function buildLayoutAwareTextFromTsv(tsv: string): string {
-  const lines = groupLinesFromTsv(tsv);
+  return layoutAwareTextFromLines(groupLinesFromTsv(tsv));
+}
+
+/** A word box from another OCR engine, in pixels with a top-left origin. */
+export type LayoutWord = { text: string; left: number; top: number; width: number; height: number };
+
+/**
+ * Runs the same layout pass as server OCR on words from another engine (the
+ * iPhone app's Apple Vision text). Each input line is one engine observation.
+ * Vision often returns the halves of one printed row as separate observations,
+ * while single-block Tesseract returns the whole row, so observations that sit
+ * on the same row are joined first; the two-column split then reads columns in
+ * order exactly as it does for server OCR.
+ */
+export function buildLayoutAwareTextFromWordLines(input: LayoutWord[][]): string {
+  const lines = input
+    .map((words, index) => words
+      .map((word) => ({ ...word, text: word.text.trim(), conf: 100, lineKey: `client:${index}` }))
+      .filter((word) => word.text.length > 0 && Number.isFinite(word.left) && Number.isFinite(word.top)
+        && word.width >= 0 && word.height >= 0))
+    .filter((words) => words.length > 0)
+    .map((words, index) => makeLine(`client:${index}`, words))
+    .sort(compareLines);
+  return layoutAwareTextFromLines(splitTwoColumnLayout(mergeSameRowLines(lines)));
+}
+
+function medianHeight(line: LayoutLine): number {
+  const heights = line.words.map((word) => word.height).sort((a, b) => a - b);
+  return heights[Math.floor(heights.length / 2)] ?? 0;
+}
+
+function mergeSameRowLines(lines: LayoutLine[]): LayoutLine[] {
+  const byCenter = [...lines].sort((left, right) => (left.top + left.bottom) - (right.top + right.bottom));
+  const rows: LayoutLine[] = [];
+  for (const line of byCenter) {
+    const last = rows.at(-1);
+    if (last) {
+      const height = Math.max(medianHeight(last), medianHeight(line));
+      const lastCenter = (last.top + last.bottom) / 2;
+      const center = (line.top + line.bottom) / 2;
+      const overlapsHorizontally = line.words.some((word) => last.words.some((other) =>
+        word.left < other.left + other.width && other.left < word.left + word.width));
+      if (Math.abs(lastCenter - center) <= height * 0.5 && !overlapsHorizontally) {
+        rows[rows.length - 1] = makeLine(last.key, [...last.words, ...line.words]);
+        continue;
+      }
+    }
+    rows.push(line);
+  }
+  return rows.sort(compareLines);
+}
+
+function layoutAwareTextFromLines(lines: LayoutLine[]): string {
   if (shouldPreferPlainText(lines)) {
     return lines
       .map((line) => lineText(line.words))
@@ -262,7 +318,7 @@ export function buildLayoutAwareTextFromTsv(tsv: string): string {
     index = bandIndexes[bandIndexes.length - 1]!;
   }
 
-  return renderedBlocks.length > 0 ? renderedBlocks.join("\n\n") : buildPlainTextFromTsv(tsv);
+  return renderedBlocks.length > 0 ? renderedBlocks.join("\n\n") : plainTextFromLines(lines);
 }
 
 function groupLinesFromTsv(tsv: string): LayoutLine[] {

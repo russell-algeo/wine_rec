@@ -139,10 +139,28 @@ export const createAnalysisFromUrlRequestSchema = z.object({
   url: z.string().url(),
 });
 
+const clientOcrWordSchema = z.object({
+  text: z.string().max(200),
+  left: z.number().finite(),
+  top: z.number().finite(),
+  width: z.number().finite().nonnegative(),
+  height: z.number().finite().nonnegative(),
+});
+
+/** Word boxes from on-device OCR, in image pixels with a top-left origin; one line per OCR observation. */
+export const clientOcrLayoutSchema = z.object({
+  imageWidth: z.number().finite().positive(),
+  imageHeight: z.number().finite().positive(),
+  lines: z.array(z.object({ words: z.array(clientOcrWordSchema).max(200) })).max(1500),
+}).refine((layout) => layout.lines.reduce((sum, line) => sum + line.words.length, 0) <= 12_000, {
+  message: "Too many words in layout",
+});
+
 export const createAnalysisFromClientOcrRequestSchema = z.object({
   sourceFilename: z.string().trim().min(1).max(512),
   recognizedText: z.string().trim().min(1),
   recognitionMetadata: z.record(z.unknown()).optional(),
+  layout: clientOcrLayoutSchema.optional(),
 });
 
 export const createAnalysisResponseSchema = z.object({
@@ -171,6 +189,7 @@ export type AnalysisRun = z.infer<typeof analysisRunSchema>;
 export type ProviderHealth = z.infer<typeof providerHealthSchema>;
 export type CreateAnalysisFromUrlRequest = z.infer<typeof createAnalysisFromUrlRequestSchema>;
 export type CreateAnalysisFromClientOcrRequest = z.infer<typeof createAnalysisFromClientOcrRequestSchema>;
+export type ClientOcrLayout = z.infer<typeof clientOcrLayoutSchema>;
 export type CreateAnalysisResponse = z.infer<typeof createAnalysisResponseSchema>;
 
 /** Shared evidence contract used by scoring and display, including legacy results. */

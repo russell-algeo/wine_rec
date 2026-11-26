@@ -4,6 +4,7 @@ import { RequestError, getProviderHealth, getPreview } from "./api-handlers.js";
 import { appConfig } from "./config.js";
 import { createId } from "./id.js";
 import { assertLoopbackUrl } from "./isolated-network.js";
+import { chooseClientOcrText } from "./providers/client-ocr-text.js";
 import { parseWineCandidates } from "./services/parser.js";
 import { AnalysisCanceledError, runAnalysisPipeline, runCandidateAnalysis } from "./services/pipeline.js";
 
@@ -89,9 +90,9 @@ export function createIsolatedHandlers(): { handlers: AppHandlers; drain: () => 
           sourceType: "url-html", sourceUrl: url, filename: "menu.html", mimeType: "text/html", storagePath: "",
         }, hooks, { browserFallback: false }));
       },
-      createClientOcrAnalysis: async ({ sourceFilename, recognizedText }) => {
-        const extractedText = recognizedText.trim();
-        if (!extractedText) throw new RequestError("Recognized text is required", 400);
+      createClientOcrAnalysis: async ({ sourceFilename, recognizedText, layout }) => {
+        if (!recognizedText.trim()) throw new RequestError("Recognized text is required", 400);
+        const extractedText = chooseClientOcrText(recognizedText, layout).text;
         return submit("client-ocr-text", sourceFilename, async hooks => {
           const candidates = parseWineCandidates(extractedText);
           await hooks?.onCandidatesParsed?.({ extractedText, candidates });
