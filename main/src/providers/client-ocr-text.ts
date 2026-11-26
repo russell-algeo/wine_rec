@@ -1,4 +1,5 @@
 import type { ClientOcrLayout } from "@wine-rec/contracts";
+import { parseWineCandidates } from "../services/parser.js";
 import { scoreExtractedTextQuality } from "./ocr-text-quality.js";
 import { buildLayoutAwareTextFromWordLines } from "./tesseract-layout.js";
 
@@ -17,8 +18,8 @@ export type ClientOcrTextChoice = {
  *
  * Older app builds send only their own line order. Newer builds also send
  * word boxes, which go through the same layout pass as server OCR (product
- * grids, two-column lists, detached price artifacts). As with server OCR
- * passes, the version the parser can read best wins.
+ * grids, two-column lists, tilted photos). The layout text is used unless
+ * it yields fewer priced wines than the app's own text.
  */
 export function chooseClientOcrText(recognizedText: string, layout?: ClientOcrLayout): ClientOcrTextChoice {
   const clientText = recognizedText.trim();
@@ -34,8 +35,27 @@ export function chooseClientOcrText(recognizedText: string, layout?: ClientOcrLa
   })))).trim();
   if (!layoutText) return { text: clientText, source: "client-text" };
 
-  // Ties go to the layout pass, which is what server OCR would have produced.
-  return scoreExtractedTextQuality(layoutText) >= scoreExtractedTextQuality(clientText)
+  return layoutTextIsBetter(layoutText, clientText)
     ? { text: layoutText, source: "layout" }
     : { text: clientText, source: "client-text" };
+}
+
+/**
+ * The server's own pass scorer counts every parsed row, so the app's text,
+ * where a price often sits on its own line away from its wine, can outscore
+ * a correct layout by producing extra rows with no price. Priced wines are
+ * what the rest of the pipeline uses, so they decide first.
+ */
+function layoutTextIsBetter(layoutText: string, clientText: string): boolean {
+  const count = (text: string) => {
+    const candidates = parseWineCandidates(text);
+    const priced = candidates.filter((candidate) => candidate.price).length;
+    return { priced, unpriced: candidates.length - priced };
+  };
+  const layout = count(layoutText);
+  const client = count(clientText);
+  if (layout.priced !== client.priced) return layout.priced > client.priced;
+  if (layout.unpriced !== client.unpriced) return layout.unpriced < client.unpriced;
+  // Ties go to the layout pass, which is what server OCR would have produced.
+  return scoreExtractedTextQuality(layoutText) >= scoreExtractedTextQuality(clientText);
 }

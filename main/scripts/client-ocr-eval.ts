@@ -5,7 +5,8 @@
 //                               scores the app's old text-only request against the
 //                               current text-plus-word-boxes request, per case; with
 //                               --tesseract, also the server's own OCR of the same image.
-//                               --check fails when word boxes make any case worse.
+//                               --check fails when word boxes make any case worse, or
+//                               (with --min-matched N) when fewer than N wines match.
 //
 // Run from main/: TSX_TSCONFIG_PATH=tsconfig.runtime.json npx tsx scripts/client-ocr-eval.ts ...
 import fs from "node:fs";
@@ -129,8 +130,13 @@ async function evaluate(dumpDir: string) {
     const { shutdownTesseractJsWorkers } = await import("../src/providers/ocr.js");
     await shutdownTesseractJsWorkers();
   }
+  const minIndex = rest.indexOf("--min-matched");
+  const minMatched = minIndex >= 0 ? Number(rest[minIndex + 1]) : 0;
+  if (check && totals.layout[0]! < minMatched) {
+    regressions.push(`only ${totals.layout[0]} wines matched with word boxes; expected at least ${minMatched}`);
+  }
   if (check && regressions.length) {
-    console.log(`FAIL: word boxes made ${regressions.length} case(s) worse:\n${regressions.join("\n")}`);
+    console.log(`FAIL:\n${regressions.join("\n")}`);
     process.exit(1);
   }
 }
@@ -138,6 +144,6 @@ async function evaluate(dumpDir: string) {
 if (command === "prepare" && target) await prepare(target);
 else if (command === "eval" && target) await evaluate(target);
 else {
-  console.log("usage: client-ocr-eval.ts prepare OUT | eval DUMPS [--tesseract IMAGES] [--verbose] [--text] [--check]");
+  console.log("usage: client-ocr-eval.ts prepare OUT | eval DUMPS [--tesseract IMAGES] [--verbose] [--text] [--check [--min-matched N]]");
   process.exit(2);
 }

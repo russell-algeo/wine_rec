@@ -102,7 +102,10 @@ function lineLooksLikeInlineMenuRow(text: string): boolean {
   if (match) {
     const priceBlob = match[0] ?? "";
     const slashCount = (priceBlob.match(/\//g) ?? []).length;
-    const isMultiPriceRow = slashCount >= 2 || /\bNA\b/i.test(priceBlob);
+    // Glass / bottle pairs ("16 / 64") count too: the second price is the larger one.
+    const pair = slashCount === 1 ? priceBlob.match(/(\d+(?:\.\d{2})?)\s*\/\s*\$?(\d+(?:\.\d{2})?)/) : null;
+    const isGlassBottlePair = Boolean(pair && Number(pair[1]) >= 5 && Number(pair[2]) > Number(pair[1]) * 2);
+    const isMultiPriceRow = slashCount >= 2 || /\bNA\b/i.test(priceBlob) || isGlassBottlePair;
     if (!isMultiPriceRow) return false;
 
     const title = text.replace(inlineMenuPricePattern, "").trim().replace(/[:\s]+$/, "");
@@ -174,7 +177,7 @@ export type LayoutWord = { text: string; left: number; top: number; width: numbe
  * order exactly as it does for server OCR.
  */
 export function buildLayoutAwareTextFromWordLines(input: LayoutWord[][]): string {
-  const lines = input
+  const lines = deskewWordLines(input)
     .map((words, index) => words
       .map((word) => ({ ...word, text: word.text.trim(), conf: 100, lineKey: `client:${index}` }))
       .filter((word) => word.text.length > 0 && Number.isFinite(word.left) && Number.isFinite(word.top)
@@ -183,6 +186,56 @@ export function buildLayoutAwareTextFromWordLines(input: LayoutWord[][]): string
     .map((words, index) => makeLine(`client:${index}`, words))
     .sort(compareLines);
   return layoutAwareTextFromLines(splitTwoColumnLayout(mergeSameRowLines(lines)));
+}
+
+/**
+ * Levels a tilted photo. Each long line's words give its slope; the slope is
+ * fitted against height on the page (a keystoned photo tilts more at one end)
+ * and every word is sheared back, so a price far to the right lands on its
+ * wine's row instead of the row above. Straight screenshots are left as is.
+ */
+function deskewWordLines(input: LayoutWord[][]): LayoutWord[][] {
+  const samples: Array<{ y: number; slope: number; weight: number }> = [];
+  for (const words of input) {
+    if (words.length < 3) continue;
+    const heights = words.map((word) => word.height).sort((a, b) => a - b);
+    const height = heights[Math.floor(heights.length / 2)] ?? 0;
+    const xs = words.map((word) => word.left + word.width / 2);
+    const ys = words.map((word) => word.top + word.height / 2);
+    const span = Math.max(...xs) - Math.min(...xs);
+    if (height <= 0 || span < 8 * height) continue;
+    const meanX = xs.reduce((sum, x) => sum + x, 0) / xs.length;
+    const meanY = ys.reduce((sum, y) => sum + y, 0) / ys.length;
+    const varX = xs.reduce((sum, x) => sum + (x - meanX) ** 2, 0);
+    const slope = xs.reduce((sum, x, index) => sum + (x - meanX) * (ys[index]! - meanY), 0) / varX;
+    if (Math.abs(slope) <= 0.2) samples.push({ y: meanY, slope, weight: span });
+  }
+  if (samples.length < 3) return input;
+  const sortedSlopes = samples.map((sample) => sample.slope).sort((a, b) => a - b);
+  const median = sortedSlopes[Math.floor(sortedSlopes.length / 2)]!;
+  const inliers = samples.filter((sample) => Math.abs(sample.slope - median) <= 0.02);
+  if (inliers.length < 3) return input;
+
+  // slope(y) = a + b * y, weighted by line length; flat when the fit is unstable.
+  const totalWeight = inliers.reduce((sum, sample) => sum + sample.weight, 0);
+  const meanY = inliers.reduce((sum, sample) => sum + sample.weight * sample.y, 0) / totalWeight;
+  const meanSlope = inliers.reduce((sum, sample) => sum + sample.weight * sample.slope, 0) / totalWeight;
+  const varY = inliers.reduce((sum, sample) => sum + sample.weight * (sample.y - meanY) ** 2, 0);
+  const spreadY = Math.max(...inliers.map((sample) => sample.y)) - Math.min(...inliers.map((sample) => sample.y));
+  const b = inliers.length >= 5 && varY > 0 && spreadY > 0
+    ? inliers.reduce((sum, sample) => sum + sample.weight * (sample.y - meanY) * (sample.slope - meanSlope), 0) / varY
+    : 0;
+  const slopeAt = (y: number) => Math.max(-0.2, Math.min(0.2, meanSlope + b * (y - meanY)));
+  const maxSlope = Math.max(Math.abs(slopeAt(meanY - spreadY)), Math.abs(slopeAt(meanY + spreadY)), Math.abs(meanSlope));
+  if (maxSlope < 0.005) return input;
+
+  const allWords = input.flat();
+  const centerX = allWords.reduce((sum, word) => sum + word.left + word.width / 2, 0) / Math.max(1, allWords.length);
+  return input.map((words) => words.map((word) => {
+    const x = word.left + word.width / 2;
+    const y = word.top + word.height / 2;
+    return { ...word, top: word.top - slopeAt(y) * (x - centerX) };
+  }));
 }
 
 function medianHeight(line: LayoutLine): number {
@@ -441,11 +494,13 @@ function splitTwoColumnLayout(lines: LayoutLine[]): LayoutLine[] {
   const split: LayoutLine[] = [];
   let rightSegments = 0;
   let rightSegmentsWithPrice = 0;
+  let leftSegmentsWithPrice = 0;
   for (const line of lines) {
     const x = gutterAt((line.top + line.bottom) / 2);
     const left = line.words.filter((word) => word.left + word.width / 2 < x);
     const right = line.words.filter((word) => word.left + word.width / 2 >= x);
     if (left.length > 0) split.push(makeLine(`${line.key}:c0`, left, 0));
+    if (left.some((word) => isRowEndPrice(word.text))) leftSegmentsWithPrice += 1;
     if (right.length > 0) {
       split.push(makeLine(`${line.key}:c1`, right, 1));
       if (right.some(hasLetters)) {
@@ -454,7 +509,11 @@ function splitTwoColumnLayout(lines: LayoutLine[]): LayoutLine[] {
       }
     }
   }
-  // Price-then-tasting-notes rows look similar; a real second column has its own prices.
-  if (rightSegments === 0 || rightSegmentsWithPrice / rightSegments < 0.4) return lines;
+  // Price-then-tasting-notes rows look similar; a real second column has its own prices,
+  // about as many as the left column even when each wine has a region line under it.
+  const rightColumnPriced =
+    rightSegmentsWithPrice / rightSegments >= 0.4 ||
+    (rightSegmentsWithPrice >= 4 && rightSegmentsWithPrice >= 0.6 * leftSegmentsWithPrice);
+  if (rightSegments === 0 || !rightColumnPriced) return lines;
   return split.sort(compareLines);
 }

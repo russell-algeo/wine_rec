@@ -65,9 +65,10 @@ jobs:
           tar -czf - -C "$OUT" dumps-app dumps-no-lc | base64 -b 76
           echo "=== VISION DUMPS BASE64 END"
 
-      - name: Fail if word boxes made any case worse
+      - name: Fail if word boxes made any case worse or the total dropped
         working-directory: main
-        run: TSX_TSCONFIG_PATH=tsconfig.runtime.json npx tsx scripts/client-ocr-eval.ts eval "$OUT/dumps-app" --check
+        # 104 of 110 when recorded (ios/Tests/OCRFixtures/vision-dumps); a little room for Vision updates.
+        run: TSX_TSCONFIG_PATH=tsconfig.runtime.json npx tsx scripts/client-ocr-eval.ts eval "$OUT/dumps-app" --check --min-matched 100
 
       - uses: actions/upload-artifact@v4
         if: always()
