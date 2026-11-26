@@ -22,8 +22,6 @@ jobs:
     # text-plus-word-boxes request. Fails if word boxes make any case worse.
     runs-on: macos-15
     timeout-minutes: 30
-    env:
-      OUT: ${{ runner.temp }}/ocr
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +34,7 @@ jobs:
       - name: Install the server code
         working-directory: main
         run: |
+          echo "OUT=$RUNNER_TEMP/ocr" >> "$GITHUB_ENV"
           npm ci --no-audit --no-fund
           npm run build:packages
 
